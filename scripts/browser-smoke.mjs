@@ -1,10 +1,10 @@
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createServer } from "node:net";
 import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
+import { spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
 import { WORKSPACE_FLOW_SECTIONS } from "./user-flow-catalog.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,6 +62,7 @@ MARA
 Start recording.`;
 const require = createRequire(import.meta.url);
 const axeCorePath = require.resolve("axe-core/axe.min.js");
+const viteCliPath = resolve(dirname(require.resolve("vite/package.json")), "bin", "vite.js");
 
 const checks = [];
 const providerSmokeLabels = {
@@ -130,11 +131,11 @@ async function waitForServer(url, serverProcess, timeoutMs = 30_000) {
 async function startWebServer() {
   const port = await findFreePort();
   const url = `http://127.0.0.1:${port}/`;
-  const serverProcess = spawn(
-    "npm",
-    ["run", "dev", "-w", "@film/web", "--", "--port", String(port), "--strictPort"],
+  const serverProcess = spawnManagedProcess(
+    process.execPath,
+    [viteCliPath, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
     {
-      cwd: rootDir,
+      cwd: resolve(rootDir, "apps", "web"),
       env: { ...process.env, NO_COLOR: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -153,14 +154,7 @@ async function startWebServer() {
 }
 
 async function stopWebServer(serverProcess) {
-  if (serverProcess.exitCode !== null) return;
-  serverProcess.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolveExit) => serverProcess.once("exit", resolveExit)),
-    delay(3_000).then(() => {
-      if (serverProcess.exitCode === null) serverProcess.kill("SIGKILL");
-    }),
-  ]);
+  await stopManagedProcess(serverProcess);
 }
 
 async function expectBodyText(page, text, timeoutMs = 5_000) {
