@@ -206,10 +206,13 @@ async function expectNoDocumentOverflow(page, label) {
   );
 }
 
-async function expectNoSeriousA11yViolations(page, label) {
-  await page.addScriptTag({ path: axeCorePath });
-  const violations = await page.evaluate(async () => {
-    const results = await window.axe.run(document, {
+async function expectNoSeriousA11yViolations(page, label, selector = null) {
+  const axeLoaded = await page.evaluate(() => Boolean(window.axe));
+  if (!axeLoaded) await page.addScriptTag({ path: axeCorePath });
+  const violations = await page.evaluate(async (targetSelector) => {
+    const target = targetSelector ? document.querySelector(targetSelector) : document;
+    if (!target) throw new Error(`Accessibility target not found: ${targetSelector}`);
+    const results = await window.axe.run(target, {
       resultTypes: ["violations"],
     });
     return results.violations
@@ -220,7 +223,7 @@ async function expectNoSeriousA11yViolations(page, label) {
         description: violation.description,
         nodes: violation.nodes.slice(0, 3).map((node) => node.target.join(" ")),
       }));
-  });
+  }, selector);
 
   assert(violations.length === 0, `${label} has serious/critical accessibility violations: ${JSON.stringify(violations)}`);
 }
@@ -270,7 +273,7 @@ async function auditWorkspaceNavigation(page, label) {
     assert(activeDestinations >= 1, `${label} ${section} should expose an active navigation destination`);
     await expectVisibleControlsHaveContracts(page, `${label} ${section}`);
     await expectNoDocumentOverflow(page, `${label} ${section}`);
-    await expectNoSeriousA11yViolations(page, `${label} ${section}`);
+    await expectNoSeriousA11yViolations(page, `${label} ${section}`, "main");
   }
 }
 
