@@ -1,4 +1,4 @@
-import { readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = path.join(root, "migrations");
 const sqliteBin = process.env.SQLITE3_BIN ?? "sqlite3";
-const databasePath = path.join(root, "tmp", "film-migration-check.sqlite");
+const databasePath = process.env.FILM_MIGRATION_CHECK_DATABASE_PATH
+  ? path.resolve(process.env.FILM_MIGRATION_CHECK_DATABASE_PATH)
+  : path.join(root, "tmp", "film-migration-check.sqlite");
 const expectedTables = [
   "attachment_package_plans",
   "attachment_upload_intents",
@@ -94,6 +96,8 @@ const migrationFiles = (await readdir(migrationsDir))
 if (migrationFiles.length === 0) {
   throw new Error("No migration files found.");
 }
+
+await mkdir(path.dirname(databasePath), { recursive: true });
 
 for (let pass = 1; pass <= 2; pass += 1) {
   await rm(databasePath, { force: true });
