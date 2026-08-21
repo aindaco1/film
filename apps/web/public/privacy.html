@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Film by Dust Wave privacy policy and provider data practices." />
+    <meta name="theme-color" content="#0c1116" />
+    <link rel="stylesheet" href="/legal.css" />
+    <title>Film by Dust Wave Privacy Policy</title>
+  </head>
+  <body>
+    <header class="legal-header">
+      <a class="legal-brand" href="/">Film by Dust Wave</a>
+      <nav class="legal-nav" aria-label="Legal navigation">
+        <a href="/privacy.html" aria-current="page">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="/sms.html">SMS</a>
+        <a href="/data-deletion.html">Data deletion</a>
+      </nav>
+    </header>
+    <main class="legal-main">
+      <h1>Film by Dust Wave Privacy Policy</h1>
+      <p class="legal-date">Effective July 13, 2026</p>
+
+      <p>Film is a private production workspace operated by Dust Wave for invited film teams. This policy explains the information Film accesses, how it is used, where it is stored, when it is shared, and how it can be deleted.</p>
+
+      <h2>Information Film processes</h2>
+      <ul>
+        <li>Account and access records, including a one-way email hash, workspace role, session metadata, invite state, and security audit events.</li>
+        <li>Production records supplied by users, including projects, tasks, documents, people, equipment, expenses, locations, call sheets, attachments, and backup metadata.</li>
+        <li>Import data a user explicitly selects from Notion, Google Drive, or an uploaded export.</li>
+        <li>Provider summaries and delivery state needed for connected features, such as payment totals, email delivery, social analytics, or crew-message status.</li>
+      </ul>
+
+      <h2>Google user data</h2>
+      <p>When a workspace owner explicitly connects Google, Film requests access only for the selected Drive import feature. Film may read Drive file and folder metadata and, only when the user asks to import a supported file, its content. Film does not use Google data for advertising, credit decisions, surveillance, or unrelated analytics.</p>
+      <p>Google OAuth tokens are handled by the Film Worker, encrypted at rest, and never placed in browser storage, workspace exports, or backup payloads. Imported copies become Film workspace records controlled by the workspace owner. Disconnecting Google removes Film's stored token material; imported copies remain until the user deletes or restores the relevant Film records.</p>
+      <p class="legal-note">Film's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+      <h2>How information is used</h2>
+      <p>Film uses information only to authenticate members, provide visible production-management features, import or export records at a user's direction, protect the service, deliver requested transactional notices, and operate backups and restore workflows.</p>
+
+      <h2>SMS data</h2>
+      <p>Film stores enrolled mobile numbers encrypted and keeps bounded consent, opt-out, and delivery evidence. Numbers are sent to Telnyx only to deliver crew messages selected by the workspace. Film does not sell mobile information or share SMS opt-in data with third parties for their marketing. Message content is handled transiently for delivery and is excluded from ordinary Film audit records and backups.</p>
+
+      <h2>Service providers and sharing</h2>
+      <p>Film does not sell personal information or provider data. Information is disclosed only as needed to provide user-requested features, protect the service, or comply with law. Current infrastructure may include Cloudflare for hosting and storage and Resend for transactional email. Google, Meta, Telnyx, Pool, Store, or Stripe-related services receive data only when the corresponding workspace feature is explicitly configured and used.</p>
+
+      <h2>Security</h2>
+      <p>Film uses HTTPS, Worker-owned authorization checks, CSRF protection, bounded inputs, encrypted OAuth tokens and backups, restricted provider adapters, audit records, and secret redaction. No internet service can guarantee absolute security.</p>
+
+      <h2>Retention</h2>
+      <p>Workspace records are retained until an authorized member deletes or restores them, or the workspace owner requests deletion. Sessions and one-time links expire or are revoked. Provider tokens are retained only while a connection is active. Backups follow the workspace's configured retention and deletion controls. Security or legal records may be retained longer when reasonably necessary.</p>
+
+      <h2>Choices and deletion</h2>
+      <p>Authorized users can disconnect providers, remove local browser data, delete supported workspace records, and export core data. For complete workspace or account deletion, follow the <a href="/data-deletion.html">Film data deletion instructions</a> through the workspace owner or the established Dust Wave support channel.</p>
+
+      <h2>Changes</h2>
+      <p>Film will update this page when its data practices materially change. New provider scopes or materially different uses require updated disclosure and consent before use.</p>
+    </main>
+    <footer class="legal-footer">Film by Dust Wave is a private production workspace for invited film teams.</footer>
+  </body>
+</html>

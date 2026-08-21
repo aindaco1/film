@@ -1,0 +1,43 @@
+{
+  "name": "film",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static-first film production workspace with Worker-owned trust boundaries.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @film/web",
+    "dev:worker": "npm run dev -w @film/worker",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test:scripts && npm run test --workspaces --if-present",
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "accept:screenplay": "node scripts/screenplay-acceptance.mjs",
+    "docs:user-flows": "node scripts/render-user-flows.mjs",
+    "test:security": "node scripts/check-secrets.mjs",
+    "test:migrations": "node scripts/check-migrations.mjs",
+    "smoke:worker": "node scripts/live-worker-smoke.mjs",
+    "smoke:browser:worker": "node scripts/browser-worker-smoke.mjs",
+    "smoke:providers:live": "node scripts/live-provider-adapter-smoke.mjs",
+    "smoke:auth:production": "node scripts/production-auth-smoke.mjs",
+    "operator:create-production-project": "node scripts/production-auth-smoke.mjs",
+    "smoke:local:worker": "node scripts/local-worker-smoke-suite.mjs",
+    "check:companions": "node scripts/check-companion-workers.mjs",
+    "check:deploy": "node scripts/check-deployment-readiness.mjs",
+    "check:deploy:strict": "node scripts/check-deployment-readiness.mjs --strict",
+    "check:sms:preflight": "node scripts/check-deployment-readiness.mjs --strict --wrangler-secrets --sms-preflight",
+    "bootstrap:production-owner": "node scripts/bootstrap-production-owner.mjs",
+    "report:production-traffic": "node scripts/production-traffic-report.mjs",
+    "smoke": "npm run build && npm run test && npm run test:security && npm run test:migrations && npm run test:browser"
+  },
+  "devDependencies": {
+    "axe-core": "^4.12.1",
+    "playwright": "^1.61.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

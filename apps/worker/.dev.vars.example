@@ -1,0 +1,68 @@
+# Film Worker local development template.
+# Copy to apps/worker/.dev.vars when you need local overrides.
+# Keep apps/worker/.dev.vars local and out of git.
+
+# Local app origins used by Vite during development.
+ALLOWED_ORIGINS=http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176
+
+# Invite email delivery remains dry-run unless every live setting below is
+# explicitly configured with real production values.
+# RESEND_API_KEY=replace_with_resend_api_key
+# INVITE_FROM_EMAIL="Film <invites@example.com>"
+# INVITE_APP_ORIGIN=https://app.film.example
+# INVITE_DELIVERY_WEBHOOK_SECRET=replace_with_resend_webhook_secret
+# INVITE_DELIVERY_MODE=live
+
+# Local development exposes a dry-run token. Production must use `live` so
+# only active D1 members receive one-time links through Resend.
+AUTH_MAGIC_LINK_MODE=dry_run
+
+# Google OAuth stays disabled until the OAuth app, consent copy, and scopes are
+# approved. Generate the encryption key with `openssl rand -base64 32`.
+# GOOGLE_OAUTH_CLIENT_ID=replace_with_google_client_id
+# GOOGLE_OAUTH_CLIENT_SECRET=replace_with_google_client_secret
+# GOOGLE_OAUTH_REDIRECT_URI=https://api.film.example/api/providers/google/oauth/callback
+# GOOGLE_TOKEN_ENCRYPTION_KEY=replace_with_base64_32_byte_key
+# GOOGLE_OAUTH_MODE=live
+
+# Meta OAuth stays disabled until the Meta app, Facebook Login for Business
+# configuration, data handling review, and exact read-only scopes are approved.
+# Use an explicit Graph version; do not silently track Meta's default version.
+# META_OAUTH_CLIENT_ID=replace_with_numeric_meta_app_id
+# META_OAUTH_CLIENT_SECRET=replace_with_meta_app_secret
+# META_OAUTH_REDIRECT_URI=https://api.film.example/api/providers/meta/oauth/callback
+# META_GRAPH_API_VERSION=v23.0
+# META_LOGIN_CONFIGURATION_ID=replace_with_numeric_login_configuration_id
+# META_TOKEN_ENCRYPTION_KEY=replace_with_independent_base64_32_byte_key
+# META_OAUTH_MODE=live
+
+# Telnyx recipient identity uses independent AES-GCM and HMAC keys. Generate
+# each value separately with `openssl rand -base64 32`. Live sends additionally
+# require the approved account/profile/10DLC campaign, disclosure, quiet-hours
+# window, retention policy, signed webhook, owned-number smoke, and explicit gate.
+# SMS_RECIPIENT_ENCRYPTION_KEY=replace_with_base64_32_byte_key
+# SMS_RECIPIENT_HASH_KEY=replace_with_different_base64_32_byte_key
+# TELNYX_API_KEY=replace_with_telnyx_api_key
+# TELNYX_MESSAGING_PROFILE_ID=replace_with_uuid
+# TELNYX_CAMPAIGN_ID=replace_with_campaign_id
+# TELNYX_WEBHOOK_PUBLIC_KEY=replace_with_base64_ed25519_public_key
+# TELNYX_INBOUND_NUMBER_MAPPINGS='{ "+15551234567": "workspace_acme" }'
+# TELNYX_WEBHOOK_MODE=disabled
+# SMS_QUIET_HOURS_TIME_ZONE=America/Denver
+# SMS_QUIET_HOURS_START=22:00
+# SMS_QUIET_HOURS_END=07:00
+# SMS_DELIVERY_RETENTION_DAYS=90
+# SMS_MODE=disabled
+
+# Optional bounded rate-limit tuning by existing Worker bucket name.
+# RATE_LIMIT_OVERRIDES='{"auth_magic_link_request":{"limit":5,"windowSeconds":600},"google_oauth_start":{"limit":10,"windowSeconds":600},"meta_analytics":{"limit":30,"windowSeconds":60}}'
+
+# Stripe summaries use Pool/Store summary-only adapters. Film does not use
+# direct Stripe API reads.
+# POOL_STRIPE_SUMMARY_ADAPTER_URL=https://pledge.dustwave.xyz/film/stripe-summary
+# STORE_STRIPE_SUMMARY_ADAPTER_URL=https://checkout.dustwave.xyz/film/stripe-summary
+# STRIPE_PROJECT_MAPPINGS='{"workspace_acme":{"proj_echoes":{"poolRefs":["hand-relations"],"storeRefs":["film-fatale-at-the-guild-cinema"]}}}'
+# STRIPE_WEBHOOK_SECRET=replace_with_stripe_webhook_secret
+# STRIPE_REDACTED_AUDIT=true
+# STRIPE_SUMMARY_ADAPTER_SECRET=replace_with_shared_adapter_secret
+# STRIPE_SUMMARY_MODE=live

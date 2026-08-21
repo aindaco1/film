@@ -1,0 +1,56 @@
+name = "film-worker"
+main = "src/index.ts"
+compatibility_date = "2026-07-07"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+routes = [
+  { pattern = "api.film.dustwave.xyz", custom_domain = true }
+]
+
+[triggers]
+crons = ["17 9 * * *"]
+
+[observability]
+enabled = true
+
+[vars]
+ALLOWED_ORIGINS = "https://film.dustwave.xyz,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176"
+INVITE_FROM_EMAIL = "Film <invites@dustwave.xyz>"
+INVITE_APP_ORIGIN = "https://film.dustwave.xyz"
+INVITE_DELIVERY_MODE = "live"
+AUTH_MAGIC_LINK_MODE = "live"
+GOOGLE_OAUTH_REDIRECT_URI = "https://api.film.dustwave.xyz/api/providers/google/oauth/callback"
+GOOGLE_OAUTH_MODE = "live"
+META_OAUTH_REDIRECT_URI = "https://api.film.dustwave.xyz/api/providers/meta/oauth/callback"
+META_GRAPH_API_VERSION = "v23.0"
+META_OAUTH_MODE = "disabled"
+TELNYX_WEBHOOK_MODE = "disabled"
+SMS_QUIET_HOURS_TIME_ZONE = "America/Denver"
+SMS_QUIET_HOURS_START = "22:00"
+SMS_QUIET_HOURS_END = "07:00"
+SMS_DELIVERY_RETENTION_DAYS = "90"
+SMS_MODE = "disabled"
+POOL_STRIPE_SUMMARY_ADAPTER_URL = "https://pledge.dustwave.xyz/film/stripe-summary"
+STORE_STRIPE_SUMMARY_ADAPTER_URL = "https://checkout.dustwave.xyz/film/stripe-summary"
+STRIPE_PROJECT_MAPPINGS = '{}'
+STRIPE_REDACTED_AUDIT = "true"
+STRIPE_SUMMARY_MODE = "disabled"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "film"
+database_id = "8041c0fd-a0ea-4702-a3d7-57449cdc46b0"
+migrations_dir = "../../migrations"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "0c41d9a3419c4411b64d0a052ea740c3"
+
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "film-backups"
+
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "film-attachments"

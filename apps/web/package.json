@@ -1,0 +1,21 @@
+{
+  "name": "@film/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@film/backup": "file:../../packages/backup",
+    "@film/importers": "file:../../packages/importers",
+    "@film/providers": "file:../../packages/providers",
+    "@film/schema": "file:../../packages/schema"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

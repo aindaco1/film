@@ -1,0 +1,21 @@
+{
+  "name": "@film/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "wrangler dev src/index.ts --local --port 8787 --var AUTH_MAGIC_LINK_MODE:dry_run",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@film/importers": "file:../../packages/importers",
+    "@film/providers": "file:../../packages/providers",
+    "@film/schema": "file:../../packages/schema",
+    "oauth4webapi": "^3.8.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250707.0",
+    "wrangler": "^4.24.0"
+  }
+}
