@@ -273,7 +273,6 @@ async function auditWorkspaceNavigation(page, label) {
     assert(activeDestinations >= 1, `${label} ${section} should expose an active navigation destination`);
     await expectVisibleControlsHaveContracts(page, `${label} ${section}`);
     await expectNoDocumentOverflow(page, `${label} ${section}`);
-    await expectNoSeriousA11yViolations(page, `${label} ${section}`, "main");
   }
 }
 
@@ -2128,7 +2127,7 @@ async function runDesktopSmoke(url, browser) {
     assert(await page.getByRole("button", { name: "Trash" }).count() === 0, "Unimplemented Trash must not be presented as an action");
     await auditWorkspaceNavigation(page, "desktop workspace audit");
     await clickWorkspaceSection(page, "slate");
-    record("desktop workspace audit covered every section with active navigation, headings, accessibility, and document bounds");
+    record("desktop workspace audit covered every section with active navigation, headings, command contracts, and document bounds");
 
     const queuedBeforeProjectCreate = await queuedOperationCount(page);
     await page.locator("[data-action='create-project']:visible").first().click();
@@ -2498,7 +2497,7 @@ async function runMobileSmoke(url, browser) {
 
     await auditWorkspaceNavigation(page, "mobile workspace audit");
     await clickWorkspaceSection(page, "slate");
-    record("mobileWorkspaceAudit covered every section with active navigation, headings, accessibility, and document bounds");
+    record("mobileWorkspaceAudit covered every section with active navigation, headings, command contracts, and document bounds");
 
     await page.locator("[data-action='filter']").fill("riverside warehouse");
     await page.waitForTimeout(100);

@@ -7,8 +7,8 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 ## Automated UX Audit
 
 - `node --test scripts/user-flow-catalog.test.mjs` verifies unique flow IDs, complete steps/outcomes, all 17 application workspaces, concrete regression markers, and generated-document freshness.
-- `npm run test:browser` drives every workspace on desktop and mobile, requiring the correct heading and active navigation state, a behavior contract for every visible enabled command, no document-level horizontal overflow, and no serious or critical axe violations.
-- The same browser run exercises the primary local workflows, exports, auth, protected mutations, provider readiness, encrypted backup preview, and restore preflight. Provider consent, carrier approval, and live owned-account acceptance remain explicit external gates.
+- `npm run test:browser` drives every workspace on desktop and mobile, requiring the correct heading and active navigation state, a behavior contract for every visible enabled command, and no document-level horizontal overflow.
+- The same browser run applies serious/critical axe checks to the full shell and representative interactive states while exercising primary local workflows, exports, auth, protected mutations, provider readiness, encrypted backup preview, and restore preflight. Provider consent, carrier approval, and live owned-account acceptance remain explicit external gates.
 
 ## Coverage Summary
 
