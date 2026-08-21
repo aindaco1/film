@@ -246,6 +246,22 @@ describe("web app shell", () => {
     expect(source).toContain("Live reads blocked");
   });
 
+  it("keeps inspector workflows in one persistent, grouped view system", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+    const styles = await readFile("src/styles.css", "utf8");
+    const viewIds = ["overview", "team", "ownership", "changes", "permissions", "backups", "integrations", "imports"];
+
+    expect(source).toContain("const INSPECTOR_VIEW_GROUPS");
+    expect(source).toContain('data-action="inspector-view"');
+    expect(source).toContain("isInspectorView(next.inspectorView)");
+    expect(source).toContain('state.ui.inspectorView = "integrations"');
+    for (const viewId of viewIds) {
+      expect(source).toContain(`id: "${viewId}"`);
+      expect(source).toContain(`inspectorViewPanelAttributes("${viewId}")`);
+    }
+    expect(styles).toContain(".inspector-view-panel[hidden]");
+  });
+
   it("exposes stored backup manifest and preview controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
 

@@ -239,6 +239,38 @@ async function clickWorkspaceSection(page, section) {
   await page.waitForTimeout(75);
 }
 
+async function selectInspectorView(page, view) {
+  const selector = page.locator("[data-action='inspector-view']:visible");
+  await selector.selectOption(view);
+  await page.waitForTimeout(75);
+  const activeViews = await page.locator(".inspector-view-panel:not([hidden])").evaluateAll((panels) => (
+    panels.map((panel) => panel.getAttribute("data-inspector-view-panel"))
+  ));
+  assert(activeViews.length > 0, `Inspector view ${view} should render a panel`);
+  assert(activeViews.every((activeView) => activeView === view), `Inspector view ${view} leaked panels: ${activeViews.join(", ")}`);
+  assert(await selector.inputValue() === view, `Inspector selector should retain ${view}`);
+}
+
+async function auditInspectorNavigation(page) {
+  const expectedHeadings = {
+    overview: "Description",
+    team: "Team",
+    ownership: "Ownership",
+    changes: "Change requests",
+    permissions: "Permissions",
+    backups: "Backups",
+    integrations: "Integrations",
+    imports: "Imports",
+  };
+
+  for (const [view, heading] of Object.entries(expectedHeadings)) {
+    await selectInspectorView(page, view);
+    await page.locator(`.inspector-view-panel[data-inspector-view-panel='${view}']:not([hidden]) h3`, { hasText: heading }).first().waitFor({ state: "visible" });
+  }
+
+  await selectInspectorView(page, "overview");
+}
+
 async function expectVisibleControlsHaveContracts(page, label) {
   const controls = await page.locator("main button:visible:not(:disabled)").evaluateAll((buttons) => buttons.flatMap((button) => {
     const hasDirectContract = [
@@ -910,6 +942,10 @@ async function runSignOutSmoke(page) {
 async function runProviderChipSmoke(page) {
   for (const [key, label] of Object.entries(providerSmokeLabels)) {
     await page.locator(`[data-integration="${key}"]:visible`).first().click();
+    assert(
+      await page.locator("[data-action='inspector-view']").inputValue() === "integrations",
+      `Provider chip ${key} should reveal the Integrations inspector view`,
+    );
     await expectBodyText(page, `${label} dry run`);
     await expectBodyText(page, `${key}_metadata_preflight`);
     await expectBodyText(page, `${key}:read`);
@@ -970,10 +1006,12 @@ async function runSmsComposerSmoke(page) {
 }
 
 async function runRecordMutationSmoke(page) {
+  await selectInspectorView(page, "ownership");
   const ownerForm = page.locator("form[data-action='record-owner-transfer']").first();
   await ownerForm.locator("select[name='entityType']").selectOption("document");
   await page.waitForTimeout(100);
 
+  await selectInspectorView(page, "changes");
   await page.locator("form[data-action='record-mutation-preflight'] button[type='submit']").click();
   await expectBodyText(page, "update access allowed");
 
@@ -2114,7 +2152,23 @@ async function runDesktopSmoke(url, browser) {
     await expectBodyText(page, "Pool dry run");
     await expectNoDocumentOverflow(page, "desktop initial");
     await expectNoSeriousA11yViolations(page, "desktop initial");
+    const initialInspectorMetrics = await page.evaluate(() => ({
+      activePanels: document.querySelectorAll(".inspector-view-panel:not([hidden])").length,
+      selectedView: document.querySelector("[data-action='inspector-view']")?.value ?? null,
+      documentHeight: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight,
+    }));
+    assert(initialInspectorMetrics.activePanels === 1, "Initial inspector should expose one workflow panel");
+    assert(initialInspectorMetrics.selectedView === "overview", "Initial inspector should open on Overview");
+    assert(
+      initialInspectorMetrics.documentHeight < initialInspectorMetrics.viewportHeight * 4,
+      `Initial inspector should not drive an excessive page height: ${JSON.stringify(initialInspectorMetrics)}`,
+    );
+    await auditInspectorNavigation(page);
+    await mkdir(failureDir, { recursive: true });
+    await page.locator("aside.inspector").screenshot({ path: resolve(failureDir, "inspector-overview-desktop.png") });
     record("desktop app shell loaded without document overflow");
+    record("desktop inspector exposed one persistent, grouped workflow view at a time");
 
     assert(await page.locator("button.workspace-switch").count() === 0, "Current workspace identity must not be an inert button");
     assert(await page.getByRole("button", { name: "Settings" }).count() === 0, "Unimplemented Settings must not be presented as an action");
@@ -2353,6 +2407,7 @@ async function runDesktopSmoke(url, browser) {
     record("activity tab exported the local audit log without Worker metadata");
     await page.locator("[data-tab='details']").click();
 
+    await selectInspectorView(page, "team");
     const teamDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-team-roster']").click();
     const teamDownload = await teamDownloadPromise;
@@ -2387,6 +2442,7 @@ async function runDesktopSmoke(url, browser) {
     );
     record("desktop partial reconnect sync kept rejected local operations queued");
 
+    await selectInspectorView(page, "backups");
     const backupPath = await exportBackupForPreview(page);
     await previewEncryptedBackup(page, backupPath);
     await expectNoDocumentOverflow(page, "desktop after backup preview");

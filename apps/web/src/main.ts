@@ -361,6 +361,15 @@ type PlanningKindFilter = "all" | NotionPlanningRecord["kind"];
 type ScreenplayElementFilter = "all" | ScreenplayElementCategory;
 type ScreenplaySceneOrder = "script" | "schedule";
 type InspectorTab = "details" | "activity";
+type InspectorView =
+  | "overview"
+  | "team"
+  | "ownership"
+  | "changes"
+  | "permissions"
+  | "backups"
+  | "integrations"
+  | "imports";
 
 type ScreenplayElementClipboardState = {
   breakdownId: string;
@@ -395,6 +404,7 @@ type UiState = {
   workspaceSection: WorkspaceSection;
   planningKindFilter: PlanningKindFilter;
   inspectorTab: InspectorTab;
+  inspectorView: InspectorView;
   filter: string;
   projectCreateOpen: boolean;
   toast: string | null;
@@ -1264,6 +1274,35 @@ const WORKSPACE_NAV_ITEMS: Array<{ label: string; glyph: string; section: Worksp
   { label: "Planning", glyph: "import", section: "planning" },
   { label: "Backups", glyph: "backup", section: "backups" },
 ];
+const INSPECTOR_VIEW_GROUPS: Array<{
+  label: string;
+  views: Array<{ id: InspectorView; label: string }>;
+}> = [
+  {
+    label: "Project",
+    views: [
+      { id: "overview", label: "Overview" },
+      { id: "team", label: "Team" },
+    ],
+  },
+  {
+    label: "Governance",
+    views: [
+      { id: "ownership", label: "Ownership" },
+      { id: "changes", label: "Change requests" },
+      { id: "permissions", label: "Permissions" },
+    ],
+  },
+  {
+    label: "Data and services",
+    views: [
+      { id: "backups", label: "Backups" },
+      { id: "integrations", label: "Integrations" },
+      { id: "imports", label: "Imports" },
+    ],
+  },
+];
+const INSPECTOR_VIEWS = INSPECTOR_VIEW_GROUPS.flatMap((group) => group.views.map((view) => view.id));
 const INVITE_ROLES: WorkspaceRole[] = ["producer", "director", "department_lead", "contributor", "reviewer"];
 const RECORD_PERMISSION_LEVELS: RecordPermissionLevel[] = ["read", "comment", "write", "admin"];
 const OWNER_TRANSFER_ENTITY_TYPES: OwnerTransferEntityType[] = ["project", "task", "document", "person", "equipment", "expense"];
@@ -1704,6 +1743,7 @@ function loadUi(): UiState {
     workspaceSection: "slate",
     planningKindFilter: "all",
     inspectorTab: "details",
+    inspectorView: "overview",
     filter: "",
     projectCreateOpen: false,
     toast: null,
@@ -1717,6 +1757,7 @@ function loadUi(): UiState {
       ...next,
       workspaceSection: isWorkspaceSection(next.workspaceSection) ? next.workspaceSection : "slate",
       planningKindFilter: isPlanningKindFilter(next.planningKindFilter) ? next.planningKindFilter : "all",
+      inspectorView: isInspectorView(next.inspectorView) ? next.inspectorView : "overview",
       screenplayElementFilter: isScreenplayElementFilter(next.screenplayElementFilter) ? next.screenplayElementFilter : "all",
       screenplaySceneOrder: isScreenplaySceneOrder(next.screenplaySceneOrder) ? next.screenplaySceneOrder : "script",
       screenplaySearch: "",
@@ -1732,6 +1773,10 @@ function isWorkspaceSection(value: unknown): value is WorkspaceSection {
 
 function isPlanningKindFilter(value: unknown): value is PlanningKindFilter {
   return value === "all" || (typeof value === "string" && PLANNING_KINDS.includes(value as NotionPlanningRecord["kind"]));
+}
+
+function isInspectorView(value: unknown): value is InspectorView {
+  return typeof value === "string" && INSPECTOR_VIEWS.includes(value as InspectorView);
 }
 
 function isScreenplayElementFilter(value: unknown): value is ScreenplayElementFilter {
@@ -7202,6 +7247,27 @@ function renderWorkerAuditManifest(manifest: WorkerAuditManifestState): string {
   `;
 }
 
+function renderInspectorViewPicker(): string {
+  return `
+    <div class="inspector-view-picker">
+      <label for="inspector-view-select">View</label>
+      <select id="inspector-view-select" data-action="inspector-view">
+        ${INSPECTOR_VIEW_GROUPS.map((group) => `
+          <optgroup label="${escapeAttribute(group.label)}">
+            ${group.views.map((view) => `
+              <option value="${view.id}" ${state.ui.inspectorView === view.id ? "selected" : ""}>${escapeHtml(view.label)}</option>
+            `).join("")}
+          </optgroup>
+        `).join("")}
+      </select>
+    </div>
+  `;
+}
+
+function inspectorViewPanelAttributes(view: InspectorView): string {
+  return `data-inspector-view-panel="${view}"${state.ui.inspectorView === view ? "" : " hidden"}`;
+}
+
 function renderInspector(project: FilmProject): string {
   const latestBackup = state.workspace.restorePoints[0];
   const auditEvents = state.workspace.auditLog.slice(0, 5);
@@ -7301,7 +7367,9 @@ function renderInspector(project: FilmProject): string {
       ${
         state.ui.inspectorTab === "details"
           ? `
-            <div class="inspector-body">
+            <div class="inspector-body inspector-details">
+              ${renderInspectorViewPicker()}
+              <div class="inspector-view-panel" ${inspectorViewPanelAttributes("overview")}>
               <div class="project-summary">
                 <span class="status-dot ${project.color}"></span>
                 <h2>${escapeHtml(project.title)}</h2>
@@ -7319,7 +7387,9 @@ function renderInspector(project: FilmProject): string {
                 <div class="section-head row"><h3>Description</h3><button type="button" data-action="edit-dry-run">${icon("edit")} Edit</button></div>
                 <p>${escapeHtml(project.description)}</p>
               </section>
-              <section class="inspector-section">
+              </div>
+              <div class="inspector-view-panel" ${inspectorViewPanelAttributes("team")}>
+              <section class="inspector-section inspector-section-first">
                 <div class="section-head row"><h3>Team</h3><button type="button" data-action="export-team-roster">${icon("doc")} Export team</button></div>
                 <ul class="team-list">
                   ${members
@@ -7397,6 +7467,11 @@ function renderInspector(project: FilmProject): string {
                 <button class="secondary-button full-width" type="button" data-action="project-membership-history" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project team history</button>
                 ${state.projectMembershipManifest ? renderProjectMembershipManifest(state.projectMembershipManifest) : ""}
                 ${state.projectMembershipHistory && state.projectMembershipHistory.projectId === project.id ? renderProjectMembershipHistory(state.projectMembershipHistory) : ""}
+              </section>
+              </div>
+              <div class="inspector-view-panel" ${inspectorViewPanelAttributes("ownership")}>
+              <section class="inspector-section inspector-section-first">
+                <div class="section-head row"><h3>Ownership</h3></div>
                 <form class="invite-form ownership-form" data-action="record-owner-transfer">
                   <select name="entityType" ${isTransferringOwner ? "disabled" : ""}>
                     ${OWNER_TRANSFER_ENTITY_TYPES.map((entityType) => {
@@ -7458,6 +7533,12 @@ function renderInspector(project: FilmProject): string {
                     ? renderRecordOwnerHistory(state.ownerHistory)
                     : ""
                 }
+              </section>
+              </div>
+              <div class="inspector-view-panel" ${inspectorViewPanelAttributes("changes")}>
+              <section class="inspector-section inspector-section-first">
+                <div class="section-head row"><h3>Change requests</h3></div>
+                <h4 class="inspector-subheading">Record changes</h4>
                 <form class="invite-form mutation-form" data-action="record-mutation-preflight">
                   <select name="mutation" ${isCheckingMutation ? "disabled" : ""}>
                     <option value="update" ${state.recordMutation.mutation === "update" ? "selected" : ""}>Update access</option>
@@ -7635,7 +7716,8 @@ function renderInspector(project: FilmProject): string {
 	                    ? renderRecordMutationDeleteRecovery(state.recordMutationDeleteRecovery)
 	                    : ""
 	                }
-	                <form class="invite-form profile-mutation-request-form" data-action="film-profile-mutation-request">
+		                <h4 class="inspector-subheading">Film profile</h4>
+		                <form class="invite-form profile-mutation-request-form" data-action="film-profile-mutation-request">
 	                  ${renderFilmProfileMutationFieldSelector(isRequestingProfileMutation)}
 	                  <input
 	                    name="summary"
@@ -7716,12 +7798,18 @@ function renderInspector(project: FilmProject): string {
 	                  <button type="submit" ${!canCreateInvite || !approvedProfileMutationRequestId || isApplyingProfileMutation ? "disabled" : ""}>${isApplyingProfileMutation ? "Applying..." : "Apply profile mutation"}</button>
 	                </form>
 	                ${
-	                  state.filmProfileMutationApply.status === "applied"
-	                    && state.filmProfileMutationApply.request?.projectId === project.id
-	                    ? renderFilmProfileMutationApply(state.filmProfileMutationApply)
-	                    : ""
-	                }
-	                <form class="invite-form comment-form" data-action="record-comment-create">
+		                  state.filmProfileMutationApply.status === "applied"
+		                    && state.filmProfileMutationApply.request?.projectId === project.id
+		                    ? renderFilmProfileMutationApply(state.filmProfileMutationApply)
+		                    : ""
+		                }
+              </section>
+              </div>
+              <div class="inspector-view-panel" ${inspectorViewPanelAttributes("permissions")}>
+              <section class="inspector-section inspector-section-first">
+                <div class="section-head row"><h3>Permissions</h3></div>
+		        <h4 class="inspector-subheading">Comments</h4>
+		        <form class="invite-form comment-form" data-action="record-comment-create">
                   <select name="entityType" ${isCreatingComment ? "disabled" : ""}>
                     ${RECORD_COMMENT_ENTITY_TYPES.map((entityType) => {
                       const targetCount = recordCommentTargetsFor(project, entityType).length;
@@ -7762,6 +7850,7 @@ function renderInspector(project: FilmProject): string {
                     ? renderRecordCommentManifest(state.recordCommentManifest)
                     : ""
                 }
+                <h4 class="inspector-subheading">Project access</h4>
                 <form class="invite-form permission-form" data-action="record-permission-assign">
                   <select name="memberId" ${isAssigningPermission ? "disabled" : ""}>
                     ${activeMembers.map((member) => `
@@ -7804,6 +7893,7 @@ function renderInspector(project: FilmProject): string {
                 <button class="secondary-button full-width" type="button" data-action="project-permission-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project permissions</button>
                 <button class="secondary-button full-width" type="button" data-action="project-permission-expired-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review expired project permissions</button>
                 <button class="secondary-button full-width" type="button" data-action="project-permission-history" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project permission history</button>
+                <h4 class="inspector-subheading">Task access</h4>
                 <div class="permission-target">
                   <span>Selected task</span>
                   <strong>${selectedTask ? escapeHtml(selectedTask.title) : "No open task"}</strong>
@@ -7856,6 +7946,7 @@ function renderInspector(project: FilmProject): string {
                 <button class="secondary-button full-width" type="button" data-action="task-permission-manifest" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review task permissions</button>
                 <button class="secondary-button full-width" type="button" data-action="task-permission-expired-manifest" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review expired task permissions</button>
                 <button class="secondary-button full-width" type="button" data-action="task-permission-history" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review task permission history</button>
+                <h4 class="inspector-subheading">Document access</h4>
                 <div class="permission-target">
                   <span>Selected document</span>
                   <strong>${selectedDocument ? escapeHtml(selectedDocument.name) : "No document"}</strong>
@@ -7914,6 +8005,7 @@ function renderInspector(project: FilmProject): string {
                     ? renderRecordPermissionHistory(state.recordPermissionHistory)
                     : ""
                 }
+                <h4 class="inspector-subheading">Invitations</h4>
                 <button class="secondary-button full-width" type="button" data-action="invite-delivery-readiness">${icon("provider")} Check invite delivery</button>
                 ${state.inviteDelivery ? renderInviteDeliveryReadiness(state.inviteDelivery) : ""}
                 <button class="secondary-button full-width" type="button" data-action="invite-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review pending invites</button>
@@ -7953,7 +8045,8 @@ function renderInspector(project: FilmProject): string {
                     : ""
                 }
               </section>
-              <section class="inspector-section">
+              </div>
+              <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("backups")}>
                 <div class="section-head row"><h3>Backups</h3><button type="button" data-action="view-dry-run">View all</button></div>
                 <dl class="detail-list compact">
                   <div><dt>Latest backup</dt><dd>${escapeHtml(latestBackup?.label ?? "None")}</dd></div>
@@ -8288,14 +8381,14 @@ function renderInspector(project: FilmProject): string {
                     : ""
                 }
               </section>
-              <section class="inspector-section">
+              <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
                 <div class="section-head row">
                   <h3>Integrations</h3>
                   <button type="button" data-action="provider-runtime-readiness">Runtime</button>
                 </div>
                 ${state.providerRuntimeReadiness ? renderProviderRuntimeReadiness(state.providerRuntimeReadiness) : `<p class="empty-inline">Runtime gates not checked.</p>`}
               </section>
-              <section class="inspector-section">
+              <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("imports")}>
                 <div class="section-head row"><h3>Imports</h3><button type="button" data-action="view-dry-run">History</button></div>
                 <div class="import-actions">
                   <button class="secondary-button full-width" type="button" data-action="notion-import-folder">${icon("folder")} Import folder</button>
@@ -8423,7 +8516,7 @@ function renderInspector(project: FilmProject): string {
               ${
                 state.providerPreview
                   ? `
-                    <section class="inspector-section">
+                    <section class="inspector-section inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
                       <div class="section-head row"><h3>Provider</h3><button type="button" data-action="view-dry-run">Scopes</button></div>
                       <div class="provider-preview" role="status">
                         <strong>${escapeHtml(state.providerPreview.label)} dry run</strong>
@@ -8605,6 +8698,14 @@ function bindEvents(): void {
       persistUi();
       render();
     });
+  });
+
+  root.querySelector<HTMLSelectElement>("[data-action='inspector-view']")?.addEventListener("change", (event) => {
+    const view = (event.currentTarget as HTMLSelectElement).value;
+    if (!isInspectorView(view)) return;
+    state.ui.inspectorView = view;
+    persistUi();
+    render();
   });
 
   root.querySelector<HTMLInputElement>("[data-action='filter']")?.addEventListener("input", (event) => {
@@ -9550,6 +9651,9 @@ function bindEvents(): void {
         return;
       }
       if (isIntegrationKey(key)) {
+        state.ui.inspectorTab = "details";
+        state.ui.inspectorView = "integrations";
+        persistUi();
         void handleProviderDryRun(key);
       }
     });
