@@ -80,6 +80,7 @@ import {
   updateProductionScheduleAssumptions,
   type BackupPlanningExport,
   type BackupPlanningRecord,
+  type BackupSnapshot,
   type EquipmentItem,
   type FilmProject,
   type FilmProfileMutationFieldDefinition,
@@ -126,7 +127,6 @@ import {
   decryptEncryptedBackupBundle,
   decryptEncryptedBackupZipBundle,
   summarizeRestorePreview,
-  type BackupSnapshot,
   type EncryptedBackupBundle,
   type RestorePreviewSummary,
 } from "@film/backup";
@@ -199,14 +199,21 @@ import {
 } from "@film/providers";
 import { filterProjectsBySearch } from "./project-search";
 import {
+  expenseCategoryLabel,
   escapeHtml,
   formatDocStatus,
   formatProductionMinutes,
-  packetText,
+  formatShortDateTime,
+  formatTaskStatus,
+  formatWorkspaceMemberStatus,
   productionUnitLabel,
   productionValueLabel,
+  shortHash,
 } from "./presentation-format";
+import { budgetTopSheetForProject } from "./project-summary";
+import { copyBytesToArrayBuffer } from "./binary-buffer";
 import { SCREENPLAY_ELEMENT_LABELS } from "./screenplay-element-format";
+import type { LocalHandoffPlanningRow } from "./local-handoff-export";
 import type { ProductionShotExportRow } from "./production-resource-export";
 import {
   createNotionManifest,
@@ -848,6 +855,7 @@ type MemberStatusState = {
 type ProjectMembershipManifestState = {
   checkedAt: string;
   targetLabel: string;
+  projectId: string;
   persistence: string;
   auditPersistence: string | null;
   manifestPolicy: ProjectMembershipManifestResult["manifestPolicy"];
@@ -1391,11 +1399,13 @@ const SCREENPLAY_ELEMENT_CATEGORIES: ScreenplayElementCategory[] = [
 ];
 const TIMELINE_MONTH_LABELS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
 
-const root = document.querySelector<HTMLDivElement>("#app");
+const rootElement = document.querySelector<HTMLDivElement>("#app");
 
-if (!root) {
+if (!rootElement) {
   throw new Error("Missing #app root");
 }
+
+const root = rootElement;
 
 const localMirror = await loadLocalMirror(seedWorkspace);
 const state: {
@@ -1949,15 +1959,6 @@ function renderInlineSaveButton(label: string, disabled = false): string {
   return `<button class="icon-button contextual-save-button" type="submit" title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}" ${disabled ? "disabled" : ""}>${icon("save")}</button>`;
 }
 
-function expenseCategoryLabel(expense: FilmProject["expenses"][number]): string {
-  const legacyName = (expense as FilmProject["expenses"][number] & { name?: unknown }).name;
-  return typeof expense.category === "string" && expense.category.trim()
-    ? expense.category.trim()
-    : typeof legacyName === "string" && legacyName.trim()
-      ? legacyName.trim()
-    : "Uncategorized";
-}
-
 function contextualRecordText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -1972,7 +1973,7 @@ function normalizeContextualWorkspaceData(workspace: WorkspaceData): WorkspaceDa
     projects: workspace.projects.map((project) => {
       const openTasks = project.openTasks.map((task, index) => {
         const legacy = task as FilmProject["openTasks"][number] & { name?: unknown; dueAt?: unknown; taskId?: unknown };
-        const status = task.status === "overdue" || task.status === "ready" ? task.status : "pending";
+        const status: FilmProject["openTasks"][number]["status"] = task.status === "overdue" || task.status === "ready" ? task.status : "pending";
         return {
           ...task,
           id: contextualRecordText(task.id ?? legacy.taskId, `task_${project.id}_${index + 1}`),
@@ -2045,12 +2046,6 @@ function normalizeContextualWorkspaceData(workspace: WorkspaceData): WorkspaceDa
 
 function projectTitleForId(projectId: string): string {
   return state.workspace.projects.find((project) => project.id === projectId)?.title ?? projectId;
-}
-
-function formatTaskStatus(status: FilmProject["openTasks"][number]["status"]): string {
-  if (status === "overdue") return "Overdue";
-  if (status === "pending") return "Pending";
-  return "Ready";
 }
 
 function renderTaskStatusSelect(task: FilmProject["openTasks"][number]): string {
@@ -2879,7 +2874,7 @@ function renderScheduleWorkspace(project: FilmProject): string {
       </div>
     </div>
     ${renderProductionStripboard(project, selectedSchedule)}
-    ${renderProductionAvailability(project, selectedSchedule)}
+    ${renderProductionAvailability(selectedSchedule)}
     ${renderProductionScheduleScenarios(project, selectedSchedule)}
     ${renderProductionBudgetEstimate(project, selectedSchedule)}
   `;
@@ -3184,7 +3179,7 @@ function selectedProductionScheduleStrips(scheduleId: string): ProductionSchedul
     : [];
 }
 
-function renderProductionAvailability(project: FilmProject, schedule: ProductionScheduleVersion | null): string {
+function renderProductionAvailability(schedule: ProductionScheduleVersion | null): string {
   if (!schedule) return "";
   const breakdown = state.workspace.screenplayBreakdowns.find((candidate) => candidate.id === schedule.screenplayBreakdownId);
   if (!breakdown) return "";
@@ -4999,31 +4994,6 @@ function renderEquipmentWorkspace(project: FilmProject): string {
   `;
 }
 
-function budgetTopSheetForProject(project: FilmProject): {
-  lineBudget: number;
-  lineSpent: number;
-  remaining: number;
-  usedPercent: number;
-  largestLine: FilmProject["expenses"][number] | null;
-  nearBudgetCount: number;
-  overBudgetCount: number;
-} {
-  const lineBudget = project.expenses.reduce((total, expense) => total + expense.budget, 0);
-  const lineSpent = project.expenses.reduce((total, expense) => total + expense.spent, 0);
-  const totalBudget = project.totalBudget > 0 ? project.totalBudget : lineBudget;
-  const spent = project.spentBudget > 0 ? project.spentBudget : lineSpent;
-  const largestLine = [...project.expenses].sort((left, right) => right.spent - left.spent)[0] ?? null;
-  return {
-    lineBudget,
-    lineSpent,
-    remaining: totalBudget - spent,
-    usedPercent: totalBudget > 0 ? Math.round((spent / totalBudget) * 100) : 0,
-    largestLine,
-    nearBudgetCount: project.expenses.filter((expense) => expense.budget > 0 && expense.spent <= expense.budget && expense.spent / expense.budget >= 0.85).length,
-    overBudgetCount: project.expenses.filter((expense) => expense.budget > 0 && expense.spent > expense.budget).length,
-  };
-}
-
 function renderExpensesWorkspace(project: FilmProject): string {
   const budget = budgetTopSheetForProject(project);
   return `
@@ -5477,7 +5447,7 @@ function renderBackupsWorkspace(): string {
     ? `${state.backupExport.rowCount} stored restore points - ${state.backupExport.truncated ? "truncated" : "complete"}`
     : "Stored backup manifest not loaded";
   const restoreStatus = state.restorePreview
-    ? `${state.restorePreview.status} - ${state.restorePreview.matchingProjects} matching projects`
+    ? `${state.restorePreview.matchingProjectCount} matching projects - ${state.restorePreview.changedRecordCount} changed records`
     : "No encrypted backup preview loaded";
 
   return `
@@ -5728,9 +5698,9 @@ function renderTopbar(): string {
   const queuedOperations = countQueuedOperations(state.operations);
   const syncLabel = queuedOperations > 0 ? `${queuedOperations} local ops queued` : "Synced locally";
   const latestBackup = state.workspace.restorePoints[0];
-  const liveIntegrationCount = state.workspace.integrations.filter((integration) => integration.mode === "live").length;
-  const integrationSummary = liveIntegrationCount > 0
-    ? `${liveIntegrationCount} live, ${INTEGRATION_DEFINITIONS.length - liveIntegrationCount} dry-run`
+  const connectedIntegrationCount = state.workspace.integrations.filter((integration) => integration.mode === "connected").length;
+  const integrationSummary = connectedIntegrationCount > 0
+    ? `${connectedIntegrationCount} connected, ${INTEGRATION_DEFINITIONS.length - connectedIntegrationCount} dry-run`
     : `${INTEGRATION_DEFINITIONS.length} dry-run`;
 
   return `
@@ -5810,7 +5780,7 @@ function renderProjectRow(project: FilmProject, selectedId: string): string {
   const taskProgress = Math.round((project.tasks.done / project.tasks.total) * 100);
 
   return `
-    <button class="project-row ${project.id === selectedId ? "is-selected" : ""}" data-project-id="${project.id}" type="button">
+    <button class="project-row ${project.id === selectedId ? "is-selected" : ""}" data-action="project-select" data-project-id="${project.id}" type="button">
       <span class="project-title"><span class="status-dot ${project.color}"></span>${escapeHtml(project.title)}${project.starred ? icon("star") : ""}</span>
       <span><span class="phase-badge ${project.phaseTone}">${escapeHtml(project.phase)}</span></span>
       <span class="progress-cell"><span>${project.progress}%</span><span class="meter"><span style="width:${project.progress}%"></span></span></span>
@@ -5827,7 +5797,7 @@ function renderProjectBoard(projects: FilmProject[], selectedId: string): string
       ${projects
         .map(
           (project) => `
-            <button class="project-card ${project.id === selectedId ? "is-selected" : ""}" data-project-id="${project.id}" type="button">
+            <button class="project-card ${project.id === selectedId ? "is-selected" : ""}" data-action="project-select" data-project-id="${project.id}" type="button">
               <span class="project-card-head">
                 <span class="status-dot ${project.color}"></span>
                 <strong>${escapeHtml(project.title)}</strong>
@@ -8773,7 +8743,7 @@ function bindEvents(): void {
     render();
   });
 
-  root.querySelectorAll<HTMLElement>("[data-project-id]").forEach((element) => {
+  root.querySelectorAll<HTMLElement>("[data-action='project-select']").forEach((element) => {
     element.addEventListener("click", () => {
       state.ui.selectedProjectId = element.dataset.projectId ?? state.ui.selectedProjectId;
       const project = getProjectById(state.workspace, state.ui.selectedProjectId);
@@ -9211,6 +9181,7 @@ function bindEvents(): void {
   });
   root.querySelector<HTMLSelectElement>("[data-action='planning-kind-filter']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
     if (!isPlanningKindFilter(select.value)) return;
     state.ui.planningKindFilter = select.value;
     persistUi();
@@ -9369,7 +9340,9 @@ function bindEvents(): void {
   });
   root.querySelector<HTMLFormElement>("form[data-action='screenplay-manual-element']")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    void addManualScreenplayElement(new FormData(event.currentTarget));
+    const form = event.currentTarget;
+    if (!(form instanceof HTMLFormElement)) return;
+    void addManualScreenplayElement(new FormData(form));
   });
   root.querySelector<HTMLSelectElement>("[data-action='screenplay-revision-select']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
@@ -9465,7 +9438,7 @@ function bindEvents(): void {
   root.querySelectorAll<HTMLFormElement>("form[data-action='screenplay-element-category-move']").forEach((form) => {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void moveScreenplayElementCategory(new FormData(event.currentTarget));
+      void moveScreenplayElementCategory(new FormData(form));
     });
   });
   root.querySelector<HTMLButtonElement>("[data-action='attachments-store-r2']")?.addEventListener("click", () => {
@@ -9791,11 +9764,12 @@ async function handleContextualRecordUpdate(event: SubmitEvent): Promise<void> {
     const due = String(formData.get("due") ?? "").trim().slice(0, 80);
     const status = String(formData.get("status") ?? "");
     if (!task || !title || !isLocalTaskStatus(status)) return;
+    const previousStatus = task.status;
     task.title = title;
     task.due = due || "TBD";
     task.status = status;
     summary = `Task updated: ${task.title}`;
-    operationPayload = { ...operationPayload, title: task.title, dueAt: task.due, status: task.status };
+    operationPayload = { ...operationPayload, title: task.title, dueAt: task.due, status: task.status, previousStatus };
   } else if (kind === "person") {
     const person = project.people.find((candidate) => candidate.id === recordId);
     const name = String(formData.get("name") ?? "").trim().slice(0, 120);
@@ -9871,6 +9845,7 @@ async function handleProjectInlineUpdate(event: SubmitEvent): Promise<void> {
   state.workspace.auditLog.unshift(createAuditEvent(summary, "Alonso", "blue"));
   await persistWorkspace(
     createOperation(state.workspace.id, "project.updated", "project", project.id, summary, {
+      projectId: project.id,
       phase: project.phase,
       shootDates: project.shootDates,
       totalBudget: project.totalBudget,
@@ -10944,6 +10919,7 @@ async function previewProjectMembershipManifest(): Promise<void> {
     state.projectMembershipManifest = {
       checkedAt: new Date().toISOString(),
       targetLabel: project.title,
+      projectId: project.id,
       persistence: manifest.persistence,
       auditPersistence: manifest.auditPersistence ?? null,
       manifestPolicy: manifest.manifestPolicy,
@@ -11213,7 +11189,7 @@ async function previewRecordOwnerManifest(): Promise<void> {
     render();
     return;
   }
-  const { entityType, entityId, target } = selection;
+  const { entityType, target } = selection;
 
   try {
     const manifest = await exportRecordOwnerManifest(
@@ -11263,7 +11239,7 @@ async function previewRecordOwnerHistory(): Promise<void> {
     render();
     return;
   }
-  const { entityType, entityId, target } = selection;
+  const { entityType, target } = selection;
 
   try {
     const history = await exportRecordOwnerHistory(
@@ -11493,7 +11469,7 @@ async function previewRecordMutationRequestManifest(): Promise<void> {
     render();
     return;
   }
-  const { entityType, entityId, target } = selection;
+  const { entityType, target } = selection;
 
   try {
     const manifest = await exportRecordMutationRequestManifest(
@@ -14073,12 +14049,6 @@ function formatRecordPermissionLevel(value: RecordPermissionLevel): string {
   return "Admin";
 }
 
-function formatWorkspaceMemberStatus(value: WorkspaceData["members"][number]["status"]): string {
-  if (value === "active") return "Active";
-  if (value === "disabled") return "Disabled";
-  return "Invited";
-}
-
 function memberDisplayName(memberId: string): string {
   return state.workspace.members.find((member) => member.id === memberId)?.displayName ?? memberId;
 }
@@ -15267,33 +15237,32 @@ async function exportSelectedProjectPacket(): Promise<void> {
   }
 
   const exportedAt = new Date().toISOString();
-  const markdown = createProjectPacketMarkdown(project, exportedAt);
+  const { createProjectPacketMarkdown } = await loadLocalHandoffExports();
+  const planningRows = localHandoffPlanningRows(planningPanelRowsForProject(project).slice(0, 12));
+  const markdown = createProjectPacketMarkdown(state.workspace.name, project, planningRows, exportedAt);
   const filename = `film-project-packet-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Project packet exported: ${project.title}`, "System", "blue"));
-  state.ui.toast = `Project packet exported for ${project.title}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Project packet exported for ${project.title}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Project packet exported: ${project.title}`,
+    successMessage: `Project packet exported for ${project.title}.`,
+    persistenceFailureMessage: `Project packet exported for ${project.title}. Local audit persistence failed.`,
+  });
 }
 
 async function exportProjectDirectory(): Promise<void> {
   const projects = filterProjects(state.workspace.projects, state.ui.filter);
   const exportedAt = new Date().toISOString();
-  const markdown = createProjectDirectoryMarkdown(projects, state.ui.filter, exportedAt);
+  const { createProjectDirectoryMarkdown } = await loadLocalHandoffExports();
+  const markdown = createProjectDirectoryMarkdown(state.workspace, projects, state.ui.filter, exportedAt);
   const filename = `film-project-directory-${slugForLocalRecord(state.workspace.name)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Project directory exported: ${projects.length} visible projects`, "System", "blue"));
-  state.ui.toast = `Project directory exported for ${projects.length} visible projects.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Project directory exported for ${projects.length} visible projects. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Project directory exported: ${projects.length} visible projects`,
+    successMessage: `Project directory exported for ${projects.length} visible projects.`,
+    persistenceFailureMessage: `Project directory exported for ${projects.length} visible projects. Local audit persistence failed.`,
+  });
 }
 
 async function exportProductionShots(format: "markdown" | "csv"): Promise<void> {
@@ -15333,6 +15302,39 @@ function loadProductionResourceExports() {
 
 function loadScreenplayReviewExports() {
   return import("./screenplay-review-export");
+}
+
+function loadLocalHandoffExports() {
+  return import("./local-handoff-export");
+}
+
+function localHandoffPlanningRows(rows: PlanningPanelRow[]): LocalHandoffPlanningRow[] {
+  return rows.map((row) => ({
+    kindLabel: PLANNING_KIND_LABELS[row.kind],
+    title: row.title,
+    projectLabel: row.projectLabel,
+    fields: row.fields,
+    sourceLabel: row.sourceLabel,
+  }));
+}
+
+async function completeLocalExport(options: {
+  content: string;
+  filename: string;
+  auditMessage: string;
+  successMessage: string;
+  persistenceFailureMessage: string;
+  tone?: "teal" | "amber" | "blue" | "gray" | "red";
+}): Promise<void> {
+  downloadBlob(new Blob([options.content], { type: "text/markdown;charset=utf-8" }), options.filename);
+  state.workspace.auditLog.unshift(createAuditEvent(options.auditMessage, "System", options.tone ?? "blue"));
+  state.ui.toast = options.successMessage;
+  try {
+    await persistWorkspace();
+  } catch {
+    state.ui.toast = options.persistenceFailureMessage;
+  }
+  render();
 }
 
 async function exportSelectedCallSheet(): Promise<void> {
@@ -15401,17 +15403,16 @@ async function exportSelectedTaskList(): Promise<void> {
   }
 
   const exportedAt = new Date().toISOString();
-  const markdown = createTaskListMarkdown(project, exportedAt);
+  const { createTaskListMarkdown } = await loadLocalHandoffExports();
+  const markdown = createTaskListMarkdown(state.workspace.name, project, exportedAt);
   const filename = `film-task-list-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Task list exported: ${project.title}`, "System", "blue"));
-  state.ui.toast = `Task list exported for ${project.title}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Task list exported for ${project.title}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Task list exported: ${project.title}`,
+    successMessage: `Task list exported for ${project.title}.`,
+    persistenceFailureMessage: `Task list exported for ${project.title}. Local audit persistence failed.`,
+  });
 }
 
 async function exportPlanningView(): Promise<void> {
@@ -15420,17 +15421,24 @@ async function exportPlanningView(): Promise<void> {
   const rows = kindFilter === "all" ? allRows : allRows.filter((row) => row.kind === kindFilter);
   const filterLabel = kindFilter === "all" ? "All kinds" : PLANNING_KIND_LABELS[kindFilter];
   const exportedAt = new Date().toISOString();
-  const markdown = createPlanningViewMarkdown(rows, allRows.length, filterLabel, exportedAt);
+  const { createPlanningViewMarkdown } = await loadLocalHandoffExports();
+  const markdown = createPlanningViewMarkdown(
+    state.workspace.name,
+    localHandoffPlanningRows(rows),
+    allRows.length,
+    filterLabel,
+    state.planningExportView ? "canonical" : "local",
+    exportedAt,
+  );
   const filename = `film-planning-view-${slugForLocalRecord(filterLabel)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Planning view exported: ${filterLabel}`, "System", "teal"));
-  state.ui.toast = `Planning view exported for ${filterLabel}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Planning view exported for ${filterLabel}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Planning view exported: ${filterLabel}`,
+    successMessage: `Planning view exported for ${filterLabel}.`,
+    persistenceFailureMessage: `Planning view exported for ${filterLabel}. Local audit persistence failed.`,
+    tone: "teal",
+  });
 }
 
 async function exportSelectedCrewDirectory(): Promise<void> {
@@ -15442,17 +15450,16 @@ async function exportSelectedCrewDirectory(): Promise<void> {
   }
 
   const exportedAt = new Date().toISOString();
-  const markdown = createCrewDirectoryMarkdown(project, exportedAt);
+  const { createCrewDirectoryMarkdown } = await loadLocalHandoffExports();
+  const markdown = createCrewDirectoryMarkdown(state.workspace.name, project, exportedAt);
   const filename = `film-crew-directory-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Crew directory exported: ${project.title}`, "System", "blue"));
-  state.ui.toast = `Crew directory exported for ${project.title}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Crew directory exported for ${project.title}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Crew directory exported: ${project.title}`,
+    successMessage: `Crew directory exported for ${project.title}.`,
+    persistenceFailureMessage: `Crew directory exported for ${project.title}. Local audit persistence failed.`,
+  });
 }
 
 async function exportSelectedGearPull(): Promise<void> {
@@ -15464,17 +15471,17 @@ async function exportSelectedGearPull(): Promise<void> {
   }
 
   const exportedAt = new Date().toISOString();
-  const markdown = createGearPullMarkdown(project, exportedAt);
+  const { createGearPullMarkdown } = await loadLocalHandoffExports();
+  const markdown = createGearPullMarkdown(state.workspace.name, project, exportedAt);
   const filename = `film-gear-pull-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Gear pull exported: ${project.title}`, "System", "teal"));
-  state.ui.toast = `Gear pull exported for ${project.title}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Gear pull exported for ${project.title}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Gear pull exported: ${project.title}`,
+    successMessage: `Gear pull exported for ${project.title}.`,
+    persistenceFailureMessage: `Gear pull exported for ${project.title}. Local audit persistence failed.`,
+    tone: "teal",
+  });
 }
 
 async function exportSelectedBudgetTopSheet(): Promise<void> {
@@ -15486,17 +15493,17 @@ async function exportSelectedBudgetTopSheet(): Promise<void> {
   }
 
   const exportedAt = new Date().toISOString();
-  const markdown = createBudgetTopSheetMarkdown(project, exportedAt);
+  const { createBudgetTopSheetMarkdown } = await loadLocalHandoffExports();
+  const markdown = createBudgetTopSheetMarkdown(state.workspace.name, project, exportedAt);
   const filename = `film-budget-top-sheet-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Budget top sheet exported: ${project.title}`, "System", "amber"));
-  state.ui.toast = `Budget top sheet exported for ${project.title}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Budget top sheet exported for ${project.title}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Budget top sheet exported: ${project.title}`,
+    successMessage: `Budget top sheet exported for ${project.title}.`,
+    persistenceFailureMessage: `Budget top sheet exported for ${project.title}. Local audit persistence failed.`,
+    tone: "amber",
+  });
 }
 
 async function exportSelectedDocumentDraft(): Promise<void> {
@@ -15512,357 +15519,47 @@ async function exportSelectedDocumentDraft(): Promise<void> {
   const markdownInput = editorForm?.elements.namedItem("markdown") as HTMLTextAreaElement | null;
   const markdown = editorForm?.dataset.docId === doc.id ? markdownInput?.value ?? "" : doc.markdownSnapshot ?? "";
   const exportedAt = new Date().toISOString();
-  const content = createDocumentDraftMarkdown(project, doc, markdown, exportedAt);
+  const { createDocumentDraftMarkdown } = await loadLocalHandoffExports();
+  const content = createDocumentDraftMarkdown(state.workspace.name, project, doc, markdown, exportedAt);
   const docSlug = slugForLocalRecord(doc.name.replace(/\.md$/i, ""));
   const filename = `film-doc-${slugForLocalRecord(project.title)}-${docSlug}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Document draft exported: ${doc.name}`, "System", "blue"));
-  state.ui.toast = `Document draft exported for ${doc.name}.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = `Document draft exported for ${doc.name}. Local audit persistence failed.`;
-  }
-  render();
+  await completeLocalExport({
+    content,
+    filename,
+    auditMessage: `Document draft exported: ${doc.name}`,
+    successMessage: `Document draft exported for ${doc.name}.`,
+    persistenceFailureMessage: `Document draft exported for ${doc.name}. Local audit persistence failed.`,
+  });
 }
 
 async function exportActivityLog(): Promise<void> {
   const exportedAt = new Date().toISOString();
   const eventCount = state.workspace.auditLog.length;
-  const markdown = createActivityLogMarkdown(exportedAt);
+  const { createActivityLogMarkdown } = await loadLocalHandoffExports();
+  const markdown = createActivityLogMarkdown(state.workspace, exportedAt);
   const filename = `film-activity-log-${slugForLocalRecord(state.workspace.name)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent("Local activity log exported", "System", "blue"));
-  state.ui.toast = `Activity log exported with ${eventCount} local events.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = "Activity log exported. Local audit persistence failed.";
-  }
-  render();
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: "Local activity log exported",
+    successMessage: `Activity log exported with ${eventCount} local events.`,
+    persistenceFailureMessage: "Activity log exported. Local audit persistence failed.",
+  });
 }
 
 async function exportTeamRoster(): Promise<void> {
   const exportedAt = new Date().toISOString();
   const memberCount = state.workspace.members.length;
-  const markdown = createTeamRosterMarkdown(exportedAt);
+  const { createTeamRosterMarkdown } = await loadLocalHandoffExports();
+  const markdown = createTeamRosterMarkdown(state.workspace, exportedAt);
   const filename = `film-team-roster-${slugForLocalRecord(state.workspace.name)}-${exportedAt.slice(0, 10)}.md`;
-  downloadBlob(new Blob([markdown], { type: "text/markdown;charset=utf-8" }), filename);
-  state.workspace.auditLog.unshift(createAuditEvent(`Team roster exported: ${memberCount} members`, "System", "blue"));
-  state.ui.toast = `Team roster exported with ${memberCount} members.`;
-  try {
-    await persistWorkspace();
-  } catch {
-    state.ui.toast = "Team roster exported. Local audit persistence failed.";
-  }
-  render();
-}
-
-function createProjectPacketMarkdown(project: FilmProject, exportedAt: string): string {
-  const callSheet = project.callSheet;
-  const planningRows = planningPanelRowsForProject(project).slice(0, 12);
-  const lines = [
-    `# ${packetText(project.title)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, and private Worker state are excluded.",
-    "",
-    "## Summary",
-    `- Type: ${packetText(project.type)}`,
-    `- Phase: ${packetText(project.phase)}`,
-    `- Shoot dates: ${packetText(project.shootDates)}`,
-    `- Location: ${packetText(project.location)}`,
-    `- Runtime: ${project.runtimeMinutes} minutes`,
-    `- Format: ${packetText(project.format)}`,
-    `- Progress: ${project.progress}%`,
-    `- Budget: ${formatCurrency(project.spentBudget)} spent of ${formatCurrency(project.totalBudget)}`,
-    `- Workflow: ${packetText(project.workflow)}`,
-    "",
-    "## Logline",
-    packetText(project.description) || "No logline recorded.",
-    "",
-    "## Phase Timeline",
-    ...project.timeline.map((item) => `- ${packetText(item.label)}: ${packetText(item.month)} lane ${item.start}-${item.start + item.width}%`),
-    "",
-    "## Upcoming Call Sheet",
-    `- Date: ${packetText(callSheet.day)} ${packetText(callSheet.month)}`,
-    `- Call: ${packetText(callSheet.callTime)}`,
-    `- Wrap: ${packetText(callSheet.wrapTime)}`,
-    `- Location: ${packetText(callSheet.location)}`,
-    `- Day: ${callSheet.dayNumber} of ${callSheet.totalDays}`,
-    `- Scenes: ${callSheet.scenes}`,
-    `- Pages: ${packetText(callSheet.pages)}`,
-    `- People: ${callSheet.people}`,
-    `- Weather: ${packetText(callSheet.weather)}`,
-    "",
-    "## Planning Rows",
-    ...(
-      planningRows.length
-        ? planningRows.map((row) => `- ${packetText(PLANNING_KIND_LABELS[row.kind])}: ${packetText(row.title)} - ${packetPlanningFields(row.fields)}`)
-        : ["No planning rows in the local review cache."]
-    ),
-    "",
-    "## Date-Driven Tasks",
-    ...project.openTasks.map((task) => `- [${packetText(formatTaskStatus(task.status))}] ${packetText(task.title)} - due ${packetText(task.due)}`),
-    "",
-    "## Documents",
-    ...project.docs.map((doc) => `- ${packetText(doc.name)} (${packetText(doc.type)}) - ${packetText(formatDocStatus(doc))}`),
-    "",
-    "## People",
-    ...project.people.map((person) => `- ${packetText(person.name)} - ${packetText(person.role)}`),
-    "",
-    "## Equipment",
-    ...project.equipment.map((item) => `- ${packetText(item.name)} - ${packetText(item.status)}`),
-    "",
-    "## Expenses",
-    ...project.expenses.map((expense) => `- ${packetText(expenseCategoryLabel(expense))} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createActivityLogMarkdown(exportedAt: string): string {
-  const lines = [
-    `# Activity Log: ${packetText(state.workspace.name)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, raw Worker audit metadata, raw import source paths, and Markdown document bodies are excluded.",
-    "",
-    "## Local Events",
-    ...(
-      state.workspace.auditLog.length
-        ? state.workspace.auditLog.map((event) => `- ${packetText(event.when)} - ${packetText(event.actor)} - ${packetText(event.message)}`)
-        : ["No local activity events recorded."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createTeamRosterMarkdown(exportedAt: string): string {
-  const statusCounts = {
-    active: state.workspace.members.filter((member) => member.status === "active").length,
-    invited: state.workspace.members.filter((member) => member.status === "invited").length,
-    disabled: state.workspace.members.filter((member) => member.status === "disabled").length,
-  };
-  const lines = [
-    `# Team Roster: ${packetText(state.workspace.name)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    "Policy: raw email addresses, provider secrets, OAuth tokens, raw invite tokens, raw attachment bytes, private Worker state, permission grant details, and Worker audit metadata values are excluded. Email references are short hashes only.",
-    "",
-    "## Summary",
-    `- Members: ${state.workspace.members.length}`,
-    `- Active: ${statusCounts.active}`,
-    `- Invited: ${statusCounts.invited}`,
-    `- Disabled: ${statusCounts.disabled}`,
-    "",
-    "## Members",
-    ...(
-      state.workspace.members.length
-        ? state.workspace.members.map((member) => [
-          `### ${packetText(member.displayName)}`,
-          `- Role: ${packetText(formatWorkspaceRole(member.role))}`,
-          `- Status: ${packetText(formatWorkspaceMemberStatus(member.status))}`,
-          `- Email hash: ${packetText(shortHash(member.emailHash))}`,
-          `- Last seen: ${packetText(member.lastSeenAt ? formatShortDateTime(member.lastSeenAt) : "Never seen")}`,
-          "",
-        ].join("\n"))
-        : ["No workspace members recorded.", ""]
-    ),
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createProjectDirectoryMarkdown(projects: FilmProject[], filter: string, exportedAt: string): string {
-  const lines = [
-    `# Project Directory: ${packetText(state.workspace.name)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Filter: ${packetText(filter) || "All projects"}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, raw import source paths, and Markdown document bodies are excluded.",
-    "",
-    "## Summary",
-    `- Visible projects: ${projects.length}`,
-    `- Workspace projects: ${state.workspace.projects.length}`,
-    `- Archived projects: ${state.workspace.archivedProjectCount}`,
-    "",
-    "## Projects",
-    ...(
-      projects.length
-        ? projects.map((project) => [
-          `### ${packetText(project.title)}`,
-          `- Type: ${packetText(project.type)}`,
-          `- Phase: ${packetText(project.phase)}`,
-          `- Shoot dates: ${packetText(project.shootDates)}`,
-          `- Location: ${packetText(project.location)}`,
-          `- Runtime: ${project.runtimeMinutes} minutes`,
-          `- Format: ${packetText(project.format)}`,
-          `- Progress: ${project.progress}%`,
-          `- Budget: ${formatCurrency(project.spentBudget)} spent of ${formatCurrency(project.totalBudget)}`,
-          `- Tasks: ${project.tasks.done} done of ${project.tasks.total}`,
-          `- Open tasks: ${project.openTasks.length}`,
-          `- Docs: ${project.docs.length}`,
-          `- People: ${project.people.length}`,
-          `- Equipment: ${project.equipment.length}`,
-          `- Expenses: ${project.expenses.length}`,
-          "",
-        ].join("\n"))
-        : ["No projects match the current filter.", ""]
-    ),
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createTaskListMarkdown(project: FilmProject, exportedAt: string): string {
-  const statusCounts = {
-    overdue: project.openTasks.filter((task) => task.status === "overdue").length,
-    pending: project.openTasks.filter((task) => task.status === "pending").length,
-    ready: project.openTasks.filter((task) => task.status === "ready").length,
-  };
-  const lines = [
-    `# Task List: ${packetText(project.title)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded.",
-    "",
-    "## Summary",
-    `- Open tasks: ${project.openTasks.length}`,
-    `- Completed: ${project.tasks.done} of ${project.tasks.total}`,
-    `- Overdue: ${statusCounts.overdue}`,
-    `- Pending: ${statusCounts.pending}`,
-    `- Ready: ${statusCounts.ready}`,
-    "",
-    "## Open Tasks",
-    ...(
-      project.openTasks.length
-        ? project.openTasks.map((task) => `- [${packetText(formatTaskStatus(task.status))}] ${packetText(task.title)} - due ${packetText(task.due)}`)
-        : ["No open tasks."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createPlanningViewMarkdown(rows: PlanningPanelRow[], allRowCount: number, filterLabel: string, exportedAt: string): string {
-  const lines = [
-    `# Planning View: ${packetText(filterLabel)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded. Source labels are included without local file paths.",
-    "",
-    "## Summary",
-    `- Rows in view: ${rows.length}`,
-    `- Rows in workspace source: ${allRowCount}`,
-    `- Filter: ${packetText(filterLabel)}`,
-    `- Source: ${state.planningExportView ? "D1 planning export" : "Local import review cache"}`,
-    "",
-    "## Rows",
-    ...(
-      rows.length
-        ? rows.map((row) => `- ${packetText(PLANNING_KIND_LABELS[row.kind])}: ${packetText(row.title)} - ${packetText(row.projectLabel)} - ${packetPlanningFields(row.fields)} - ${packetText(row.sourceLabel)}`)
-        : ["No planning rows in current view."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createDocumentDraftMarkdown(project: FilmProject, doc: ProjectDoc, markdown: string, exportedAt: string): string {
-  const body = markdown.trim() ? markdown.replace(/\r\n/g, "\n") : "_Empty Markdown draft._";
-  const lines = [
-    `# Document Draft: ${packetText(doc.name)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Project: ${packetText(project.title)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded. This explicit export includes the selected Markdown body; canonical saves use the Worker-owned document route when available.",
-    "",
-    "## Draft",
-    body,
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createCrewDirectoryMarkdown(project: FilmProject, exportedAt: string): string {
-  const lines = [
-    `# Crew Directory: ${packetText(project.title)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, raw import source paths, email addresses, and phone numbers are excluded.",
-    "",
-    "## Crew",
-    ...(
-      project.people.length
-        ? project.people.map((person) => `- ${packetText(person.name)} - ${packetText(person.role)} (${packetText(person.initials)})`)
-        : ["No crew records."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createGearPullMarkdown(project: FilmProject, exportedAt: string): string {
-  const lines = [
-    `# Gear Pull: ${packetText(project.title)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded.",
-    "",
-    "## Gear",
-    ...(
-      project.equipment.length
-        ? project.equipment.map((item) => `- ${packetText(item.name)} - ${packetText(item.status)}`)
-        : ["No equipment records."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
-function createBudgetTopSheetMarkdown(project: FilmProject, exportedAt: string): string {
-  const budget = budgetTopSheetForProject(project);
-  const lines = [
-    `# Budget Top Sheet: ${packetText(project.title)}`,
-    "",
-    `Exported: ${packetText(exportedAt)}`,
-    `Workspace: ${packetText(state.workspace.name)}`,
-    "Policy: provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded.",
-    "",
-    "## Summary",
-    `- Total budget: ${formatCurrency(project.totalBudget)}`,
-    `- Spent: ${formatCurrency(project.spentBudget)}`,
-    `- Remaining: ${formatCurrency(budget.remaining)}`,
-    `- Used: ${budget.usedPercent}%`,
-    `- Line budget: ${formatCurrency(budget.lineBudget)}`,
-    `- Line spend: ${formatCurrency(budget.lineSpent)}`,
-    `- Budget risk: ${budget.overBudgetCount} over budget / ${budget.nearBudgetCount} near budget`,
-    "",
-    "## Budget Lines",
-    ...(
-      project.expenses.length
-        ? project.expenses.map((expense) => `- ${packetText(expenseCategoryLabel(expense))} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`)
-        : ["No expense rows recorded."]
-    ),
-    "",
-  ];
-
-  return `${lines.join("\n")}\n`;
+  await completeLocalExport({
+    content: markdown,
+    filename,
+    auditMessage: `Team roster exported: ${memberCount} members`,
+    successMessage: `Team roster exported with ${memberCount} members.`,
+    persistenceFailureMessage: "Team roster exported. Local audit persistence failed.",
+  });
 }
 
 function productionShotExportRows(project: FilmProject, shots: ProductionShot[]): ProductionShotExportRow[] {
@@ -15903,14 +15600,6 @@ function productionShotExportRows(project: FilmProject, shots: ProductionShot[])
 
 
 
-function packetPlanningFields(fields: Record<string, unknown>): string {
-  const entries = Object.entries(fields)
-    .slice(0, 6)
-    .map(([key, value]) => `${packetText(key)}=${packetText(String(value ?? ""))}`)
-    .filter((entry) => entry !== "=");
-  return entries.length ? entries.join("; ") : "No fields";
-}
-
 function optionalWorkerFetch(timeoutMs = OPTIONAL_WORKER_TIMEOUT_MS): typeof fetch {
   return async (input, init) => {
     const controller = new AbortController();
@@ -15944,7 +15633,7 @@ async function exportBackup(): Promise<void> {
     const { planningExport, message: planningExportMessage } = await loadPlanningExportForBackup();
     const snapshot = createBackupSnapshot(state.workspace, { planningExport });
     const bundle = await createEncryptedBackupZipBundle(snapshot, passphrase);
-    const blob = new Blob([bundle.bytes], { type: "application/zip" });
+    const blob = new Blob([copyBytesToArrayBuffer(bundle.bytes)], { type: "application/zip" });
     downloadBlob(blob, `film-backup-${snapshot.createdAt.slice(0, 10)}.filmbackup.zip`);
 
     const workerBackupMessage = await updateWorkerBackupStorage(bundle.bytes, snapshot.createdAt);
@@ -16975,14 +16664,14 @@ async function checkRestorePlanningDryRun(): Promise<void> {
       createAuditEvent(
         `Planning restore preview checked: ${result.createPreview.length} creates, ${result.updatePreview.length} updates`,
         "System",
-        result.rejected.length ? "amber" : "green",
+        result.rejected.length ? "amber" : "teal",
       ),
     );
     await persistWorkspace(
       createOperation(
         state.workspace.id,
         "restore.dry_run",
-        "planning_restore",
+        "restore_point",
         preview.createdAt,
         "Planning restore preview checked",
         {
@@ -17894,7 +17583,7 @@ async function addManualScreenplayElement(formData: FormData): Promise<void> {
     const index = state.workspace.screenplayBreakdowns.findIndex((candidate) => candidate.id === breakdown.id);
     if (index < 0) return;
     state.workspace.screenplayBreakdowns.splice(index, 1, next);
-    state.ui.screenplayElementFilter = category;
+    state.ui.screenplayElementFilter = category as ScreenplayElementCategory;
     state.ui.toast = `${name.trim().replace(/\s+/g, " ")}: added to the selected scene as ${SCREENPLAY_ELEMENT_LABELS[category as ScreenplayElementCategory]}.`;
     await persistWorkspace();
   } catch (error) {
@@ -18942,10 +18631,12 @@ async function syncQueuedOperations(): Promise<void> {
       canonicalApplied?: string[];
       persistence?: string;
       auditPersistence?: string;
+      rejected?: Array<{ id: string; reason: string }>;
       error?: string;
     };
     if (!response.ok || !body.accepted) {
-      throw new Error(body.error ?? `Sync preflight failed with ${response.status}`);
+      const rejection = body.rejected?.[0];
+      throw new Error(rejection?.reason ?? body.error ?? `Sync preflight failed with ${response.status}`);
     }
 
     const auditPersistence = body.auditPersistence ? `; audit ${body.auditPersistence.replaceAll("_", " ")}` : "";
@@ -19030,21 +18721,6 @@ function icon(name: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value).replaceAll("`", "&#096;");
-}
-
-function shortHash(value: string | null): string {
-  return value ? `${value.slice(0, 8)}...${value.slice(-6)}` : "pending";
-}
-
-function formatShortDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function initialsFor(value: string): string {

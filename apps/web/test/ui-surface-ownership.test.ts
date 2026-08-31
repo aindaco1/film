@@ -49,6 +49,7 @@ describe("canonical UI surface ownership", () => {
       ["contextual-record-update", 4],
       ["permission-manifest", 2],
       ["production-shot-reorder", 2],
+      ["project-select", 2],
       ["schedule-scene-reorder", 2],
       ["screenplay-element-merge", 2],
       ["screenplay-scene-order", 2],

@@ -14,6 +14,7 @@
     "dev:web": "npm run dev -w @film/web",
     "dev:worker": "npm run dev -w @film/worker",
     "build": "npm run build --workspaces --if-present",
+    "typecheck:web": "tsc -p apps/web/tsconfig.json --noEmit",
     "test": "npm run test:scripts && npm run test --workspaces --if-present",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
@@ -33,7 +34,7 @@
     "check:sms:preflight": "node scripts/check-deployment-readiness.mjs --strict --wrangler-secrets --sms-preflight",
     "bootstrap:production-owner": "node scripts/bootstrap-production-owner.mjs",
     "report:production-traffic": "node scripts/production-traffic-report.mjs",
-    "smoke": "npm run build && npm run test && npm run test:security && npm run test:migrations && npm run test:browser"
+    "smoke": "npm run build && npm run typecheck:web && npm run test && npm run test:security && npm run test:migrations && npm run test:browser"
   },
   "devDependencies": {
     "axe-core": "^4.12.1",

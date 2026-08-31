@@ -1,4 +1,5 @@
 import { openNotionZip, readZipEntryBytes } from "./import-preview";
+import { copyBytesToArrayBuffer } from "./binary-buffer";
 import type {
   RestoreAttachmentPackageManifestObjectRequest,
   RestoreAttachmentPackageManifestRequest,
@@ -241,7 +242,7 @@ export async function readStoredAttachmentPackageObjects(
     }
     verified.push({
       manifest: object,
-      blob: new Blob([bytes], { type: object.contentType ?? "application/octet-stream" }),
+      blob: new Blob([copyBytesToArrayBuffer(bytes)], { type: object.contentType ?? "application/octet-stream" }),
     });
   }
 
@@ -338,7 +339,7 @@ function normalizeNullableString(value: unknown, maxLength: number): string | nu
 }
 
 function requireNonNegativeInteger(value: unknown, fieldName: string): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`Attachment package manifest ${fieldName} must be a non-negative integer.`);
   }
   return value;

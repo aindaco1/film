@@ -1,4 +1,5 @@
 import type { BackupPlanningExport } from "@film/schema";
+import { copyBytesToArrayBuffer } from "./binary-buffer";
 import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
 export type BackupDryRunRestorePoint = {
@@ -137,7 +138,7 @@ export async function storeBackupObject(
       "x-film-sha256": sha256,
       "x-film-storage-confirmation": `STORE BACKUP ${workspaceId}`,
     },
-    body: new Blob([bytes], { type: "application/zip" }),
+    body: new Blob([copyBytesToArrayBuffer(bytes)], { type: "application/zip" }),
   });
   const body = (await response.json()) as BackupObjectStoreResponse;
   if (!response.ok) {
@@ -279,6 +280,6 @@ function filenameFromContentDisposition(value: string | null): string | null {
 }
 
 async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = await crypto.subtle.digest("SHA-256", copyBytesToArrayBuffer(bytes));
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

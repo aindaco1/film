@@ -1,4 +1,5 @@
 import type { NotionExportContentFile, NotionExportFile, NotionExportImportFile } from "@film/importers";
+import { copyBytesToArrayBuffer } from "./binary-buffer";
 
 export type BrowserImportFile = File & {
   webkitRelativePath?: string;
@@ -162,7 +163,7 @@ export async function readNotionZipImportFiles(
     if (isAssetImportFile(entry.path)) {
       files.push({
         ...base,
-        readBlob: async () => new Blob([await readZipEntryBytes(zip.data, entry)], { type: entry.contentType }),
+        readBlob: async () => new Blob([copyBytesToArrayBuffer(await readZipEntryBytes(zip.data, entry))], { type: entry.contentType }),
       });
       continue;
     }

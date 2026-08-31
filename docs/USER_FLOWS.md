@@ -195,21 +195,22 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 
 ## Projects
 
-### PROJECT-01: Create and select a film project
+### PROJECT-01: Create, select, and update a film project
 
 - Persona: Owner or producer
 - Primary workspace: projects
 - Steps:
   1. Open New project, enter a title, and choose a project type.
   2. Submit and select the resulting project.
-- Successful outcome: A typed film template appears locally and one bounded canonical-sync operation is queued.
+  3. Edit phase, dates, budget, location, or description directly in the project overview.
+- Successful outcome: The typed film template and in-place edits each queue one bounded canonical-sync operation.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `project onboarding`
+  - browser: `scripts/browser-smoke.mjs` contains `project overview edited canonical project details in place`
 
 ### PROJECT-02: Export a filtered project directory
 
@@ -595,15 +596,16 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Primary workspace: people
 - Steps:
   1. Add a crew member with role.
-  2. Export the project crew directory.
-- Successful outcome: The visible roster updates and the handoff omits contact fields.
+  2. Edit the member's name or role directly in the visible roster.
+  3. Export the project crew directory.
+- Successful outcome: The visible roster and canonical replay operation update together; the handoff omits contact fields.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `people workspace local create`
+  - browser: `scripts/browser-smoke.mjs` contains `people workspace local create/edit`
 
 ## Equipment
 
@@ -613,15 +615,16 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Primary workspace: equipment
 - Steps:
   1. Add equipment and readiness status.
-  2. Export the project gear pull.
-- Successful outcome: The visible equipment state and exported handoff agree.
+  2. Edit the item and status directly in the visible gear row.
+  3. Export the project gear pull.
+- Successful outcome: The visible equipment state, queued canonical edit, and exported handoff agree.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `equipment workspace local create`
+  - browser: `scripts/browser-smoke.mjs` contains `equipment workspace local create/edit`
 
 ## Expenses
 
@@ -631,15 +634,16 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Primary workspace: expenses
 - Steps:
   1. Add an expense line with spent and budget values.
-  2. Review totals/status and export the top sheet.
-- Successful outcome: Totals update without conflating schedule estimates and planned/actual expense records.
+  2. Edit category, spent, or budget values directly in the visible line.
+  3. Review totals/status and export the top sheet.
+- Successful outcome: Totals and canonical replay update without conflating schedule estimates and planned/actual expense records.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `expenses workspace local create`
+  - browser: `scripts/browser-smoke.mjs` contains `expenses workspace local create/edit`
 
 ## Import
 

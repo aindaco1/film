@@ -887,6 +887,8 @@ export type CanonicalProject = {
   status: string;
   phase: string;
   logline: string | null;
+  shootDates: string | null;
+  location: string | null;
   ownerMemberId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1144,14 +1146,18 @@ export type BackupAttachmentItem = {
 export type OperationKind =
   | "workspace.seeded"
   | "project.created"
+  | "project.updated"
   | "task.created"
   | "task.updated"
   | "task.completed"
   | "document.created"
   | "document.updated"
   | "person.created"
+  | "person.updated"
   | "equipment.created"
+  | "equipment.updated"
   | "expense.created"
+  | "expense.updated"
   | "backup.exported"
   | "restore.dry_run"
   | "import.notion_applied";
@@ -5450,14 +5456,18 @@ function isAllowedOperationPair(
   const allowed: Record<OperationKind, OperationRecord["entityType"][]> = {
     "workspace.seeded": ["workspace"],
     "project.created": ["project"],
+    "project.updated": ["project"],
     "task.created": ["task"],
     "task.updated": ["task"],
     "task.completed": ["task"],
     "document.created": ["document"],
     "document.updated": ["document"],
     "person.created": ["person"],
+    "person.updated": ["person"],
     "equipment.created": ["equipment"],
+    "equipment.updated": ["equipment"],
     "expense.created": ["expense"],
+    "expense.updated": ["expense"],
     "backup.exported": ["backup"],
     "restore.dry_run": ["restore_point", "backup"],
     "import.notion_applied": ["import"],

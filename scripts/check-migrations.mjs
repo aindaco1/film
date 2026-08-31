@@ -72,7 +72,7 @@ const expectedColumns = new Map([
   ["meta_data_deletion_requests", ["confirmation_code", "request_fingerprint", "meta_user_id_sha256", "status"]],
   ["meta_provider_connections", ["user_access_token_ciphertext", "page_access_token_ciphertext", "token_key_version", "page_id", "instagram_account_id"]],
   ["people", ["owner_member_id"]],
-  ["projects", ["owner_member_id"]],
+  ["projects", ["owner_member_id", "shoot_dates", "location"]],
   ["provider_connections", ["access_token_ciphertext", "refresh_token_ciphertext", "token_key_version"]],
   ["sms_consent_events", ["source_event_id", "disclosure_version", "categories_json"]],
   ["sms_delivery_attempts", ["provider_message_id", "segment_count", "emergency_override", "error_codes_json"]],

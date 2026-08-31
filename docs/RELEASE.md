@@ -28,9 +28,9 @@ The CI workflow does not run `npm run check:companions` because normal GitHub ch
 
 Expected local state:
 
-- `npm run smoke` passes build, unit tests, secret scan, migration validation, and browser smoke.
+- `npm run smoke` passes package builds, strict web type-checking, unit tests, secret scan, migration validation, and browser smoke.
 - `FILM_WORKER_SMOKE_ORIGIN=<local-or-staging-worker-origin> npm run smoke:worker` passes real Worker health, dry-run magic-link auth, canonical workspace snapshot hydration, session metadata, MVP provider dry-runs, Stripe readiness, Google Drive sync planning, and logout without printing dev tokens or secrets.
-- `FILM_WORKER_SMOKE_ORIGIN=<local-or-staging-worker-origin> npm run smoke:browser:worker` passes browser UI magic-link auth, canonical workspace hydration, provider chip dry-runs, Stripe readiness, Google Drive sync planning, canonical task/document writes, protected mutation apply, encrypted backup export, non-destructive restore preview, and logout against that Worker origin.
+- `FILM_WORKER_SMOKE_ORIGIN=<local-or-staging-worker-origin> npm run smoke:browser:worker` passes browser UI magic-link auth, canonical workspace hydration, real-D1 project/task/person/equipment/expense create/edit replay, provider chip dry-runs, Stripe readiness, Google Drive sync planning, canonical document writes, protected mutation apply, encrypted backup export, non-destructive restore preview, and logout against that Worker origin.
 - `FILM_WORKER_SMOKE_ORIGIN=<local-or-staging-worker-origin> npm run smoke:providers:live` passes provider readiness smoke without printing secrets; use `FILM_LIVE_PROVIDER_SMOKE_ALLOW_STRIPE=1` and `FILM_LIVE_PROVIDER_SMOKE_SEND_INVITE=1` only for approved local/staging live-adapter exercises. If a cold provider summary scan exceeds the default 90s budget, set `FILM_LIVE_PROVIDER_SMOKE_TIMEOUT_MS` or pass `--timeout-ms`.
 - `npm run smoke:auth:production -- --allow-send --require --check-runtime-readiness` passes the production member-only Resend flow, canonical workspace snapshot, protected two-live/five-blocked provider manifest, live/redacted Google readiness and metadata-only authorization start, session read, logout, and revocation without printing sensitive values.
 - `npm run smoke:auth:production -- --allow-send --require --create-project-title 'Big Sword' --project-type 'Feature Film' --project-id project_big_sword --apply-project --notion-source-dir <extracted-export> --apply-notion-import` is the explicit operator-only, create-only Notion production path. It must end with an idempotent replay and revoked session; never point it at an unsanitized private export.
@@ -55,7 +55,7 @@ Before public release, verify:
 - `STRIPE_PROJECT_MAPPINGS={}` and `STRIPE_SUMMARY_MODE=disabled` until exact Big Sword Pool/Store resources exist; when live summaries are requested, require safe refs, `STRIPE_WEBHOOK_SECRET`, `STRIPE_REDACTED_AUDIT=true`, `STRIPE_SUMMARY_ADAPTER_SECRET`, and matching companion `FILM_STRIPE_SUMMARY_ADAPTER_SECRET` bindings
 - `META_OAUTH_MODE=disabled` until the Meta app/Login, recoverable key, review, and owned-account smoke are complete
 - `SMS_MODE=disabled` and `TELNYX_WEBHOOK_MODE=disabled` while the appealed campaign advances from TCR acceptance through MNO registration; the installed Telnyx API key, portal public key, Film profile/campaign IDs, and inbound number mapping satisfy configuration preflight, but signed STOP/START/HELP fixtures and an explicitly authorized owned-number send must pass after carrier approval
-- migrations through `0036_sms_retention_indexes.sql` are applied before deploying the current Worker
+- migrations through `0037_project_operational_fields.sql` are applied before deploying the current Worker
 
 Do not commit `.dev.vars`, provider keys, OAuth tokens, raw exports, generated backup ZIPs, screenshots with sensitive data, or release evidence that includes secret values.
 

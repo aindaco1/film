@@ -74,27 +74,38 @@ function reconcileProject(
   const peopleIds = new Set(snapshot.projectPeople
     .filter((item) => item.projectId === canonical.id)
     .map((item) => item.personId));
-  const completedCount = canonicalTasks.filter((task) => isCompletedTaskStatus(task.status)).length;
+  const completedCount = canonicalTasks.filter((task) =>
+    isCompletedTaskStatus(task.status) || hasQueuedOperation(queued, task.id, "task.completed")
+  ).length;
   const openTasks = canonicalTasks
-    .filter((task) => !isCompletedTaskStatus(task.status))
+    .filter((task) => !isCompletedTaskStatus(task.status) && !hasQueuedOperation(queued, task.id, "task.completed"))
     .map((task) => canonicalTaskToLocal(task, local, queued));
   appendQueuedCreates(openTasks, local?.openTasks ?? [], queued, canonical.id, "task.created");
   const docs = canonicalDocuments.map((document) => canonicalDocumentToLocal(document, local, queued));
   appendQueuedCreates(docs, local?.docs ?? [], queued, canonical.id, "document.created");
-  const equipment = canonicalEquipment.map((item) => canonicalEquipmentToLocal(item, local));
+  const equipment = canonicalEquipment.map((item) => canonicalEquipmentToLocal(item, local, queued));
   appendQueuedCreates(equipment, local?.equipment ?? [], queued, canonical.id, "equipment.created");
-  const expenses = canonicalExpenses.map((expense) => canonicalExpenseToLocal(expense));
+  const expenses = canonicalExpenses.map((expense) => canonicalExpenseToLocal(expense, local, queued));
   appendQueuedCreates(expenses, local?.expenses ?? [], queued, canonical.id, "expense.created");
+  const projectPeople = new Map(snapshot.projectPeople
+    .filter((item) => item.projectId === canonical.id)
+    .map((item) => [item.personId, item]));
   const people = snapshot.people
     .filter((person) => peopleIds.has(person.id))
-    .map((person) => ({
-      id: person.id,
-      name: person.displayName,
-      role: person.roleTags[0] ?? "Crew",
-      initials: initialsFor(person.displayName),
-    }));
+    .map((person) => {
+      const localPerson = local?.people.find((candidate) => candidate.id === person.id);
+      if (localPerson && hasQueuedOperation(queued, person.id, "person.updated")) return localPerson;
+      const name = person.displayName;
+      return {
+        id: person.id,
+        name,
+        role: projectPeople.get(person.id)?.projectRole ?? person.roleTags[0] ?? "Crew",
+        initials: initialsFor(name),
+      };
+    });
   appendQueuedCreates(people, local?.people ?? [], queued, canonical.id, "person.created");
-  const phase = localProjectPhase(canonical.phase);
+  const hasQueuedProjectUpdate = hasQueuedOperation(queued, canonical.id, "project.updated");
+  const phase = hasQueuedProjectUpdate && local ? local.phase : localProjectPhase(canonical.phase);
   const totalTasks = completedCount + openTasks.length;
 
   return {
@@ -108,12 +119,14 @@ function reconcileProject(
     color: local?.color ?? toneForPhase(phase),
     starred: local?.starred ?? false,
     progress: totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0,
-    shootDates: formatShootDates(profile, local?.shootDates),
+    shootDates: hasQueuedProjectUpdate && local
+      ? local.shootDates
+      : canonical.shootDates ?? formatShootDates(profile, local?.shootDates),
     spentBudget: (profile?.spentCents ?? 0) / 100,
-    totalBudget: (profile?.budgetCents ?? 0) / 100,
-    location: local?.location ?? "TBD",
+    totalBudget: hasQueuedProjectUpdate && local ? local.totalBudget : (profile?.budgetCents ?? 0) / 100,
+    location: hasQueuedProjectUpdate && local ? local.location : canonical.location ?? local?.location ?? "TBD",
     workflow: "Canonical workspace",
-    description: canonical.logline ?? local?.description ?? "",
+    description: hasQueuedProjectUpdate && local ? local.description : canonical.logline ?? local?.description ?? "",
     tasks: { done: completedCount, total: totalTasks },
     timeline: local?.timeline ?? [],
     openTasks,
@@ -131,14 +144,14 @@ function canonicalTaskToLocal(
   queued: OperationRecord[],
 ): FilmProject["openTasks"][number] {
   const local = localProject?.openTasks.find((candidate) => candidate.id === task.id);
-  const hasQueuedUpdate = queued.some((operation) =>
-    operation.entityId === task.id && (operation.kind === "task.updated" || operation.kind === "task.completed")
-  );
+  const hasQueuedUpdate = hasQueuedOperation(queued, task.id, "task.updated")
+    || hasQueuedOperation(queued, task.id, "task.completed");
+  if (hasQueuedUpdate && local) return local;
   return {
     id: task.id,
     title: task.title,
     due: task.dueAt ?? "Unscheduled",
-    status: hasQueuedUpdate && local ? local.status : localTaskStatus(task),
+    status: localTaskStatus(task),
   };
 }
 
@@ -165,8 +178,10 @@ function canonicalDocumentToLocal(
 function canonicalEquipmentToLocal(
   item: CanonicalEquipment,
   localProject: FilmProject | null,
+  queued: OperationRecord[],
 ): FilmProject["equipment"][number] {
   const local = localProject?.equipment.find((candidate) => candidate.id === item.id);
+  if (local && hasQueuedOperation(queued, item.id, "equipment.updated")) return local;
   return {
     id: item.id,
     name: item.name,
@@ -175,7 +190,13 @@ function canonicalEquipmentToLocal(
   };
 }
 
-function canonicalExpenseToLocal(expense: CanonicalExpense): FilmProject["expenses"][number] {
+function canonicalExpenseToLocal(
+  expense: CanonicalExpense,
+  localProject: FilmProject | null,
+  queued: OperationRecord[],
+): FilmProject["expenses"][number] {
+  const local = localProject?.expenses.find((candidate) => candidate.id === expense.id);
+  if (local && hasQueuedOperation(queued, expense.id, "expense.updated")) return local;
   const spent = expense.spentCents / 100;
   const budget = expense.budgetCents / 100;
   return {
@@ -185,6 +206,14 @@ function canonicalExpenseToLocal(expense: CanonicalExpense): FilmProject["expens
     budget,
     percent: budget > 0 ? Math.round((spent / budget) * 100) : 0,
   };
+}
+
+function hasQueuedOperation(
+  queued: OperationRecord[],
+  entityId: string,
+  kind: OperationRecord["kind"],
+): boolean {
+  return queued.some((operation) => operation.entityId === entityId && operation.kind === kind);
 }
 
 function appendQueuedCreates<T extends { id: string }>(
@@ -217,6 +246,7 @@ function isCompletedTaskStatus(status: string): boolean {
 }
 
 function isPastDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return false;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) && timestamp < Date.now();
 }

@@ -41,6 +41,7 @@ describe("web app shell", () => {
     const source = await readFile("src/main.ts", "utf8");
     const productionExports = await readFile("src/production-document-export.ts", "utf8");
     const productionResourceExports = await readFile("src/production-resource-export.ts", "utf8");
+    const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
     const styles = await readFile("src/styles.css", "utf8");
 
     expect(source).toContain("case \"projects\"");
@@ -57,7 +58,7 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"export-project-directory\"");
     expect(source).toContain("createProjectDirectoryMarkdown");
     expect(source).toContain("Project directory exported");
-    expect(source).toContain("Markdown document bodies are excluded");
+    expect(localHandoffExports).toContain("Markdown document bodies are excluded");
     expect(source).toContain("renderScheduleWorkspace");
     expect(source).toContain("Stripboard");
     expect(source).toContain("Availability &amp; conflicts");
@@ -65,9 +66,9 @@ describe("web app shell", () => {
     expect(source).not.toContain("renderScheduleTimelinePanel");
     expect(source).toContain("data-action=\"export-project-packet\"");
     expect(source).toContain("createProjectPacketMarkdown");
-    expect(source).toContain("## Planning Rows");
-    expect(source).toContain("packetPlanningFields");
-    expect(source).toContain("provider secrets, OAuth tokens, raw attachment bytes, and private Worker state are excluded");
+    expect(localHandoffExports).toContain("## Planning Rows");
+    expect(localHandoffExports).toContain("function planningFields");
+    expect(localHandoffExports).toContain("provider secrets, OAuth tokens, raw attachment bytes, and private Worker state are excluded");
     expect(source).toContain("Project packet exported");
     expect(source).toContain("renderShotsWorkspace");
     expect(source).toContain("Shots workspace");
@@ -321,6 +322,7 @@ describe("web app shell", () => {
 
   it("edits routine records in context through one shared handler", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const presentation = await readFile("src/presentation-format.ts", "utf8");
     const styles = await readFile("src/styles.css", "utf8");
 
     expect(source.match(/async function handleContextualRecordUpdate/g)).toHaveLength(1);
@@ -328,6 +330,9 @@ describe("web app shell", () => {
       expect(source).toContain(`data-record-kind="${kind}"`);
     }
     expect(source).toContain('data-action="project-inline-update"');
+    expect(source).toContain('data-action="project-select"');
+    expect(source).toContain('querySelectorAll<HTMLElement>("[data-action=\'project-select\']")');
+    expect(source).not.toContain('querySelectorAll<HTMLElement>("[data-project-id]")');
     expect(source).toContain('data-action="membership-assign"');
     expect(source).toContain("renderTeamMemberRow");
     expect(source).toContain("teamAssignmentFor");
@@ -336,13 +341,15 @@ describe("web app shell", () => {
     expect(source).toContain("Owner or producer access required");
     expect(source).toContain("renderInlineSaveButton");
     expect(source).toContain('>${icon("save")}</button>`');
-    expect(source).toContain("function expenseCategoryLabel");
+    expect(source).toContain("expenseCategoryLabel");
+    expect(presentation).toContain("export function expenseCategoryLabel");
     expect(source).toContain("function normalizeContextualWorkspaceData");
     expect(source).toContain("normalizeContextualWorkspaceData(localMirror.workspace)");
+    expect(source).toContain("body.rejected?.[0]");
     for (const collection of ["openTasks", "people", "equipment", "expenses"]) {
       expect(source).toContain(`const ${collection} = project.${collection}.map`);
     }
-    expect(source).toContain('"Uncategorized"');
+    expect(presentation).toContain('"Uncategorized"');
     expect(source).toContain("renderCreateDisclosure");
     expect(styles).toContain(".contextual-field");
     expect(styles).toContain(".create-disclosure");
@@ -384,6 +391,7 @@ describe("web app shell", () => {
 
   it("exposes stored backup manifest and preview controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
 
     expect(source).toContain("section: \"backups\"");
     expect(source).toContain("renderBackupsWorkspace");
@@ -403,7 +411,7 @@ describe("web app shell", () => {
     expect(source).toContain('escapeHtml(latestBackup?.label ?? "None")');
     expect(source).toContain("data-action=\"export-activity-log\"");
     expect(source).toContain("createActivityLogMarkdown");
-    expect(source).toContain("raw Worker audit metadata");
+    expect(localHandoffExports).toContain("raw Worker audit metadata");
     expect(source).toContain("Local activity log exported");
     expect(source).toContain("exportWorkerAuditEventManifest");
     expect(source).toContain("data-action=\"worker-audit-filter\"");
@@ -604,6 +612,7 @@ describe("web app shell", () => {
 
   it("exposes local-first Markdown editing with canonical stale-checked saves", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
 
     expect(source).toContain("section: \"docs\"");
     expect(source).toContain("renderDocsWorkspace");
@@ -613,7 +622,7 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"export-selected-doc\"");
     expect(source).toContain("createDocumentDraftMarkdown");
     expect(source).toContain("saveCanonicalDocumentMarkdown");
-    expect(source).toContain("This explicit export includes the selected Markdown body");
+    expect(localHandoffExports).toContain("This explicit export includes the selected Markdown body");
     expect(source).toContain("Document draft exported");
     expect(source).toContain("Save draft");
     expect(source).toContain("document.updated");
@@ -704,6 +713,7 @@ describe("web app shell", () => {
 
   it("exposes a local planning review panel for imported Notion planning rows", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
 
     expect(source).toContain("workspaceSection");
     expect(source).toContain("section: \"planning\"");
@@ -724,7 +734,7 @@ describe("web app shell", () => {
     expect(source).toContain("Planning kind filter");
     expect(source).toContain("data-action=\"export-planning-view\"");
     expect(source).toContain("createPlanningViewMarkdown");
-    expect(source).toContain("raw import source paths are excluded. Source labels are included without local file paths.");
+    expect(localHandoffExports).toContain("raw import source paths are excluded. Source labels are included without local file paths.");
     expect(source).toContain("Planning view exported");
     expect(source).toContain("planningKindFilter");
     expect(source).toContain("isPlanningKindFilter");
@@ -762,12 +772,13 @@ describe("web app shell", () => {
 
   it("exposes protected workspace member status controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
 
     expect(source).toContain("data-action=\"export-team-roster\"");
     expect(source).toContain("createTeamRosterMarkdown");
     expect(source).toContain("Team roster exported");
-    expect(source).toContain("raw email addresses");
-    expect(source).toContain("Email references are short hashes only");
+    expect(localHandoffExports).toContain("raw email addresses");
+    expect(localHandoffExports).toContain("Email references are short hashes only");
     expect(source).toContain("data-action=\"member-status-update\"");
     expect(source).toContain("team-status-form");
     expect(source).toContain("inline-status-button");

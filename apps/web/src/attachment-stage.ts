@@ -1,6 +1,7 @@
 import type { NotionExportImportFile } from "@film/importers";
 import type { ProjectDoc, WorkspaceData } from "@film/schema";
 import type { AttachmentBlobRecord } from "./local-mirror";
+import { copyBytesToArrayBuffer } from "./binary-buffer";
 
 export type StagedNotionImportFile = NotionExportImportFile & {
   readBlob?: () => Promise<Blob>;
@@ -230,6 +231,6 @@ function fileExtension(path: string): string {
 }
 
 async function sha256Bytes(bytes: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = await crypto.subtle.digest("SHA-256", copyBytesToArrayBuffer(bytes));
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

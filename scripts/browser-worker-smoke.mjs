@@ -79,6 +79,8 @@ try {
   await expectBodyText(page, "Signed-in workspace restored.");
   await expectBodyText(page, "owner session");
 
+  await runCanonicalContextualReplayFlow(page);
+
   await page.locator("[data-action='integrations-open']:visible").click();
   await expectInspectorView(page, "integrations");
   for (const [key, label] of Object.entries(PROVIDER_LABELS)) {
@@ -132,7 +134,7 @@ try {
   await page.locator("[data-action='auth-sign-out']").click();
   await expectBodyText(page, "Signed out of Film.");
 
-	  console.log("Browser Worker smoke passed: app shell, resumable Worker auth, canonical workspace hydration, provider dry-runs, disabled Meta inspector, Stripe readiness, Google Drive sync plan, canonical document save, protected mutation apply, protected profile mutation apply, encrypted backup export, restore preview, logout");
+	  console.log("Browser Worker smoke passed: app shell, resumable Worker auth, canonical workspace hydration, real-D1 contextual record replay, provider dry-runs, disabled Meta inspector, Stripe readiness, Google Drive sync plan, canonical document save, protected mutation apply, protected profile mutation apply, encrypted backup export, restore preview, logout");
 } catch (error) {
   console.error(`Browser Worker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
@@ -198,6 +200,100 @@ async function expectAnyBodyText(page, texts) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Expected body to contain one of: ${texts.join(", ")}`);
+}
+
+async function runCanonicalContextualReplayFlow(page) {
+  const projectTitle = `Browser Worker Contextual ${Date.now()}`;
+  await clickWorkspaceSection(page, "projects");
+  await page.locator("[data-action='create-project']:visible").first().click();
+  const createProjectForm = page.locator("form[data-action='project-create-form']");
+  await createProjectForm.locator("input[name='title']").fill(projectTitle);
+  await createProjectForm.locator("select[name='projectType']").selectOption({ label: "Feature Film" });
+  await createProjectForm.locator("button[type='submit']").click();
+  await expectBodyText(page, "Feature Film created from the film template and queued for sync.");
+  await syncOneCanonicalOperation(page, "project create");
+
+  await selectInspectorView(page, "overview");
+  const projectForm = page.locator("form[data-action='project-inline-update']");
+  await projectForm.locator("input[name='shootDates']").fill("Sep 14 - Sep 16");
+  await projectForm.locator("input[name='totalBudget']").fill("15000");
+  await projectForm.locator("input[name='location']").fill("Browser Worker Stage");
+  await projectForm.locator("textarea[name='description']").fill("Canonical contextual replay smoke.");
+  await projectForm.locator("button[type='submit']").click();
+  await expectBodyText(page, "Project details saved locally.");
+  await syncOneCanonicalOperation(page, "project update");
+  await expectEditableValue(page, "form[data-action='project-inline-update'] input[name='location']", "Browser Worker Stage");
+
+  await clickWorkspaceSection(page, "tasks");
+  await submitForm(page, "form[data-action='add-task']", { title: "Contextual task", due: "Sep 1" });
+  await expectBodyText(page, "Task added to the IndexedDB operation log.");
+  await syncOneCanonicalOperation(page, "task create");
+  const taskForm = page.locator("form[data-record-kind='task']").filter({ has: page.locator("input[value='Contextual task']") }).first();
+  await taskForm.locator("input[name='title']").fill("Edited contextual task");
+  await taskForm.locator("input[name='due']").fill("Sep 2");
+  await taskForm.locator("select[name='status']").selectOption("ready");
+  await expectBodyText(page, "Task updated: Edited contextual task Saved locally.");
+  await syncOneCanonicalOperation(page, "task update");
+  await expectEditableValue(page, "form[data-record-kind='task'] input[name='title']", "Edited contextual task");
+
+  await clickWorkspaceSection(page, "people");
+  await submitForm(page, "form[data-action='add-person']", { name: "Context Person", role: "Crew" });
+  await expectBodyText(page, "Person added to the local operation log.");
+  await syncOneCanonicalOperation(page, "person create");
+  const personForm = page.locator("form[data-record-kind='person']").first();
+  await personForm.locator("input[name='name']").fill("Edited Context Person");
+  await personForm.locator("input[name='role']").fill("Gaffer");
+  await personForm.locator("button[type='submit']").click();
+  await expectBodyText(page, "Person updated: Edited Context Person Saved locally.");
+  await syncOneCanonicalOperation(page, "person update");
+  await expectEditableValue(page, "form[data-record-kind='person'] input[name='role']", "Gaffer");
+
+  await clickWorkspaceSection(page, "equipment");
+  await submitForm(page, "form[data-action='add-equipment']", { name: "Context Camera", status: "Planned" });
+  await expectBodyText(page, "Equipment added to the local operation log.");
+  await syncOneCanonicalOperation(page, "equipment create");
+  const equipmentForm = page.locator("form[data-record-kind='equipment']").first();
+  await equipmentForm.locator("input[name='name']").fill("Edited Context Camera");
+  await equipmentForm.locator("input[name='status']").fill("Checked out");
+  await equipmentForm.locator("button[type='submit']").click();
+  await expectBodyText(page, "Equipment updated: Edited Context Camera Saved locally.");
+  await syncOneCanonicalOperation(page, "equipment update");
+  await expectEditableValue(page, "form[data-record-kind='equipment'] input[name='status']", "Checked out");
+
+  await clickWorkspaceSection(page, "expenses");
+  await submitForm(page, "form[data-action='add-expense']", { category: "Context rental", spent: "100", budget: "200" });
+  await expectBodyText(page, "Expense added to the local operation log.");
+  await syncOneCanonicalOperation(page, "expense create");
+  const expenseForm = page.locator("form[data-record-kind='expense']").first();
+  await expenseForm.locator("input[name='category']").fill("Edited context rental");
+  await expenseForm.locator("input[name='spent']").fill("150");
+  await expenseForm.locator("input[name='budget']").fill("300");
+  await expenseForm.locator("button[type='submit']").click();
+  await expectBodyText(page, "Expense updated: Edited context rental Saved locally.");
+  await syncOneCanonicalOperation(page, "expense update");
+  await expectEditableValue(page, "form[data-record-kind='expense'] input[name='spent']", "150");
+}
+
+async function syncOneCanonicalOperation(page, label) {
+  await page.locator("[data-action='sync-dry-run']").click();
+  try {
+    await expectBodyText(page, "D1 replay accepted");
+    await expectBodyText(page, "1 record applied");
+  } catch (error) {
+    const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ").slice(-1000);
+    throw new Error(`${label} canonical sync failed: ${error instanceof Error ? error.message : String(error)}; UI: ${bodyText}`);
+  }
+}
+
+async function expectEditableValue(page, selector, value) {
+  await page.waitForFunction(
+    ({ controlSelector, expectedValue }) => Array.from(document.querySelectorAll(controlSelector)).some((control) => (
+      (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)
+      && control.value === expectedValue
+    )),
+    { controlSelector: selector, expectedValue: value },
+    { timeout: REQUEST_TIMEOUT_MS },
+  );
 }
 
 async function runProtectedMutationFlow(page) {

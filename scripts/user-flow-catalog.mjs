@@ -60,10 +60,11 @@ export const FILM_USER_FLOWS = [
     "Resolve the request, preview the exact diff, and apply with stale checking.",
     "Review rollback guidance or leave a bounded comment intent.",
   ], "Review, diff, apply, audit, and rollback are distinct states; a stale record never receives a silent write.", [browser("runRecordMutationSmoke")]),
-  flow("PROJECT-01", "Projects", "Create and select a film project", "Owner or producer", "projects", [
+  flow("PROJECT-01", "Projects", "Create, select, and update a film project", "Owner or producer", "projects", [
     "Open New project, enter a title, and choose a project type.",
     "Submit and select the resulting project.",
-  ], "A typed film template appears locally and one bounded canonical-sync operation is queued.", [browser("project onboarding")]),
+    "Edit phase, dates, budget, location, or description directly in the project overview.",
+  ], "The typed film template and in-place edits each queue one bounded canonical-sync operation.", [browser("project overview edited canonical project details in place")]),
   flow("PROJECT-02", "Projects", "Export a filtered project directory", "Any member", "projects", [
     "Filter the project directory.",
     "Export the visible result as Markdown.",
@@ -154,16 +155,19 @@ export const FILM_USER_FLOWS = [
   ], "Stale canonical writes preserve the local draft and explicit export includes the body by user request.", [browser("docs workspace local create")]),
   flow("PEOPLE-01", "People", "Maintain and export a crew directory", "Producer or department lead", "people", [
     "Add a crew member with role.",
+    "Edit the member's name or role directly in the visible roster.",
     "Export the project crew directory.",
-  ], "The visible roster updates and the handoff omits contact fields.", [browser("people workspace local create")]),
+  ], "The visible roster and canonical replay operation update together; the handoff omits contact fields.", [browser("people workspace local create/edit")]),
   flow("EQUIPMENT-01", "Equipment", "Maintain and export a gear pull", "Producer or department lead", "equipment", [
     "Add equipment and readiness status.",
+    "Edit the item and status directly in the visible gear row.",
     "Export the project gear pull.",
-  ], "The visible equipment state and exported handoff agree.", [browser("equipment workspace local create")]),
+  ], "The visible equipment state, queued canonical edit, and exported handoff agree.", [browser("equipment workspace local create/edit")]),
   flow("EXPENSES-01", "Expenses", "Track costs and export the budget top sheet", "Owner or producer", "expenses", [
     "Add an expense line with spent and budget values.",
+    "Edit category, spent, or budget values directly in the visible line.",
     "Review totals/status and export the top sheet.",
-  ], "Totals update without conflating schedule estimates and planned/actual expense records.", [browser("expenses workspace local create")]),
+  ], "Totals and canonical replay update without conflating schedule estimates and planned/actual expense records.", [browser("expenses workspace local create/edit")]),
   flow("IMPORT-01", "Import", "Preview and apply a Notion export", "Owner or producer", "planning", [
     "Choose an extracted Notion folder or ZIP.",
     "Review safe files, normalized core/planning rows, skipped rows, and attachments before applying locally.",

@@ -13541,6 +13541,240 @@ describe("film worker", () => {
     expect(fakeAuth.operationLogs.get("op_task_status_update")?.kind).toBe("task.updated");
   });
 
+  it("atomically applies contextual record edits to canonical tables", async () => {
+    const { env, cookie, csrfToken, fakeAuth } = await createAuthorizedTestSession("owner");
+    const projectId = "proj_contextual_update";
+    fakeAuth.projects.set(projectId, {
+      id: projectId,
+      workspace_id: "workspace_acme",
+      title: "Contextual Film",
+      project_type: "film",
+      phase: "development",
+      logline: "Old logline",
+      updated_at: "2026-07-01T00:00:00.000Z",
+    });
+    fakeAuth.filmProfiles.set(projectId, {
+      project_id: projectId,
+      runtime_minutes: 90,
+      format: "Color",
+      shoot_start: null,
+      shoot_end: null,
+      budget_cents: 10000,
+      spent_cents: 5000,
+      created_at: "2026-07-01T00:00:00.000Z",
+      updated_at: "2026-07-01T00:00:00.000Z",
+    });
+    fakeAuth.tasks.set("task_contextual_update", {
+      id: "task_contextual_update",
+      workspace_id: "workspace_acme",
+      project_id: projectId,
+      title: "Old task",
+      status: "pending",
+      due_at: null,
+    });
+    fakeAuth.people.set("person_contextual_update", {
+      id: "person_contextual_update",
+      workspace_id: "workspace_acme",
+      display_name: "Old Person",
+      role_tags: "[\"Crew\"]",
+      notes: "OP",
+      sensitive: 1,
+    });
+    fakeAuth.projectPeople.set(`${projectId}:person_contextual_update`, {
+      project_id: projectId,
+      person_id: "person_contextual_update",
+      project_role: "Crew",
+    });
+    fakeAuth.equipment.set("equipment_contextual_update", {
+      id: "equipment_contextual_update",
+      workspace_id: "workspace_acme",
+      project_id: projectId,
+      name: "Old Camera",
+      equipment_type: "gray",
+      status: "Planned",
+      notes: null,
+    });
+    fakeAuth.expenses.set("expense_contextual_update", {
+      id: "expense_contextual_update",
+      workspace_id: "workspace_acme",
+      project_id: projectId,
+      category: "Old rental",
+      amount_cents: 10000,
+      comment: "{\"budget\":200,\"percent\":50}",
+    });
+    const operations = [
+      testOperation({
+        id: "op_project_contextual_update",
+        kind: "project.updated",
+        entityType: "project",
+        entityId: projectId,
+        payload: {
+          projectId,
+          phase: "Post-Production",
+          description: "Updated logline",
+          shootDates: "Wrapped",
+          location: "Stage 4",
+          totalBudget: 25000,
+          sensitive: true,
+        },
+      }),
+      testOperation({
+        id: "op_task_contextual_update",
+        kind: "task.updated",
+        entityId: "task_contextual_update",
+        payload: {
+          projectId,
+          title: "Updated task",
+          dueAt: "2026-09-01",
+          previousStatus: "pending",
+          status: "ready",
+        },
+      }),
+      testOperation({
+        id: "op_person_contextual_update",
+        kind: "person.updated",
+        entityType: "person",
+        entityId: "person_contextual_update",
+        payload: { projectId, name: "Updated Person", role: "Gaffer", initials: "UP", sensitive: true },
+      }),
+      testOperation({
+        id: "op_equipment_contextual_update",
+        kind: "equipment.updated",
+        entityType: "equipment",
+        entityId: "equipment_contextual_update",
+        payload: { projectId, name: "Updated Camera", status: "Checked out", statusTone: "amber" },
+      }),
+      testOperation({
+        id: "op_expense_contextual_update",
+        kind: "expense.updated",
+        entityType: "expense",
+        entityId: "expense_contextual_update",
+        payload: { projectId, category: "Updated rental", spent: 300, budget: 600, percent: 50, sensitive: true },
+      }),
+    ];
+
+    const response = await worker.fetch(new Request("https://worker.test/api/operations/dry-run-sync", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
+      body: JSON.stringify({ operations }),
+    }), env);
+    const body = (await response.json()) as {
+      accepted: string[];
+      canonicalApplied: string[];
+      metadataOnly: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.accepted).toEqual(operations.map((operation) => operation.id));
+    expect(body.canonicalApplied).toEqual(operations.map((operation) => operation.id));
+    expect(body.metadataOnly).toEqual([]);
+    expect(fakeAuth.projects.get(projectId)).toMatchObject({
+      phase: "post_production",
+      logline: "Updated logline",
+      shoot_dates: "Wrapped",
+      location: "Stage 4",
+    });
+    expect(fakeAuth.filmProfiles.get(projectId)?.budget_cents).toBe(2_500_000);
+    expect(fakeAuth.tasks.get("task_contextual_update")).toMatchObject({
+      title: "Updated task",
+      due_at: "2026-09-01",
+      status: "ready",
+    });
+    expect(fakeAuth.people.get("person_contextual_update")).toMatchObject({
+      display_name: "Updated Person",
+      role_tags: "[\"Gaffer\"]",
+      notes: "UP",
+    });
+    expect(fakeAuth.projectPeople.get(`${projectId}:person_contextual_update`)?.project_role).toBe("Gaffer");
+    expect(fakeAuth.equipment.get("equipment_contextual_update")).toMatchObject({
+      name: "Updated Camera",
+      equipment_type: "amber",
+      status: "Checked out",
+    });
+    expect(fakeAuth.expenses.get("expense_contextual_update")).toMatchObject({
+      category: "Updated rental",
+      amount_cents: 30000,
+      comment: "{\"budget\":600,\"percent\":50}",
+    });
+  });
+
+  it("replays a contextual edit after its create in the same offline batch", async () => {
+    const { env, cookie, csrfToken, fakeAuth } = await createAuthorizedTestSession("owner");
+    const projectId = "proj_create_then_edit";
+    const operations = [
+      testOperation({
+        id: "op_project_create_then_edit_create",
+        kind: "project.created",
+        entityType: "project",
+        entityId: projectId,
+        payload: { title: "Offline Film", projectType: "Feature Film" },
+      }),
+      testOperation({
+        id: "op_project_create_then_edit_update",
+        kind: "project.updated",
+        entityType: "project",
+        entityId: projectId,
+        payload: { projectId, phase: "Production", description: "Offline edit", totalBudget: 1200 },
+      }),
+    ];
+
+    const response = await worker.fetch(new Request("https://worker.test/api/operations/dry-run-sync", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
+      body: JSON.stringify({ operations }),
+    }), env);
+    const body = (await response.json()) as { canonicalApplied: string[] };
+
+    expect(response.status).toBe(200);
+    expect(body.canonicalApplied).toEqual(operations.map((operation) => operation.id));
+    expect(fakeAuth.projects.get(projectId)).toMatchObject({ phase: "production", logline: "Offline edit" });
+    expect(fakeAuth.filmProfiles.get(projectId)?.budget_cents).toBe(120000);
+  });
+
+  it("rejects contextual edits that target a record outside the selected project", async () => {
+    const { env, cookie, csrfToken, fakeAuth } = await createAuthorizedTestSession("owner");
+    fakeAuth.projects.set("proj_context_a", {
+      id: "proj_context_a",
+      workspace_id: "workspace_acme",
+      title: "Project A",
+      phase: "development",
+    });
+    fakeAuth.projects.set("proj_context_b", {
+      id: "proj_context_b",
+      workspace_id: "workspace_acme",
+      title: "Project B",
+      phase: "development",
+    });
+    fakeAuth.equipment.set("equipment_context_a", {
+      id: "equipment_context_a",
+      workspace_id: "workspace_acme",
+      project_id: "proj_context_a",
+      name: "Project A camera",
+      equipment_type: "gray",
+      status: "Available",
+      notes: null,
+    });
+    const operation = testOperation({
+      id: "op_equipment_wrong_project",
+      kind: "equipment.updated",
+      entityType: "equipment",
+      entityId: "equipment_context_a",
+      payload: { projectId: "proj_context_b", name: "Invalid edit", status: "Checked out", statusTone: "amber" },
+    });
+
+    const response = await worker.fetch(new Request("https://worker.test/api/operations/dry-run-sync", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
+      body: JSON.stringify({ operations: [operation] }),
+    }), env);
+    const body = (await response.json()) as { rejected: Array<{ id: string; reason: string }> };
+
+    expect(response.status).toBe(422);
+    expect(body.rejected).toEqual([{ id: operation.id, reason: "canonical_record_scope_mismatch" }]);
+    expect(fakeAuth.equipment.get("equipment_context_a")?.name).toBe("Project A camera");
+    expect(fakeAuth.operationLogs.has(operation.id)).toBe(false);
+  });
+
   it("rejects stale replayed task status updates before canonical writes", async () => {
     const { env, cookie, csrfToken, fakeAuth } = await createAuthorizedTestSession("producer");
     fakeAuth.tasks.set("task_status_stale", {
@@ -14665,6 +14899,8 @@ type FakeProjectRow = {
   status?: string;
   phase: string;
   logline?: string | null;
+  shoot_dates?: string | null;
+  location?: string | null;
   owner_member_id?: string | null;
   updated_at?: string | null;
 };
@@ -15584,7 +15820,10 @@ function createAuthD1(): {
                 }
 
                 if (sql.includes("canonical_task_operation_replay")) {
-                  const [status, updatedAt, id, workspaceId, projectId, ...expectedStatuses] = values;
+                  const editsRecord = sql.includes("SET title = ?");
+                  const [title, dueAt, status, updatedAt, id, workspaceId, projectId, ...expectedStatuses] = editsRecord
+                    ? values
+                    : [undefined, undefined, ...values];
                   const row = tasks.get(String(id));
                   mutationChanges = 0;
                   if (
@@ -15593,7 +15832,85 @@ function createAuthD1(): {
                     && row.project_id === String(projectId)
                     && expectedStatuses.map(String).includes(row.status ?? "todo")
                   ) {
+                    if (editsRecord) {
+                      row.title = String(title);
+                      row.due_at = dueAt === null ? null : String(dueAt);
+                    }
                     row.status = String(status);
+                    row.updated_at = String(updatedAt);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_project_operation_replay")) {
+                  const [phase, logline, shootDates, location, updatedAt, id, workspaceId] = values;
+                  const row = projects.get(String(id));
+                  mutationChanges = 0;
+                  if (row?.workspace_id === String(workspaceId)) {
+                    row.phase = String(phase);
+                    row.logline = logline === null ? null : String(logline);
+                    row.shoot_dates = shootDates === null ? null : String(shootDates);
+                    row.location = location === null ? null : String(location);
+                    row.updated_at = String(updatedAt);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_project_budget_operation_replay")) {
+                  const [budgetCents, updatedAt, projectId] = values;
+                  const row = filmProfiles.get(String(projectId));
+                  mutationChanges = 0;
+                  if (row) {
+                    row.budget_cents = Number(budgetCents);
+                    row.updated_at = String(updatedAt);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_person_operation_replay")) {
+                  const [displayName, roleTags, notes, updatedAt, id, workspaceId] = values;
+                  const row = people.get(String(id));
+                  mutationChanges = 0;
+                  if (row?.workspace_id === String(workspaceId)) {
+                    row.display_name = String(displayName);
+                    row.role_tags = String(roleTags);
+                    row.notes = notes === null ? null : String(notes);
+                    row.updated_at = String(updatedAt);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_person_project_role_operation_replay")) {
+                  const [projectRole, projectId, personId] = values;
+                  const row = projectPeople.get(`${String(projectId)}:${String(personId)}`);
+                  mutationChanges = 0;
+                  if (row) {
+                    row.project_role = String(projectRole);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_equipment_operation_replay")) {
+                  const [name, equipmentType, status, updatedAt, id, workspaceId, projectId] = values;
+                  const row = equipment.get(String(id));
+                  mutationChanges = 0;
+                  if (row?.workspace_id === String(workspaceId) && row.project_id === String(projectId)) {
+                    row.name = String(name);
+                    row.equipment_type = equipmentType === null ? null : String(equipmentType);
+                    row.status = String(status);
+                    row.updated_at = String(updatedAt);
+                    mutationChanges = 1;
+                  }
+                }
+
+                if (sql.includes("canonical_expense_operation_replay")) {
+                  const [category, amountCents, comment, updatedAt, id, workspaceId, projectId] = values;
+                  const row = expenses.get(String(id));
+                  mutationChanges = 0;
+                  if (row?.workspace_id === String(workspaceId) && row.project_id === String(projectId)) {
+                    row.category = String(category);
+                    row.amount_cents = Number(amountCents);
+                    row.comment = String(comment);
                     row.updated_at = String(updatedAt);
                     mutationChanges = 1;
                   }
@@ -15627,6 +15944,7 @@ function createAuthD1(): {
                     || sql.includes("owner_member_id = ?")
                     || sql.includes("canonical_task_operation_replay")
                     || sql.includes("canonical_document_markdown_update")
+                    || sql.includes("_operation_replay")
                   ) return;
                   mutationChanges = 0;
                   const setClause = sql.slice(sql.indexOf("SET") + 3, sql.indexOf("WHERE")).trim();
@@ -17220,6 +17538,12 @@ function createAuthD1(): {
                   return row ? row as T : null;
                 }
 
+                if (sql.includes("FROM project_people")) {
+                  const [projectId, personId] = values;
+                  const row = projectPeople.get(`${String(projectId)}:${String(personId)}`);
+                  return row ? row as T : null;
+                }
+
                 if (sql.includes("FROM record_permissions") && sql.includes("AND id = ?")) {
                   const [workspaceId, permissionId, entityType, entityId, memberId, permission] = values;
                   const row = Array.from(recordPermissions.values()).find((candidate) =>
@@ -17618,7 +17942,7 @@ function createAuthD1(): {
                   }
                   const [id] = values;
                   const row = equipment.get(String(id));
-                  return row ? { id: row.id, workspace_id: row.workspace_id } as T : null;
+                  return row ? { ...row } as T : null;
                 }
 
                 if (sql.includes("FROM expenses")) {
@@ -17638,7 +17962,7 @@ function createAuthD1(): {
                   }
                   const [id] = values;
                   const row = expenses.get(String(id));
-                  return row ? { id: row.id, workspace_id: row.workspace_id } as T : null;
+                  return row ? { ...row } as T : null;
                 }
 
                 return null;
@@ -17703,6 +18027,8 @@ function createAuthD1(): {
                       project_type: row.project_type ?? "film",
                       status: row.status ?? "active",
                       logline: row.logline ?? null,
+                      shoot_dates: row.shoot_dates ?? null,
+                      location: row.location ?? null,
                       owner_member_id: row.owner_member_id ?? null,
                       created_at: "2026-07-09T00:00:00.000Z",
                       updated_at: row.updated_at ?? "2026-07-09T00:00:00.000Z",

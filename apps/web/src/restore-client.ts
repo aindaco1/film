@@ -16,6 +16,7 @@ export type RestoreCommitDryRunRequest = {
   preRestoreBackupId?: string;
   confirmation: string;
   preview: RestoreCommitPreviewRequest;
+  applicationTablePlan?: RestoreApplicationTablePlanRequest[];
 };
 
 export type RestoreCommitDryRunResult = {
@@ -52,7 +53,6 @@ export type RestoreCommitStorageDryRunRequest = RestoreCommitDryRunRequest & {
 
 export type RestoreApplicationDryRunRequest = RestoreCommitStorageDryRunRequest & {
   commitAttemptId: string;
-  applicationTablePlan?: RestoreApplicationTablePlanRequest[];
 };
 
 export type RestoreApplicationCommitRequest = RestoreApplicationDryRunRequest & {

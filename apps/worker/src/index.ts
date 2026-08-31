@@ -223,6 +223,8 @@ type WorkspaceSnapshotProjectRow = {
   status: string;
   phase: string;
   logline: string | null;
+  shoot_dates: string | null;
+  location: string | null;
   owner_member_id: string | null;
   created_at: string;
   updated_at: string;
@@ -2361,14 +2363,18 @@ const NOTION_PLANNING_TABLES: Record<NotionPlanningRecordKind, string> = {
 const OPERATION_REPLAY_ROLES: Record<OperationRecord["kind"], AuthRole[]> = {
   "workspace.seeded": ["owner"],
   "project.created": OPERATOR_ROLES,
+  "project.updated": OPERATOR_ROLES,
   "task.created": ["owner", "producer", "director", "department_lead", "contributor"],
   "task.updated": ["owner", "producer", "director", "department_lead", "contributor"],
   "task.completed": ["owner", "producer", "director", "department_lead", "contributor"],
   "document.created": ["owner", "producer", "director", "department_lead", "contributor"],
   "document.updated": ["owner", "producer", "director", "department_lead", "contributor"],
   "person.created": OPERATOR_ROLES,
+  "person.updated": OPERATOR_ROLES,
   "equipment.created": ["owner", "producer", "director", "department_lead", "contributor"],
+  "equipment.updated": ["owner", "producer", "director", "department_lead", "contributor"],
   "expense.created": OWNER_PRODUCER_ROLES,
+  "expense.updated": OWNER_PRODUCER_ROLES,
   "backup.exported": OWNER_PRODUCER_ROLES,
   "restore.dry_run": OWNER_PRODUCER_ROLES,
   "import.notion_applied": OPERATOR_ROLES,
@@ -8654,7 +8660,8 @@ async function readCanonicalWorkspaceSnapshot(
       LIMIT ?
     `).bind(workspaceId, WORKSPACE_SNAPSHOT_MEMBER_LIMIT + 1).all<WorkspaceSnapshotMemberRow>(), WORKSPACE_SNAPSHOT_MEMBER_LIMIT, "members", truncated);
     const projects = snapshotRows(await db.prepare(`
-      SELECT id, title, project_type, status, phase, logline, owner_member_id, created_at, updated_at
+      SELECT id, title, project_type, status, phase, logline, shoot_dates, location,
+        owner_member_id, created_at, updated_at
       FROM projects
       WHERE workspace_id = ?
       ORDER BY updated_at DESC, id ASC
@@ -8888,6 +8895,8 @@ function snapshotProject(row: WorkspaceSnapshotProjectRow): CanonicalProject {
     status: row.status,
     phase: row.phase,
     logline: row.logline,
+    shootDates: row.shoot_dates,
+    location: row.location,
     ownerMemberId: row.owner_member_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -9012,6 +9021,8 @@ function seedCanonicalWorkspaceSnapshot(role: AuthRole, memberId: string | null)
     status: "active",
     phase: canonicalProjectPhase(project.phase),
     logline: project.description || null,
+    shootDates: project.shootDates || null,
+    location: project.location || null,
     ownerMemberId: seedWorkspace.members[0]?.id ?? null,
     createdAt: generatedAt,
     updatedAt: generatedAt,
@@ -23315,8 +23326,16 @@ function requiresOperationEntityConflictGuard(kind: OperationRecord["kind"]): bo
     || kind === "expense.created";
 }
 
+function isCanonicalRecordUpdate(kind: OperationRecord["kind"]): boolean {
+  return kind === "project.updated"
+    || kind === "person.updated"
+    || kind === "equipment.updated"
+    || kind === "expense.updated";
+}
+
 function appliesCanonicalOperation(kind: OperationRecord["kind"]): boolean {
   return requiresOperationEntityConflictGuard(kind)
+    || isCanonicalRecordUpdate(kind)
     || kind === "task.updated"
     || kind === "task.completed";
 }
@@ -23396,7 +23415,7 @@ async function replayOperationBatch(
         }
       }
 
-      const canonicalAuthorization = await authorizeCanonicalCreateOperation(db, operation, role, actorMemberId);
+      const canonicalAuthorization = await authorizeCanonicalOperation(db, operation, role, actorMemberId);
       if (!canonicalAuthorization.ok) {
         rejected.push({ id: operation.id, reason: canonicalAuthorization.reason });
         continue;
@@ -23421,6 +23440,12 @@ async function replayOperationBatch(
       );
       if (!taskMutation.ok) {
         rejected.push({ id: operation.id, reason: taskMutation.reason });
+        continue;
+      }
+
+      const recordUpdate = await planCanonicalRecordUpdate(db, operation, projectReference.projectId, planned);
+      if (!recordUpdate.ok) {
+        rejected.push({ id: operation.id, reason: recordUpdate.reason });
         continue;
       }
 
@@ -23459,8 +23484,10 @@ async function replayOperationBatch(
     const orderedPlanned = [
       ...planned.filter((entry) => entry.operation.kind === "project.created"),
       ...planned.filter((entry) => entry.operation.kind !== "project.created" && requiresOperationEntityConflictGuard(entry.operation.kind)),
+      ...planned.filter((entry) => isCanonicalRecordUpdate(entry.operation.kind)),
       ...planned.filter((entry) => entry.operation.kind === "task.updated" || entry.operation.kind === "task.completed"),
       ...planned.filter((entry) => !requiresOperationEntityConflictGuard(entry.operation.kind)
+        && !isCanonicalRecordUpdate(entry.operation.kind)
         && entry.operation.kind !== "task.updated"
         && entry.operation.kind !== "task.completed"),
     ];
@@ -23617,6 +23644,64 @@ async function planCanonicalTaskMutation(
   };
 }
 
+async function planCanonicalRecordUpdate(
+  db: D1Database,
+  operation: OperationRecord,
+  projectId: string | null,
+  planned: PlannedOperationReplay[],
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!isCanonicalRecordUpdate(operation.kind)) return { ok: true };
+  if (!projectId) return { ok: false, reason: "project_scope_not_found" };
+  const plannedCreate = planned.find((entry) =>
+    requiresOperationEntityConflictGuard(entry.operation.kind)
+    && entry.operation.entityType === operation.entityType
+    && entry.operation.entityId === operation.entityId
+  );
+  if (plannedCreate) {
+    const scopeMatches = operation.kind === "project.updated"
+      ? operation.entityId === projectId
+      : plannedCreate.projectId === projectId;
+    return scopeMatches ? { ok: true } : { ok: false, reason: "canonical_record_scope_mismatch" };
+  }
+
+  if (operation.kind === "project.updated") {
+    if (operation.entityId !== projectId) return { ok: false, reason: "canonical_record_scope_mismatch" };
+    const row = await db.prepare("SELECT workspace_id FROM projects WHERE id = ? LIMIT 1")
+      .bind(operation.entityId)
+      .first<{ workspace_id: string }>();
+    if (!row) return { ok: false, reason: "canonical_record_not_found" };
+    return row.workspace_id === operation.workspaceId
+      ? { ok: true }
+      : { ok: false, reason: "canonical_record_scope_mismatch" };
+  }
+
+  if (operation.kind === "person.updated") {
+    const person = await db.prepare("SELECT workspace_id FROM people WHERE id = ? LIMIT 1")
+      .bind(operation.entityId)
+      .first<{ workspace_id: string }>();
+    if (!person) return { ok: false, reason: "canonical_record_not_found" };
+    if (person.workspace_id !== operation.workspaceId) {
+      return { ok: false, reason: "canonical_record_scope_mismatch" };
+    }
+    const relation = await db.prepare(`
+      SELECT project_id, person_id
+      FROM project_people
+      WHERE project_id = ? AND person_id = ?
+      LIMIT 1
+    `).bind(projectId, operation.entityId).first<{ project_id: string; person_id: string }>();
+    return relation ? { ok: true } : { ok: false, reason: "canonical_record_scope_mismatch" };
+  }
+
+  const table = operation.kind === "equipment.updated" ? "equipment" : "expenses";
+  const row = await db.prepare(`SELECT workspace_id, project_id FROM ${table} WHERE id = ? LIMIT 1`)
+    .bind(operation.entityId)
+    .first<{ workspace_id: string; project_id: string | null }>();
+  if (!row) return { ok: false, reason: "canonical_record_not_found" };
+  return row.workspace_id === operation.workspaceId && row.project_id === projectId
+    ? { ok: true }
+    : { ok: false, reason: "canonical_record_scope_mismatch" };
+}
+
 function localTaskOperationStatus(value: string): PlannedTaskState["status"] | null {
   if (value === "pending" || value === "ready" || value === "overdue" || value === "completed") return value;
   return null;
@@ -23692,16 +23777,20 @@ function operationReplaySeedProjectStatements(
         status,
         phase,
         logline,
+        shoot_dates,
+        location,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, 'film', 'active', ?, ?, ?, ?)
+      VALUES (?, ?, ?, 'film', 'active', ?, ?, ?, ?, ?, ?)
     `).bind(
       project.id,
       workspaceId,
       project.title,
       canonicalProjectPhase(project.phase),
       project.description,
+      project.shootDates,
+      project.location,
       timestamp,
       timestamp,
     ),
@@ -23741,6 +23830,8 @@ function operationReplayStatements(
     if (table) statements.push(operationReplayTargetAssertion(db, table, operation.entityId));
     if (projectId) statements.push(restoreProjectScopeAssertion(db, operation.workspaceId, projectId));
     statements.push(...canonicalOperationCreateStatements(db, operation, projectId, appliedAt, actorMemberId));
+  } else if (isCanonicalRecordUpdate(operation.kind)) {
+    statements.push(...canonicalRecordUpdateStatements(db, operation, projectId, appliedAt));
   } else if (operation.kind === "task.updated" || operation.kind === "task.completed") {
     statements.push(...canonicalTaskMutationStatements(db, operation, projectId, appliedAt));
   }
@@ -23788,6 +23879,36 @@ function canonicalTaskMutationStatements(
   if (!projectId || !previousStatus || !nextStatus) return [];
   const expectedStatuses = taskStorageStatuses(previousStatus);
   const placeholders = expectedStatuses.map(() => "?").join(", ");
+  const updateStatement = operation.kind === "task.updated"
+    ? db.prepare(`
+      UPDATE tasks /* canonical_task_operation_replay */
+      SET title = ?,
+        due_at = ?,
+        status = ?,
+        updated_at = ?
+      WHERE id = ?
+        AND workspace_id = ?
+        AND project_id = ?
+        AND status IN (${placeholders})
+    `).bind(
+      payloadString(operation.payload, "title", 180) || "Untitled task",
+      canonicalDueAt(payloadString(operation.payload, "dueAt", 80)),
+      nextStatus,
+      appliedAt,
+      operation.entityId,
+      operation.workspaceId,
+      projectId,
+      ...expectedStatuses,
+    )
+    : db.prepare(`
+      UPDATE tasks /* canonical_task_operation_replay */
+      SET status = ?,
+        updated_at = ?
+      WHERE id = ?
+        AND workspace_id = ?
+        AND project_id = ?
+        AND status IN (${placeholders})
+    `).bind(nextStatus, appliedAt, operation.entityId, operation.workspaceId, projectId, ...expectedStatuses);
   return [
     db.prepare(`
       SELECT CASE
@@ -23802,16 +23923,140 @@ function canonicalTaskMutationStatements(
         THEN 1 ELSE abs(-9223372036854775808)
       END AS task_operation_state_assertion
     `).bind(operation.entityId, operation.workspaceId, projectId, ...expectedStatuses),
-    db.prepare(`
-      UPDATE tasks /* canonical_task_operation_replay */
-      SET status = ?,
-        updated_at = ?
-      WHERE id = ?
-        AND workspace_id = ?
-        AND project_id = ?
-        AND status IN (${placeholders})
-    `).bind(nextStatus, appliedAt, operation.entityId, operation.workspaceId, projectId, ...expectedStatuses),
+    updateStatement,
   ];
+}
+
+function canonicalRecordUpdateStatements(
+  db: D1Database,
+  operation: OperationRecord,
+  projectId: string | null,
+  appliedAt: string,
+): D1PreparedStatement[] {
+  if (!projectId) return [];
+  if (operation.kind === "project.updated") {
+    return [
+      canonicalRecordScopeAssertion(db, "projects", operation, projectId, false),
+      db.prepare(`
+        UPDATE projects /* canonical_project_operation_replay */
+        SET phase = ?,
+          logline = ?,
+          shoot_dates = ?,
+          location = ?,
+          updated_at = ?
+        WHERE id = ? AND workspace_id = ?
+      `).bind(
+        canonicalProjectPhase(payloadString(operation.payload, "phase", 80)),
+        payloadString(operation.payload, "description", 1000) || null,
+        payloadString(operation.payload, "shootDates", 120) || null,
+        payloadString(operation.payload, "location", 120) || null,
+        appliedAt,
+        operation.entityId,
+        operation.workspaceId,
+      ),
+      db.prepare(`
+        UPDATE film_profiles /* canonical_project_budget_operation_replay */
+        SET budget_cents = ?, updated_at = ?
+        WHERE project_id = ?
+      `).bind(
+        Math.round(payloadNumber(operation.payload, "totalBudget", 0, 1_000_000_000) * 100),
+        appliedAt,
+        projectId,
+      ),
+    ];
+  }
+  if (operation.kind === "person.updated") {
+    const role = payloadString(operation.payload, "role", 80) || "Crew";
+    return [
+      canonicalRecordScopeAssertion(db, "people", operation, projectId, true),
+      db.prepare(`
+        UPDATE people /* canonical_person_operation_replay */
+        SET display_name = ?, role_tags = ?, notes = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ?
+      `).bind(
+        payloadString(operation.payload, "name", 120) || "Unnamed person",
+        JSON.stringify([role]),
+        payloadString(operation.payload, "initials", 8) || null,
+        appliedAt,
+        operation.entityId,
+        operation.workspaceId,
+      ),
+      db.prepare(`
+        UPDATE project_people /* canonical_person_project_role_operation_replay */
+        SET project_role = ?
+        WHERE project_id = ? AND person_id = ?
+      `).bind(role, projectId, operation.entityId),
+    ];
+  }
+  if (operation.kind === "equipment.updated") {
+    return [
+      canonicalRecordScopeAssertion(db, "equipment", operation, projectId, true),
+      db.prepare(`
+        UPDATE equipment /* canonical_equipment_operation_replay */
+        SET name = ?, equipment_type = ?, status = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND project_id = ?
+      `).bind(
+        payloadString(operation.payload, "name", 120) || "Unnamed equipment",
+        payloadString(operation.payload, "statusTone", 20) || null,
+        payloadString(operation.payload, "status", 80) || "Planned",
+        appliedAt,
+        operation.entityId,
+        operation.workspaceId,
+        projectId,
+      ),
+    ];
+  }
+  if (operation.kind === "expense.updated") {
+    const budget = payloadNumber(operation.payload, "budget", 0, 1_000_000_000);
+    const percent = payloadNumber(operation.payload, "percent", 0, 1000);
+    return [
+      canonicalRecordScopeAssertion(db, "expenses", operation, projectId, true),
+      db.prepare(`
+        UPDATE expenses /* canonical_expense_operation_replay */
+        SET category = ?, amount_cents = ?, comment = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND project_id = ?
+      `).bind(
+        payloadString(operation.payload, "category", 80) || "Other",
+        Math.round(payloadNumber(operation.payload, "spent", 0, 1_000_000_000) * 100),
+        JSON.stringify({ budget, percent }),
+        appliedAt,
+        operation.entityId,
+        operation.workspaceId,
+        projectId,
+      ),
+    ];
+  }
+  return [];
+}
+
+function canonicalRecordScopeAssertion(
+  db: D1Database,
+  table: "projects" | "people" | "equipment" | "expenses",
+  operation: OperationRecord,
+  projectId: string,
+  requiresProjectRelation: boolean,
+): D1PreparedStatement {
+  const projectPredicate = requiresProjectRelation
+    ? table === "people"
+      ? "AND EXISTS (SELECT 1 FROM project_people WHERE project_id = ? AND person_id = people.id)"
+      : "AND project_id = ?"
+    : "";
+  const bindings = requiresProjectRelation
+    ? [operation.entityId, operation.workspaceId, projectId]
+    : [operation.entityId, operation.workspaceId];
+  return db.prepare(`
+    SELECT CASE
+      WHEN EXISTS (
+        SELECT 1 FROM ${table}
+        WHERE id = ? AND workspace_id = ? ${projectPredicate}
+      )
+      THEN 1 ELSE abs(-9223372036854775808)
+    END AS canonical_record_scope_assertion
+  `).bind(...bindings);
+}
+
+function canonicalDueAt(value: string): string | null {
+  return !value || value === "TBD" || value === "Unscheduled" ? null : value;
 }
 
 function taskStorageStatuses(status: PlannedTaskState["status"]): string[] {
@@ -23980,7 +24225,7 @@ function canonicalOperationCreateStatements(
   return [];
 }
 
-async function authorizeCanonicalCreateOperation(
+async function authorizeCanonicalOperation(
   db: D1Database,
   operation: OperationRecord,
   role: AuthRole,
@@ -23996,8 +24241,11 @@ async function authorizeCanonicalCreateOperation(
     || operation.kind === "document.created"
     || operation.kind === "document.updated"
     || operation.kind === "person.created"
+    || operation.kind === "person.updated"
     || operation.kind === "equipment.created"
-    || operation.kind === "expense.created";
+    || operation.kind === "equipment.updated"
+    || operation.kind === "expense.created"
+    || operation.kind === "expense.updated";
   if (!needsProjectScope) {
     return { ok: true };
   }
@@ -24083,7 +24331,7 @@ function recordOwnershipTableName(entityType: "project" | "task" | "document" | 
 function directRecordPermissionEntityTypeFor(operation: OperationRecord): "task" | "document" | "equipment" | null {
   if ((operation.kind === "task.created" || operation.kind === "task.updated" || operation.kind === "task.completed") && operation.entityType === "task") return "task";
   if ((operation.kind === "document.created" || operation.kind === "document.updated") && operation.entityType === "document") return "document";
-  if (operation.kind === "equipment.created" && operation.entityType === "equipment") return "equipment";
+  if ((operation.kind === "equipment.created" || operation.kind === "equipment.updated") && operation.entityType === "equipment") return "equipment";
   return null;
 }
 

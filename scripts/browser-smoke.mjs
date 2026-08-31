@@ -2420,6 +2420,20 @@ async function runDesktopSmoke(url, browser) {
     record("projects workspace uses metadata search and exported the filtered project directory");
 
     await page.locator("[data-action='filter']").fill("");
+    await selectInspectorView(page, "overview");
+    const queuedBeforeProjectEdit = await queuedOperationCount(page);
+    const projectForm = page.locator("form[data-action='project-inline-update']");
+    await projectForm.locator("[name='location']").fill("Browser smoke stage");
+    await projectForm.locator("[name='description']").fill("Browser smoke project edit");
+    await projectForm.locator("button[type='submit']").click();
+    await expectBodyText(page, "Project details saved locally.");
+    assert(
+      await queuedOperationCount(page) === queuedBeforeProjectEdit + 1,
+      "Project detail edits should queue one local operation",
+    );
+    await expectEditableValue(page, "form[data-action='project-inline-update'] [name='location']", "Browser smoke stage");
+    record("project overview edited canonical project details in place");
+
     await runScreenplayBreakdownSmoke(page);
     record("screenplay breakdown parsed locally, persisted review/manual tags, copied and idempotently pasted source-free element selections, navigated and reused occurrences, explicitly merged a local duplicate, moved a category, switched between script and stripboard scene order, exported JSON plus filtered element-list Markdown/CSV, and kept source out of Worker requests");
 
@@ -2455,8 +2469,10 @@ async function runDesktopSmoke(url, browser) {
     await expectEditableValue(page, ".tasks-table-row input[name='title']", "Browser smoke task");
     const queuedBeforeStatusUpdate = await queuedOperationCount(page);
     const smokeTaskRow = page.locator(".tasks-table-row").filter({ has: page.locator("input[name='title'][value='Browser smoke task']") }).first();
+    await smokeTaskRow.locator("[name='title']").fill("Browser edited task");
+    await smokeTaskRow.locator("[name='due']").fill("Jun 5");
     await smokeTaskRow.locator("[name='status']").selectOption("ready");
-    await expectBodyText(page, "Task updated: Browser smoke task Saved locally.");
+    await expectBodyText(page, "Task updated: Browser edited task Saved locally.");
     assert(
       await queuedOperationCount(page) === queuedBeforeStatusUpdate + 1,
       "Task status updates should queue a local operation",
@@ -2482,9 +2498,9 @@ async function runDesktopSmoke(url, browser) {
     await taskDownload.saveAs(taskPath);
     const taskList = await readFile(taskPath, "utf8");
     assert(taskList.includes("# Task List: Echoes in the Static"), "Task list should include the selected project title");
-    assert(taskList.includes("Browser smoke task"), "Task list should include the local task row");
-    assert(taskList.includes("[Ready] Browser smoke task"), "Task list should include the edited task status");
-    assert(taskList.includes("due Jun 4"), "Task list should include the captured due label");
+    assert(taskList.includes("Browser edited task"), "Task list should include the edited task title");
+    assert(taskList.includes("[Ready] Browser edited task"), "Task list should include the edited task status");
+    assert(taskList.includes("due Jun 5"), "Task list should include the edited due label");
     assert(taskList.includes("Policy: provider secrets"), "Task list should include the export policy");
     await expectBodyText(page, "Task list exported for Echoes in the Static.");
     record("tasks workspace local create/due/status/completion flow rendered and exported the task list");
@@ -2514,6 +2530,13 @@ async function runDesktopSmoke(url, browser) {
     await submitForm(page, "form[data-action='add-person']", { name: "Riley Smoke", role: "Gaffer" });
     await expectEditableValue(page, ".operational-table-row input[name='name']", "Riley Smoke");
     await expectEditableValue(page, ".operational-table-row input[name='role']", "Gaffer");
+    const queuedBeforePersonEdit = await queuedOperationCount(page);
+    const personRow = page.locator("form[data-record-kind='person']").first();
+    await personRow.locator("[name='name']").fill("Riley Edited");
+    await personRow.locator("[name='role']").fill("Best Boy Electric");
+    await personRow.locator("button[type='submit']").click();
+    await expectBodyText(page, "Person updated: Riley Edited Saved locally.");
+    assert(await queuedOperationCount(page) === queuedBeforePersonEdit + 1, "Person edits should queue one local operation");
     await mkdir(failureDir, { recursive: true });
     const crewDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-crew-directory']").click();
@@ -2525,15 +2548,23 @@ async function runDesktopSmoke(url, browser) {
     await crewDownload.saveAs(crewPath);
     const crewDirectory = await readFile(crewPath, "utf8");
     assert(crewDirectory.includes("# Crew Directory: Echoes in the Static"), "Crew directory should include the selected project title");
-    assert(crewDirectory.includes("Riley Smoke"), "Crew directory should include the local person row");
+    assert(crewDirectory.includes("Riley Edited"), "Crew directory should include the edited person name");
+    assert(crewDirectory.includes("Best Boy Electric"), "Crew directory should include the edited person role");
     assert(crewDirectory.includes("email addresses, and phone numbers are excluded"), "Crew directory should include contact redaction policy");
     await expectBodyText(page, "Crew directory exported for Echoes in the Static.");
-    record("people workspace local create flow rendered and exported the crew directory");
+    record("people workspace local create/edit flow rendered and exported the crew directory");
 
     await clickWorkspaceSection(page, "equipment");
     await submitForm(page, "form[data-action='add-equipment']", { name: "Smoke Lens Kit", status: "Packed" });
     await expectEditableValue(page, ".operational-table-row input[name='name']", "Smoke Lens Kit");
     await expectEditableValue(page, ".operational-table-row input[name='status']", "Packed");
+    const queuedBeforeEquipmentEdit = await queuedOperationCount(page);
+    const equipmentRow = page.locator("form[data-record-kind='equipment']").first();
+    await equipmentRow.locator("[name='name']").fill("Edited Lens Kit");
+    await equipmentRow.locator("[name='status']").fill("Checked out");
+    await equipmentRow.locator("button[type='submit']").click();
+    await expectBodyText(page, "Equipment updated: Edited Lens Kit Saved locally.");
+    assert(await queuedOperationCount(page) === queuedBeforeEquipmentEdit + 1, "Equipment edits should queue one local operation");
     const gearDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-gear-pull']").click();
     const gearDownload = await gearDownloadPromise;
@@ -2544,10 +2575,11 @@ async function runDesktopSmoke(url, browser) {
     await gearDownload.saveAs(gearPath);
     const gearPull = await readFile(gearPath, "utf8");
     assert(gearPull.includes("# Gear Pull: Echoes in the Static"), "Gear pull should include the selected project title");
-    assert(gearPull.includes("Smoke Lens Kit"), "Gear pull should include the local equipment row");
+    assert(gearPull.includes("Edited Lens Kit"), "Gear pull should include the edited equipment row");
+    assert(gearPull.includes("Checked out"), "Gear pull should include the edited equipment status");
     assert(gearPull.includes("Policy: provider secrets"), "Gear pull should include the export policy");
     await expectBodyText(page, "Gear pull exported for Echoes in the Static.");
-    record("equipment workspace local create flow rendered and exported the gear pull");
+    record("equipment workspace local create/edit flow rendered and exported the gear pull");
 
     await clickWorkspaceSection(page, "expenses");
     await submitForm(page, "form[data-action='add-expense']", { category: "Smoke meals", spent: "125", budget: "250" });
@@ -2555,6 +2587,14 @@ async function runDesktopSmoke(url, browser) {
     await expectBodyText(page, "Near means 85% or higher");
     await expectEditableValue(page, ".expense-record-row input[name='category']", "Smoke meals");
     await expectEditableValue(page, ".expense-record-row input[name='spent']", "125");
+    const queuedBeforeExpenseEdit = await queuedOperationCount(page);
+    const expenseRow = page.locator("form[data-record-kind='expense']").first();
+    await expenseRow.locator("[name='category']").fill("Edited meals");
+    await expenseRow.locator("[name='spent']").fill("150");
+    await expenseRow.locator("[name='budget']").fill("300");
+    await expenseRow.locator("button[type='submit']").click();
+    await expectBodyText(page, "Expense updated: Edited meals Saved locally.");
+    assert(await queuedOperationCount(page) === queuedBeforeExpenseEdit + 1, "Expense edits should queue one local operation");
     await mkdir(failureDir, { recursive: true });
     const budgetDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-budget-top-sheet']").click();
@@ -2568,9 +2608,10 @@ async function runDesktopSmoke(url, browser) {
     assert(budgetSheet.includes("# Budget Top Sheet: Echoes in the Static"), "Budget top sheet should include the selected project title");
     assert(budgetSheet.includes("Policy: provider secrets"), "Budget top sheet should include the export policy");
     assert(budgetSheet.includes("## Budget Lines"), "Budget top sheet should include budget lines");
-    assert(budgetSheet.includes("Smoke meals"), "Budget top sheet should include the local expense row");
+    assert(budgetSheet.includes("Edited meals"), "Budget top sheet should include the edited expense row");
+    assert(budgetSheet.includes("$150"), "Budget top sheet should include the edited spent amount");
     await expectBodyText(page, "Budget top sheet exported for Echoes in the Static.");
-    record("expenses workspace local create flow rendered and exported the budget top sheet");
+    record("expenses workspace local create/edit flow rendered and exported the budget top sheet");
 
     await page.locator("[data-tab='activity']").click();
     await expectBodyText(page, "Audit Log");

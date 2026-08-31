@@ -1793,6 +1793,20 @@ describe("schema helpers", () => {
     });
   });
 
+  it("validates every contextual record update operation", () => {
+    const operations = [
+      createOperation(seedWorkspace.id, "project.updated", "project", "proj_test", "Project updated"),
+      createOperation(seedWorkspace.id, "person.updated", "person", "person_test", "Person updated"),
+      createOperation(seedWorkspace.id, "equipment.updated", "equipment", "equipment_test", "Equipment updated"),
+      createOperation(seedWorkspace.id, "expense.updated", "expense", "expense_test", "Expense updated"),
+    ];
+
+    expect(validateOperationBatchForSync(operations)).toEqual({
+      accepted: operations.map((operation) => operation.id),
+      rejected: [],
+    });
+  });
+
   it("validates task completion operations for local open-task closure", () => {
     const operation = createOperation(
       seedWorkspace.id,
