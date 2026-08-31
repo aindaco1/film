@@ -39,6 +39,7 @@ describe("web app shell", () => {
 
   it("exposes workspace sections for project navigation", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const productionExports = await readFile("src/production-document-export.ts", "utf8");
     const styles = await readFile("src/styles.css", "utf8");
 
     expect(source).toContain("case \"projects\"");
@@ -93,14 +94,14 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"call-sheet-sync\"");
     expect(source).toContain("manual details preserved");
     expect(source).toContain("source schedule changed");
-    expect(source).toContain("## Cast Calls");
-    expect(source).toContain("## Safety And Logistics");
+    expect(productionExports).toContain("## Cast Calls");
+    expect(productionExports).toContain("## Safety And Logistics");
     expect(source).toContain("Crew Snapshot");
     expect(source).toContain("Gear Pull");
-    expect(source).toContain("Attachments To Review");
+    expect(productionExports).toContain("Attachments To Review");
     expect(source).toContain("data-action=\"export-call-sheet\"");
     expect(source).toContain("createCallSheetMarkdown");
-    expect(source).toContain("provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded");
+    expect(productionExports).toContain("provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded");
     expect(source).toContain("Call sheet exported");
     expect(source).toContain("renderSidesWorkspace");
     expect(source).toContain("Sides workspace");
@@ -109,8 +110,8 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"production-sides-html-export\"");
     expect(source).toContain("createProductionSidesMarkdown");
     expect(source).toContain("createProductionSidesHtml");
-    expect(source).toContain("user-requested local source export");
-    expect(source).toContain("Content-Security-Policy");
+    expect(productionExports).toContain("user-requested local source export");
+    expect(productionExports).toContain("Content-Security-Policy");
     expect(source).toContain("Production sides exported");
     expect(source).toContain("renderProductionReportsWorkspace");
     expect(source).toContain("Production Reports workspace");
