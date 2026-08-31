@@ -25,7 +25,7 @@ This document is the compact product-direction and status ledger. Detailed imple
 | Notion migration | Folder and ZIP imports are previewed locally, normalized, and committed through create-only core/planning routes with idempotent replay and explicit update previews. | On track and locally verified |
 | Collaboration and trust boundaries | Sessions, roles, invites, permissions, reviewed mutations, audit evidence, canonical snapshots, and stale checks are Worker/D1 owned. | On track and locally verified; broad real-team acceptance is still pending |
 | Data portability and recovery | Human-readable exports, encrypted ZIP backups, R2 storage, restore plans, durable approval chains, create-only attachment restore, and rollback guidance are implemented. | On track and locally verified |
-| Provider integrations | Google metadata OAuth, Meta read-only contracts, Telnyx consent/webhooks/send adapter, Resend, and Pool/Store summary boundaries are explicit and secret-free in the browser. | Architecture on track; provider/account/compliance acceptance remains external |
+| Provider integrations | Google metadata OAuth, Meta read-only contracts, Telnyx consent/webhooks/send adapter, Resend, and Pool/Store summary boundaries are explicit and secret-free in the browser. Telnyx production configuration passes preflight with both activation modes disabled. | Architecture on track; Telnyx MNO registration and controlled acceptance, Meta setup, Google owner consent, and companion resource mappings remain external |
 | Common-flow UX quality | The canonical inventory covers 51 user flows across all application workspaces, with unit, integration, browser, accessibility, mobile-boundary, and real-local-Worker evidence. | On track and locally verified |
 
 ## Current Priorities
@@ -38,4 +38,4 @@ This document is the compact product-direction and status ledger. Detailed imple
 
 ## MVP Interpretation
 
-The local application and its protected Worker workflows are a usable MVP candidate. It is not accurate to claim every integration is production accepted: Meta, Telnyx/10DLC, companion Pool/Store data, and any unconsented Google account flow retain explicit external gates. A release claim should state local test evidence, deployment evidence, provider configuration, and real-world acceptance separately.
+The local application and its protected Worker workflows are a usable MVP candidate. It is not accurate to claim every integration is production accepted: Meta setup, Telnyx MNO registration and controlled acceptance, absent companion Pool/Store resources, and any unconsented Google account flow retain explicit external gates. A release claim should state local test evidence, deployment evidence, provider configuration, and real-world acceptance separately.

@@ -54,7 +54,7 @@ Before public release, verify:
 - `POOL_STRIPE_SUMMARY_ADAPTER_URL` and `STORE_STRIPE_SUMMARY_ADAPTER_URL` as production HTTPS `/film/stripe-summary` endpoints, while summary activation remains optional
 - `STRIPE_PROJECT_MAPPINGS={}` and `STRIPE_SUMMARY_MODE=disabled` until exact Big Sword Pool/Store resources exist; when live summaries are requested, require safe refs, `STRIPE_WEBHOOK_SECRET`, `STRIPE_REDACTED_AUDIT=true`, `STRIPE_SUMMARY_ADAPTER_SECRET`, and matching companion `FILM_STRIPE_SUMMARY_ADAPTER_SECRET` bindings
 - `META_OAUTH_MODE=disabled` until the Meta app/Login, recoverable key, review, and owned-account smoke are complete
-- `SMS_MODE=disabled` until Telnyx resources, registration, policy approvals, webhook configuration, and owned-number smoke are complete
+- `SMS_MODE=disabled` and `TELNYX_WEBHOOK_MODE=disabled` while the appealed campaign advances from TCR acceptance through MNO registration; the installed Telnyx API key, portal public key, Film profile/campaign IDs, and inbound number mapping satisfy configuration preflight, but signed STOP/START/HELP fixtures and an explicitly authorized owned-number send must pass after carrier approval
 - migrations through `0036_sms_retention_indexes.sql` are applied before deploying the current Worker
 
 Do not commit `.dev.vars`, provider keys, OAuth tokens, raw exports, generated backup ZIPs, screenshots with sensitive data, or release evidence that includes secret values.
