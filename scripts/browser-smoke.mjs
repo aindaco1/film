@@ -185,6 +185,10 @@ async function expectEditableValue(page, selector, value, timeoutMs = 5_000) {
   );
 }
 
+async function expectLocatorText(locator, text, timeoutMs = 5_000) {
+  await locator.filter({ hasText: text }).waitFor({ state: "attached", timeout: timeoutMs });
+}
+
 async function expectMainHeading(page, heading, timeoutMs = 5_000) {
   await page.locator("main h1", { hasText: heading }).first().waitFor({ state: "visible", timeout: timeoutMs });
 }
@@ -1215,18 +1219,19 @@ async function runRecordMutationSmoke(page) {
   await expectBodyText(page, "approved pending apply");
 
   const diffForm = page.locator("form[data-action='record-mutation-diff-preview']").first();
-  await diffForm.locator("input[name='update:externalUrl']").fill("https://docs.example.com/browser-smoke-deck");
+  const reviewedUrl = "https://docs.example.com/browser-smoke-deck";
+  await diffForm.locator("input[name='update:externalUrl']").fill(reviewedUrl);
   await diffForm.locator("select[name='update:sensitive']").selectOption("true");
   await diffForm.locator("button[type='submit']").click();
-  await expectBodyText(page, "externalUrl");
   const previewStage = page.locator("[data-change-kind-panel='record'] details.workflow-stage").filter({ has: page.locator("summary strong", { hasText: "Preview" }) });
+  await expectLocatorText(previewStage, reviewedUrl);
   assert(
-    (await previewStage.textContent())?.includes("https://docs.example.com/browser-smoke-deck"),
+    (await previewStage.textContent())?.includes(reviewedUrl),
     "Completed mutation preview should retain the exact reviewed URL",
   );
 
   const applyForm = page.locator("form[data-action='record-mutation-apply']").first();
-  await applyForm.locator("input[name='update:externalUrl']").fill("https://docs.example.com/browser-smoke-deck");
+  await applyForm.locator("input[name='update:externalUrl']").fill(reviewedUrl);
   await applyForm.locator("select[name='update:sensitive']").selectOption("true");
   await applyForm.locator("button[type='submit']").click();
   await expectBodyText(page, "mutation applied");
