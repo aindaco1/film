@@ -1,4 +1,8 @@
 import {
+  TELNYX_SMS_CATEGORIES,
+  type TelnyxSmsCategory,
+} from "@film/providers";
+import {
   SMS_RECIPIENT_KEY_VERSION,
   encryptSmsRecipient,
   hashSmsRecipient,
@@ -8,10 +12,10 @@ import {
   smsRecipientAdditionalData,
 } from "./sms-identity";
 
-export const SMS_CONSENT_CATEGORIES = ["call_sheet", "schedule_change", "safety_location_alert"] as const;
+export const SMS_CONSENT_CATEGORIES = TELNYX_SMS_CATEGORIES;
 export const SMS_CONSENT_MANIFEST_MAX_ROWS = 100;
 
-export type SmsConsentCategory = typeof SMS_CONSENT_CATEGORIES[number];
+export type SmsConsentCategory = TelnyxSmsCategory;
 export type SmsConsentSource = "workspace_form" | "operator";
 export type SmsConsentRecipient = {
   id: string;

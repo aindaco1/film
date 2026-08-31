@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLocalWorkerProofClient } from "./local-worker-proof-client.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let worker = null;
+let browserOwner = null;
+let proofClient = null;
 
 try {
   console.log("Applying local D1 migrations...");
@@ -16,8 +20,8 @@ try {
     input: "yes\n",
   });
 
-  const workerPort = portFromEnv("FILM_LOCAL_WORKER_SMOKE_WORKER_PORT", 8787);
-  const appPort = portFromEnv("FILM_LOCAL_WORKER_SMOKE_APP_PORT", 5173);
+  const workerPort = await smokePort("FILM_LOCAL_WORKER_SMOKE_WORKER_PORT", 8787);
+  const appPort = await smokePort("FILM_LOCAL_WORKER_SMOKE_APP_PORT", 5173);
   const workerOrigin = `http://127.0.0.1:${workerPort}`;
   const appOrigin = `http://127.0.0.1:${appPort}`;
 
@@ -33,6 +37,8 @@ try {
     "AUTH_MAGIC_LINK_MODE:dry_run",
     "--var",
     "INVITE_DELIVERY_MODE:dry_run",
+    "--var",
+    `ALLOWED_ORIGINS:${appOrigin}`,
     "--var",
     'RATE_LIMIT_OVERRIDES:{"auth_magic_link_request":{"limit":100,"windowSeconds":10}}',
   ], {
@@ -54,10 +60,14 @@ try {
 
   await waitForWorker(workerOrigin, worker, () => logs);
 
+  proofClient = createLocalWorkerProofClient({ origin: workerOrigin });
+  browserOwner = proofClient.provisionOwnerMember("browser_worker_probe");
+
   const smokeEnv = {
     ...process.env,
     FILM_WORKER_SMOKE_ORIGIN: workerOrigin,
     FILM_BROWSER_WORKER_SMOKE_APP_ORIGIN: appOrigin,
+    FILM_BROWSER_WORKER_SMOKE_EMAIL: browserOwner.email,
     NO_COLOR: "1",
   };
 
@@ -74,6 +84,14 @@ try {
   console.error(`Local Worker smoke suite failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 } finally {
+  if (proofClient && browserOwner) {
+    try {
+      proofClient.disposeOwnerMember(browserOwner);
+    } catch (error) {
+      console.error(`Local Worker browser-owner cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    }
+  }
   if (worker) {
     worker.kill("SIGTERM");
     await Promise.race([
@@ -141,4 +159,38 @@ function portFromEnv(name, fallback) {
     throw new Error(`${name} must be a TCP port number`);
   }
   return value;
+}
+
+async function smokePort(name, preferred) {
+  if (process.env[name]?.trim()) return portFromEnv(name, preferred);
+  return findAvailablePort(preferred);
+}
+
+async function findAvailablePort(preferred) {
+  try {
+    return await reservePort(preferred);
+  } catch (error) {
+    if (error?.code !== "EADDRINUSE") throw error;
+    return reservePort(0);
+  }
+}
+
+function reservePort(port) {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Unable to reserve a local smoke port"));
+        return;
+      }
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(address.port);
+      });
+    });
+  });
 }

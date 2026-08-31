@@ -1,12 +1,11 @@
 import type { CanonicalWorkspaceSnapshot } from "@film/schema";
+import type { Fetcher } from "./worker-client";
 
 type WorkspaceSnapshotResponse = {
   ok?: boolean;
   snapshot?: CanonicalWorkspaceSnapshot;
   error?: string;
 };
-
-type Fetcher = typeof fetch;
 
 export async function readCanonicalWorkspaceSnapshot(
   workerUrl: string,

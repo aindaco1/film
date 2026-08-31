@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { checkedOpaqueId, createLocalWorkerProofClient } from "./local-worker-proof-client.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workerDir = path.join(root, "apps", "worker");
-const origin = normalizeOrigin(process.env.FILM_WORKER_SMOKE_ORIGIN ?? "http://127.0.0.1:8787");
+const localWorker = createLocalWorkerProofClient();
+const { executeLocalD1, requestJson } = localWorker;
 const proofIds = {
   downloadPackagePlan: null,
   packagePreflight: null,
@@ -15,6 +12,7 @@ const proofIds = {
   commitPreflight: null,
 };
 const packageIntentId = "attachment_local_package_plan_probe";
+let ownerSession = null;
 const packageIntentObjectKey = `workspaces/workspace_acme/attachments/doc_local_package_plan/${"d".repeat(64)}-package-plan.pdf`;
 const attachmentPackagePlan = {
   policy: "metadata_only",
@@ -74,17 +72,8 @@ try {
     );
   `);
 
-  const magic = await requestJson("POST", "/api/auth/magic-link/request", {
-    email: `film-attachment-proof-smoke+${Date.now()}@example.invalid`,
-  });
-  assert.match(magic.devOnlyToken, /^dry_/);
-  const verification = await requestJson("POST", "/api/auth/magic-link/verify", {
-    token: magic.devOnlyToken,
-  }, true);
-  const cookie = sessionCookieFrom(verification.headers.get("set-cookie"));
-  const csrfToken = verification.body.session?.csrfToken;
-  assert.equal(typeof csrfToken, "string");
-  const headers = { cookie, "x-film-csrf": csrfToken };
+  ownerSession = await localWorker.createOwnerSession("attachment_probe");
+  const headers = ownerSession.headers;
   const packageSha256 = "c".repeat(64);
   const manifestSha256 = await sha256Hex(JSON.stringify(packageManifest));
 
@@ -93,7 +82,7 @@ try {
     limit: 10,
     objectKeys: [packageIntentObjectKey],
   }, false, headers);
-  proofIds.downloadPackagePlan = checkedId(downloadPackagePlan.packagePlanId, /^attachment_package_/);
+  proofIds.downloadPackagePlan = checkedOpaqueId(downloadPackagePlan.packagePlanId, /^attachment_package_/);
   assert.match(downloadPackagePlan.packageToken, /^pkg_/);
   assert.equal(downloadPackagePlan.packagePlanPersistence, "d1_attachment_package_plans");
   assert.equal(downloadPackagePlan.auditPersistence, "d1_audit_events");
@@ -105,7 +94,7 @@ try {
     backupCreatedAt: "2026-07-09T02:00:00.000Z",
     attachmentPackagePlan,
   }, false, headers);
-  proofIds.packagePreflight = checkedId(preflight.attachmentPackagePreflightId, /^restore_attachment_package_preflight_/);
+  proofIds.packagePreflight = checkedOpaqueId(preflight.attachmentPackagePreflightId, /^restore_attachment_package_preflight_/);
   assert.equal(preflight.attachmentPackagePreflightPersistence, "d1_restore_attachment_package_preflights");
   assert.equal(preflight.auditPersistence, "d1_audit_events");
 
@@ -119,7 +108,7 @@ try {
     manifestSha256,
     packageManifest,
   }, false, headers);
-  proofIds.verification = checkedId(packageVerification.attachmentPackageVerificationId, /^restore_attachment_package_verification_/);
+  proofIds.verification = checkedOpaqueId(packageVerification.attachmentPackageVerificationId, /^restore_attachment_package_verification_/);
   assert.equal(packageVerification.attachmentPackageVerificationPersistence, "d1_restore_attachment_package_verifications");
   assert.equal(packageVerification.auditPersistence, "d1_audit_events");
 
@@ -130,7 +119,7 @@ try {
     manifestSha256,
     packageManifest,
   }, false, headers);
-  proofIds.objectPlan = checkedId(objectPlan.attachmentObjectPlanId, /^restore_attachment_object_plan_/);
+  proofIds.objectPlan = checkedOpaqueId(objectPlan.attachmentObjectPlanId, /^restore_attachment_object_plan_/);
   assert.equal(objectPlan.attachmentObjectPlanPersistence, "d1_restore_attachment_object_plans");
   assert.equal(objectPlan.auditPersistence, "d1_audit_events");
 
@@ -143,7 +132,7 @@ try {
     packageManifest,
     confirmation: "RESTORE workspace_acme",
   }, false, headers);
-  proofIds.commitPreflight = checkedId(
+  proofIds.commitPreflight = checkedOpaqueId(
     commitPreflight.attachmentObjectCommitPreflightId,
     /^restore_attachment_object_commit_preflight_/,
   );
@@ -200,52 +189,19 @@ try {
   console.error(`Local attachment-proof smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 } finally {
+  if (ownerSession) {
+    try {
+      await localWorker.disposeOwnerSession(ownerSession);
+    } catch (error) {
+      console.error(`Local attachment-proof owner cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    }
+  }
   try {
     executeLocalD1(cleanupSql());
   } catch (error) {
     console.error(`Local attachment-proof smoke cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
-  }
-}
-
-async function requestJson(method, pathname, body, includeHeaders = false, extraHeaders = {}) {
-  const response = await fetch(`${origin}${pathname}`, {
-    method,
-    headers: { accept: "application/json", "content-type": "application/json", ...extraHeaders },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error(`${pathname} returned non-JSON`);
-  }
-  if (!response.ok) throw new Error(`${pathname} returned ${response.status}: ${parsed.error ?? "unknown_error"}`);
-  return includeHeaders ? { body: parsed, headers: response.headers } : parsed;
-}
-
-function executeLocalD1(command, json = false) {
-  if (!command.trim()) return null;
-  const result = spawnSync("npx", [
-    "wrangler", "d1", "execute", "DB", "--local", "--yes",
-    ...(json ? ["--json"] : []),
-    "--command", command,
-  ], {
-    cwd: workerDir,
-    env: { ...process.env, NO_COLOR: "1" },
-    encoding: "utf8",
-    timeout: 60_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) {
-    throw new Error(`local D1 command exited with ${result.status}: ${result.error?.message ?? tail(result.stderr || result.stdout)}`);
-  }
-  if (!json) return null;
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new Error(`local D1 command returned non-JSON: ${tail(result.stdout)}`);
   }
 }
 
@@ -265,32 +221,7 @@ function cleanupSql() {
   `;
 }
 
-function checkedId(value, prefix) {
-  assert.equal(typeof value, "string");
-  assert.match(value, prefix);
-  assert.match(value, /^[A-Za-z0-9_-]+$/);
-  return value;
-}
-
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function sessionCookieFrom(setCookie) {
-  const cookie = setCookie?.split(";")[0]?.trim() ?? "";
-  if (!cookie.startsWith("film_session=")) throw new Error("Magic-link verification did not return a Film session cookie");
-  return cookie;
-}
-
-function normalizeOrigin(value) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("FILM_WORKER_SMOKE_ORIGIN must be an HTTP(S) URL");
-  }
-  return parsed.origin;
-}
-
-function tail(value) {
-  return value.split(/\r?\n/).slice(-12).join("\n");
 }

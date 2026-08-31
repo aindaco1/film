@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import {
+  createWorkerJsonClient,
+  normalizeHttpBaseUrl,
+  parseCliArgs,
+  sessionCookieFrom,
+} from "./worker-smoke-client.mjs";
 
 const PROVIDER_KEYS = ["pool", "store", "stripe", "social", "google", "resend", "sms"];
 const DEFAULT_EMAIL = "film-smoke@example.invalid";
 const REQUEST_TIMEOUT_MS = 10_000;
 
-const args = parseArgs(process.argv.slice(2));
+const args = parseCliArgs(process.argv.slice(2), {
+  booleans: ["--require", "--strict"],
+  values: ["--origin", "--email"],
+});
 const required = Boolean(args.require || args.strict || process.env.FILM_WORKER_SMOKE_REQUIRED === "1");
 const configuredOrigin = args.origin ?? process.env.FILM_WORKER_SMOKE_ORIGIN ?? process.env.VITE_WORKER_URL ?? "";
 
@@ -15,7 +24,8 @@ if (!configuredOrigin) {
   process.exit(required ? 1 : 0);
 }
 
-const baseUrl = normalizeBaseUrl(configuredOrigin);
+const baseUrl = normalizeHttpBaseUrl(configuredOrigin);
+const requestJson = createWorkerJsonClient(baseUrl, { requestTimeoutMs: REQUEST_TIMEOUT_MS });
 const email = args.email ?? process.env.FILM_WORKER_SMOKE_EMAIL ?? DEFAULT_EMAIL;
 
 try {
@@ -118,85 +128,4 @@ try {
 } catch (error) {
   console.error(`Live Worker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
-}
-
-async function requestJson(method, path, options = {}) {
-  let response;
-  try {
-    response = await fetchWithTimeout(`${baseUrl}${path}`, {
-      method,
-      headers: {
-        accept: "application/json",
-        ...(method === "POST" ? { "content-type": "application/json" } : {}),
-        ...(options.headers ?? {}),
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-  } catch (error) {
-    throw new Error(`${method} ${path} request failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const text = await response.text();
-  const body = parseJson(text);
-  if (!response.ok) {
-    const error = body && typeof body.error === "string" ? body.error : response.statusText;
-    throw new Error(`${method} ${path} returned ${response.status}: ${error}`);
-  }
-  return { response, body };
-}
-
-async function fetchWithTimeout(url, init) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function parseJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("Worker returned a non-JSON response");
-  }
-}
-
-function sessionCookieFrom(setCookie) {
-  const cookie = setCookie?.split(";")[0]?.trim() ?? "";
-  if (!cookie.startsWith("film_session=")) {
-    throw new Error("Magic-link verification did not return a film_session cookie");
-  }
-  return cookie;
-}
-
-function normalizeBaseUrl(value) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Worker smoke origin must be an http(s) URL");
-  }
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  return `${parsed.origin}${pathname}`;
-}
-
-function parseArgs(argv) {
-  const parsed = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--require" || arg === "--strict") {
-      parsed[arg.slice(2)] = true;
-      continue;
-    }
-    if (arg === "--origin" || arg === "--email") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) {
-        throw new Error(`${arg} requires a value`);
-      }
-      parsed[arg.slice(2)] = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return parsed;
 }

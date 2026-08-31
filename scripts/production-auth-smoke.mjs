@@ -7,9 +7,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyNotionImport } from "@film/importers";
 import { createFilmProjectFromTemplate, seedWorkspace } from "@film/schema";
+import {
+  boundedInteger,
+  normalizeSecureHttpBaseUrl,
+  parseCliArgs,
+  parseEnvFile,
+} from "./script-input.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const args = parseArgs(process.argv.slice(2));
+const args = parseCliArgs(process.argv.slice(2), {
+  booleans: ["--allow-send", "--require", "--check-runtime-readiness", "--apply-project", "--apply-notion-import"],
+  values: [
+    "--origin", "--app-origin", "--resend-api-origin", "--source-dev-vars", "--email-key", "--resend-key",
+    "--request-timeout-ms", "--poll-timeout-ms", "--poll-interval-ms", "--workspace", "--create-project-title",
+    "--project-type", "--project-id", "--notion-source-dir",
+  ],
+});
 const required = Boolean(args.require || process.env.FILM_PRODUCTION_AUTH_SMOKE_REQUIRED === "1");
 const allowSend = Boolean(args["allow-send"] || process.env.FILM_PRODUCTION_AUTH_SMOKE_ALLOW_SEND === "1");
 const projectTitle = optionalLabel(args["create-project-title"], "project title", 180);
@@ -42,12 +55,12 @@ if (!allowSend) {
 }
 
 const sourcePath = path.resolve(args["source-dev-vars"] ?? path.join(root, "..", "pool", "worker", ".dev.vars"));
-const sourceVars = readDevVars(readFileSync(sourcePath, "utf8"));
+const sourceVars = parseEnvFile(readFileSync(sourcePath, "utf8"));
 const email = firstEmail(process.env.FILM_PRODUCTION_AUTH_SMOKE_EMAIL?.trim() || sourceVars.get(args["email-key"] ?? "ADMIN_BOOTSTRAP_EMAILS") || "");
 const resendApiKey = process.env.RESEND_API_KEY?.trim() || sourceVars.get(args["resend-key"] ?? "RESEND_API_KEY") || "";
-const workerOrigin = normalizeHttpOrigin(args.origin ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_ORIGIN ?? "https://api.film.dustwave.xyz", "Worker origin");
-const appOrigin = normalizeHttpOrigin(args["app-origin"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_APP_ORIGIN ?? "https://film.dustwave.xyz", "app origin");
-const resendApiOrigin = normalizeHttpOrigin(args["resend-api-origin"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_RESEND_API_ORIGIN ?? "https://api.resend.com", "Resend API origin");
+const workerOrigin = normalizeSecureHttpBaseUrl(args.origin ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_ORIGIN ?? "https://api.film.dustwave.xyz", "Worker origin");
+const appOrigin = normalizeSecureHttpBaseUrl(args["app-origin"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_APP_ORIGIN ?? "https://film.dustwave.xyz", "app origin");
+const resendApiOrigin = normalizeSecureHttpBaseUrl(args["resend-api-origin"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_RESEND_API_ORIGIN ?? "https://api.resend.com", "Resend API origin");
 const requestTimeoutMs = boundedInteger(args["request-timeout-ms"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_REQUEST_TIMEOUT_MS, 10_000, 1_000, 60_000, "request timeout");
 const pollTimeoutMs = boundedInteger(args["poll-timeout-ms"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_POLL_TIMEOUT_MS, 90_000, 1_000, 300_000, "poll timeout");
 const pollIntervalMs = boundedInteger(args["poll-interval-ms"] ?? process.env.FILM_PRODUCTION_AUTH_SMOKE_POLL_INTERVAL_MS, 2_000, 10, 10_000, "poll interval");
@@ -601,44 +614,9 @@ function sessionCookieFrom(setCookie) {
   return cookie;
 }
 
-function readDevVars(value) {
-  const vars = new Map();
-  for (const line of value.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-    const index = trimmed.indexOf("=");
-    const name = trimmed.slice(0, index).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
-    vars.set(name, unquote(trimmed.slice(index + 1).trim()));
-  }
-  return vars;
-}
-
-function unquote(value) {
-  if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
 function firstEmail(value) {
   const emailValue = value.split(",")[0]?.trim().toLowerCase() ?? "";
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue) ? emailValue : "";
-}
-
-function normalizeHttpOrigin(value, label) {
-  const parsed = new URL(value);
-  const localHttp = parsed.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname);
-  if (parsed.protocol !== "https:" && !localHttp) throw new Error(`${label} must use HTTPS or local HTTP`);
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  return `${parsed.origin}${pathname}`;
-}
-
-function boundedInteger(value, fallback, min, max, label) {
-  if (value === undefined || value === null || value === "") return fallback;
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) throw new Error(`Invalid ${label}.`);
-  return parsed;
 }
 
 function optionalLabel(value, label, maxLength) {
@@ -676,40 +654,4 @@ function delay(ms) {
 function fail(message) {
   console.error(`Production auth smoke failed: ${message}`);
   process.exit(1);
-}
-
-function parseArgs(argv) {
-  const parsed = {};
-  const valueArgs = new Set([
-    "--origin",
-    "--app-origin",
-    "--resend-api-origin",
-    "--source-dev-vars",
-    "--email-key",
-    "--resend-key",
-    "--request-timeout-ms",
-    "--poll-timeout-ms",
-    "--poll-interval-ms",
-    "--workspace",
-    "--create-project-title",
-    "--project-type",
-    "--project-id",
-    "--notion-source-dir",
-  ]);
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--allow-send" || arg === "--require" || arg === "--check-runtime-readiness" || arg === "--apply-project" || arg === "--apply-notion-import") {
-      parsed[arg.slice(2)] = true;
-      continue;
-    }
-    if (valueArgs.has(arg)) {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
-      parsed[arg.slice(2)] = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return parsed;
 }

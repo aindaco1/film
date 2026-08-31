@@ -6,6 +6,15 @@ import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
 import { WORKSPACE_FLOW_SECTIONS } from "./user-flow-catalog.mjs";
+import { createStoredZip } from "./zip-fixture.mjs";
+import {
+  clickWorkspaceSection,
+  exportEncryptedBackup,
+  previewEncryptedBackup,
+  revealForm,
+  selectInspectorView,
+  submitForm,
+} from "./browser-flow-helpers.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const failureDir = resolve(rootDir, "test-results");
@@ -165,6 +174,17 @@ async function expectBodyText(page, text, timeoutMs = 5_000) {
   );
 }
 
+async function expectEditableValue(page, selector, value, timeoutMs = 5_000) {
+  await page.waitForFunction(
+    ({ controlSelector, expectedValue }) => Array.from(document.querySelectorAll(controlSelector)).some((control) => (
+      (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)
+      && control.value === expectedValue
+    )),
+    { controlSelector: selector, expectedValue: value },
+    { timeout: timeoutMs },
+  );
+}
+
 async function expectMainHeading(page, heading, timeoutMs = 5_000) {
   await page.locator("main h1", { hasText: heading }).first().waitFor({ state: "visible", timeout: timeoutMs });
 }
@@ -234,38 +254,20 @@ async function workspaceProjectIds(page) {
   });
 }
 
-async function clickWorkspaceSection(page, section) {
-  await page.locator(`[data-workspace-section="${section}"]:visible`).first().click();
-  await page.waitForTimeout(75);
-}
-
-async function selectInspectorView(page, view) {
-  const selector = page.locator("[data-action='inspector-view']:visible");
-  await selector.selectOption(view);
-  await page.waitForTimeout(75);
-  const activeViews = await page.locator(".inspector-view-panel:not([hidden])").evaluateAll((panels) => (
-    panels.map((panel) => panel.getAttribute("data-inspector-view-panel"))
-  ));
-  assert(activeViews.length > 0, `Inspector view ${view} should render a panel`);
-  assert(activeViews.every((activeView) => activeView === view), `Inspector view ${view} leaked panels: ${activeViews.join(", ")}`);
-  assert(await selector.inputValue() === view, `Inspector selector should retain ${view}`);
-}
-
 async function auditInspectorNavigation(page) {
   const expectedHeadings = {
-    overview: "Description",
+    overview: "Echoes in the Static",
     team: "Team",
     ownership: "Ownership",
     changes: "Change requests",
     permissions: "Permissions",
-    backups: "Backups",
     integrations: "Integrations",
     imports: "Imports",
   };
 
   for (const [view, heading] of Object.entries(expectedHeadings)) {
     await selectInspectorView(page, view);
-    await page.locator(`.inspector-view-panel[data-inspector-view-panel='${view}']:not([hidden]) h3`, { hasText: heading }).first().waitFor({ state: "visible" });
+    await page.locator(`.inspector-view-panel[data-inspector-view-panel='${view}']:not([hidden]) h2, .inspector-view-panel[data-inspector-view-panel='${view}']:not([hidden]) h3`, { hasText: heading }).first().waitFor({ state: "visible" });
   }
 
   await selectInspectorView(page, "overview");
@@ -280,6 +282,10 @@ async function expectVisibleControlsHaveContracts(page, label) {
       "docId",
       "view",
       "tab",
+      "permissionScope",
+      "changeRequestKind",
+      "projectSurface",
+      "openDoc",
     ].some((key) => Boolean(button.dataset[key]));
     const hasFormContract = button.type === "submit" && Boolean(button.closest("form[data-action]"));
     if (hasDirectContract || hasFormContract) return [];
@@ -296,20 +302,13 @@ async function auditWorkspaceNavigation(page, label) {
     await clickWorkspaceSection(page, section);
     await expectMainHeading(page, heading);
     const activeDestinations = await page.locator(`[data-workspace-section="${section}"].is-active:visible`).count();
-    assert(activeDestinations >= 1, `${label} ${section} should expose an active navigation destination`);
+    const mobileSelection = await page.locator("[data-action='workspace-section-select']:visible").count()
+      ? await page.locator("[data-action='workspace-section-select']:visible").inputValue()
+      : null;
+    assert(activeDestinations >= 1 || mobileSelection === section, `${label} ${section} should expose an active navigation destination`);
     await expectVisibleControlsHaveContracts(page, `${label} ${section}`);
     await expectNoDocumentOverflow(page, `${label} ${section}`);
   }
-}
-
-async function submitForm(page, formSelector, fields) {
-  const form = page.locator(formSelector).first();
-  await form.waitFor({ state: "visible" });
-  for (const [name, value] of Object.entries(fields)) {
-    await form.locator(`[name="${name}"]`).fill(value);
-  }
-  await form.locator("button[type='submit']").click();
-  await page.waitForTimeout(75);
 }
 
 async function mockAuthRoutes(page) {
@@ -360,6 +359,52 @@ async function mockAuthRoutes(page) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ ok: true }),
+    });
+  });
+
+  await page.route("**/api/projects/memberships/assign-dry-run", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    assert(route.request().headers()["x-film-csrf"] === csrfValue, "Team role updates should send CSRF");
+    assert(payload.workspaceId === "workspace_acme", "Team role updates should use the active workspace");
+    assert(payload.projectId === "proj_echoes", "Team role updates should use the selected project");
+    assert(payload.memberId === "member_producer", "Team role updates should use the edited row member");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        dryRun: true,
+        persistence: "browser_smoke_mock",
+        auditPersistence: "browser_smoke_mock",
+        membership: {
+          workspaceId: payload.workspaceId,
+          projectId: payload.projectId,
+          memberId: payload.memberId,
+          role: payload.role,
+          department: payload.department,
+        },
+      }),
+    });
+  });
+
+  await page.route("**/api/members/status/dry-run", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    assert(route.request().headers()["x-film-csrf"] === csrfValue, "Team status updates should send CSRF");
+    assert(payload.memberId === "member_producer", "Team status updates should use the edited row member");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        dryRun: true,
+        persistence: "browser_smoke_mock",
+        auditPersistence: "browser_smoke_mock",
+        sessionPolicy: payload.status === "disabled" ? "target_sessions_revoked" : "no_session_revocation_required",
+        member: {
+          workspaceId: payload.workspaceId,
+          memberId: payload.memberId,
+          role: "producer",
+          status: payload.status,
+        },
+      }),
     });
   });
 }
@@ -585,6 +630,47 @@ async function mockProviderRoutes(page) {
           attempts: [{ id: "sms_attempt_browser_smoke", status: "queued" }],
           secretValuesExposed: false,
         },
+      }),
+    });
+  });
+}
+
+async function mockNotionImportRoutes(page) {
+  await page.route("**/api/imports/notion/dry-run", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    assert(files.length === 2, "Notion ZIP preflight should submit the bounded fixture manifest");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        preview: {
+          totalFiles: files.length,
+          acceptedFiles: files.length,
+          warnings: [],
+        },
+        candidates: files.map((file) => ({ path: file.path })),
+      }),
+    });
+  });
+
+  await page.route("**/api/imports/notion/core/commit", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    const records = Array.isArray(payload.records) ? payload.records : [];
+    assert(route.request().headers()["x-film-csrf"] === "csrf_browser_smoke", "Notion core commit should send CSRF");
+    assert(records.some((record) => record.kind === "task" && record.title === "Browser imported task"), "Notion import should commit its task record");
+    assert(records.some((record) => record.kind === "document" && record.title === "Browser Import Notes.md"), "Notion import should commit its document record");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        committed: records.map((record, index) => ({ id: `browser_notion_${index}`, kind: record.kind })),
+        idempotent: [],
+        updatePreview: [],
+        rejected: [],
+        persistence: "browser_smoke_mock",
+        auditPersistence: "browser_smoke_mock",
+        destructiveWrite: false,
       }),
     });
   });
@@ -934,12 +1020,62 @@ async function runAuthSmoke(page, { signOut = true } = {}) {
   await runSignOutSmoke(page);
 }
 
+async function runTeamSignInGateSmoke(page) {
+  await selectInspectorView(page, "team");
+  await expectBodyText(page, "Sign in to edit the team");
+  assert(await page.locator(".team-role-form").count() === 0, "Signed-out team rows should not expose inert editors");
+  await page.locator("[data-action='auth-open']").click();
+  assert(await page.locator("details.auth-disclosure").evaluate((element) => element.open), "Team sign-in action should open authentication");
+  assert(
+    await page.locator("form[data-action='auth-request'] input[name='email']").evaluate((element) => element === document.activeElement),
+    "Team sign-in action should focus email",
+  );
+  await selectInspectorView(page, "overview");
+}
+
+async function runTeamInlineEditingSmoke(page) {
+  await selectInspectorView(page, "team");
+  assert(await page.locator(".team-edit-gate").count() === 0, "Owner sessions should edit the team in context");
+  const producerRow = page.locator(".team-member-row", { hasText: "Sarah R." });
+  const roleSelect = producerRow.locator("select[name='role']");
+  assert(!(await roleSelect.isDisabled()), "Project role should be editable after sign-in");
+  await roleSelect.selectOption("reviewer");
+  await expectBodyText(page, "Project membership assigned by the Worker.");
+  assert(
+    await page.locator(".team-member-row", { hasText: "Sarah R." }).locator("select[name='role']").inputValue() === "reviewer",
+    "Saved project role should stay on the edited row",
+  );
+
+  const updatedRow = page.locator(".team-member-row", { hasText: "Sarah R." });
+  await updatedRow.locator("input[name='department']").fill("Production");
+  await updatedRow.locator("button[aria-label='Save Sarah R. assignment']").click();
+  await expectBodyText(page, "Project membership assigned by the Worker.");
+  assert(
+    await page.locator(".team-member-row", { hasText: "Sarah R." }).locator("input[name='department']").inputValue() === "Production",
+    "Saved department should stay on the edited row",
+  );
+
+  await page.locator(".team-member-row", { hasText: "Sarah R." }).locator("button[title='Disable Sarah R.']").click();
+  await expectBodyText(page, "Sarah R. is disabled.");
+  await page.locator(".team-member-row", { hasText: "Sarah R." }).locator("button[title='Reactivate Sarah R.']").click();
+  await expectBodyText(page, "Sarah R. is active.");
+  assert(
+    await page.locator(".team-member-row", { hasText: "Sarah R." }).locator("select[name='role']").inputValue() === "reviewer",
+    "Workspace status changes should not overwrite the project role",
+  );
+}
+
 async function runSignOutSmoke(page) {
   await page.locator("[data-action='auth-sign-out']").click();
   await expectBodyText(page, "Signed out of Film.");
 }
 
 async function runProviderChipSmoke(page) {
+  await page.locator("[data-action='integrations-open']:visible").click();
+  assert(
+    await page.locator("[data-action='inspector-view']").inputValue() === "integrations",
+    "Consolidated integration status should reveal the Integrations inspector view",
+  );
   for (const [key, label] of Object.entries(providerSmokeLabels)) {
     await page.locator(`[data-integration="${key}"]:visible`).first().click();
     assert(
@@ -959,7 +1095,58 @@ async function runProviderChipSmoke(page) {
   await expectBodyText(page, "Google browser-smoke blocker.");
 }
 
+async function runNotionImportSmoke(page) {
+  await selectInspectorView(page, "imports");
+  const fileChooserPromise = page.waitForEvent("filechooser");
+  await page.locator("[data-action='notion-import-zip']").click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
+    name: "film-browser-notion-export.zip",
+    mimeType: "application/zip",
+    buffer: createStoredZip([
+      {
+        path: "Tasks.csv",
+        content: "Name,Status,Due,Related Project\nBrowser imported task,In Progress,Tomorrow,Echoes in the Static\n",
+      },
+      {
+        path: "Browser Import Notes.md",
+        content: "# Browser Import Notes\n\nImported through the user-visible ZIP workflow.\n",
+      },
+    ]),
+  });
+  await expectBodyText(page, "Notion import completed: 0 projects, 1 tasks, 1 docs, 2 canonical core records");
+  await expectBodyText(page, "2 accepted files - 2 planned candidates");
+
+  await clickWorkspaceSection(page, "tasks");
+  await expectEditableValue(page, ".tasks-table-row input[name='title']", "Browser imported task");
+  await clickWorkspaceSection(page, "docs");
+  await expectBodyText(page, "Browser Import Notes.md");
+  await clickWorkspaceSection(page, "slate");
+}
+
+async function runPermissionScopeSmoke(page) {
+  await selectInspectorView(page, "permissions");
+  const expectedTargetLabels = {
+    project: "Project",
+    task: "Task",
+    document: "Document",
+  };
+  for (const [scope, targetLabel] of Object.entries(expectedTargetLabels)) {
+    await page.locator(`[data-permission-scope="${scope}"]:visible`).click();
+    const visibleForms = page.locator("form[data-action='permission-assign']:visible");
+    assert(await visibleForms.count() === 1, `Permission scope ${scope} should expose one assignment form`);
+    assert(
+      await visibleForms.first().getAttribute("data-permission-assignment-scope") === scope,
+      `Permission scope ${scope} should retain its assignment contract`,
+    );
+    await visibleForms.first().getByText(targetLabel, { exact: true }).waitFor({ state: "visible" });
+  }
+  await expectNoSeriousA11yViolations(page, "scoped permission assignment");
+  await selectInspectorView(page, "overview");
+}
+
 async function runSmsComposerSmoke(page) {
+  await page.locator("[data-action='integrations-open']:visible").click();
   await page.locator('[data-integration="sms"]:visible').first().click();
   await page.locator("[data-action='telnyx-provider-readiness']").click();
   await expectBodyText(page, "Telnyx: pending campaign review.");
@@ -1020,7 +1207,7 @@ async function runRecordMutationSmoke(page) {
   await requestForm.locator("input[name='fieldKeys'][value='sensitive']").check();
   await requestForm.locator("input[name='summary']").fill("Attach browser-smoke external URL and sensitivity.");
   await requestForm.locator("button[type='submit']").click();
-  await expectBodyText(page, "mutation requested");
+  await expectBodyText(page, "update review requested");
 
   const resolutionForm = page.locator("form[data-action='record-mutation-resolve']").first();
   await resolutionForm.locator("input[name='note']").fill("Browser smoke approval.");
@@ -1032,7 +1219,11 @@ async function runRecordMutationSmoke(page) {
   await diffForm.locator("select[name='update:sensitive']").selectOption("true");
   await diffForm.locator("button[type='submit']").click();
   await expectBodyText(page, "externalUrl");
-  await expectBodyText(page, "https://docs.example.com/browser-smoke-deck");
+  const previewStage = page.locator("[data-change-kind-panel='record'] details.workflow-stage").filter({ has: page.locator("summary strong", { hasText: "Preview" }) });
+  assert(
+    (await previewStage.textContent())?.includes("https://docs.example.com/browser-smoke-deck"),
+    "Completed mutation preview should retain the exact reviewed URL",
+  );
 
   const applyForm = page.locator("form[data-action='record-mutation-apply']").first();
   await applyForm.locator("input[name='update:externalUrl']").fill("https://docs.example.com/browser-smoke-deck");
@@ -1311,11 +1502,9 @@ async function runScheduleWorkspaceSmoke(page) {
   await page.locator("[data-action='schedule-lock-toggle']").click();
   await expectBodyText(page, "Schedule 2 locked.");
 
-  await expectBodyText(page, "Production Clock");
-  await expectBodyText(page, "Phase Lanes");
-  await expectBodyText(page, "Date-Driven Tasks");
-  await expectBodyText(page, "Scenes on deck");
-  await expectBodyText(page, "Call:");
+  await expectBodyText(page, "Stripboard");
+  await expectBodyText(page, "Availability & conflicts");
+  await expectBodyText(page, "Budget from schedule");
   await mkdir(failureDir, { recursive: true });
   const downloadPromise = page.waitForEvent("download", { timeout: 10_000 });
   await page.locator("[data-action='export-project-packet']").click();
@@ -1901,10 +2090,11 @@ async function runProductionReportsWorkspaceSmoke(page) {
 
 async function runLocationsWorkspaceSmoke(page) {
   await clickWorkspaceSection(page, "locations");
-  await expectBodyText(page, "Add Scouting Record");
+  await expectBodyText(page, "Add scouting record");
   await expectBodyText(page, "Imported Locations");
   await expectBodyText(page, "No imported location rows for this project yet.");
   const createForm = page.locator("form[data-action='production-location-create']");
+  await revealForm(createForm);
   const elementSelect = createForm.locator("select[name='screenplayElementId']");
   assert(await elementSelect.locator("option").count() > 1, "Screenplay breakdown should expose location candidates for scouting");
   await elementSelect.selectOption({ index: 1 });
@@ -1974,16 +2164,17 @@ async function runLocationsWorkspaceSmoke(page) {
     await page.locator("form[data-action='production-location-update'] input[name='contactName']").inputValue() === "Lee Location Owner",
     "Location contact should persist through IndexedDB reload",
   );
-  assert(await page.locator("[data-action='production-location-select'] option").count() === 1, "Location record should persist through IndexedDB reload");
+  assert(await page.locator("[data-action='production-location-row-select']").count() === 1, "Location record should persist through IndexedDB reload");
   await expectNoSeriousA11yViolations(page, "desktop production locations workspace");
   await expectNoDocumentOverflow(page, "desktop locations workspace");
 }
 
 async function runTalentWorkspaceSmoke(page) {
   await clickWorkspaceSection(page, "talent");
-  await expectBodyText(page, "Add Character Record");
+  await expectBodyText(page, "Add character record");
   await expectBodyText(page, "Casting Roster");
   const createForm = page.locator("form[data-action='production-talent-create']");
+  await revealForm(createForm);
   await createForm.locator("select[name='screenplayElementId']").selectOption({ label: "MARA" });
   await createForm.locator("button[type='submit']").click();
   await expectBodyText(page, "MARA added to local talent records.");
@@ -2041,7 +2232,7 @@ async function runTalentWorkspaceSmoke(page) {
   await page.reload({ waitUntil: "networkidle" });
   await page.locator(".production-talent-editor-panel").waitFor({ state: "visible" });
   assert(await page.locator("form[data-action='production-talent-update'] input[name='performerName']").inputValue() === "Avery Stone", "Talent record should persist through IndexedDB reload");
-  assert(await page.locator("[data-action='production-talent-select'] option").count() === 1, "Talent selector should retain the persisted record");
+  assert(await page.locator("[data-action='production-talent-row-select']").count() === 1, "Talent roster should retain the persisted record");
   await expectNoSeriousA11yViolations(page, "desktop talent workspace");
   await expectNoDocumentOverflow(page, "desktop talent workspace");
 }
@@ -2074,35 +2265,6 @@ async function queuedOperationCount(page) {
   const match = text.match(/(\d+)\s+local ops queued/);
   assert(match, `Could not parse queued operation count from "${text}"`);
   return Number(match[1]);
-}
-
-async function exportBackupForPreview(page) {
-  await mkdir(failureDir, { recursive: true });
-  const dialogPromise = page.waitForEvent("dialog", { timeout: 5_000 });
-  const clickPromise = page.locator("[data-action='backup']:visible").first().click();
-  const dialog = await dialogPromise;
-  const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
-  await dialog.accept(smokePassphrase);
-  await clickPromise;
-  const download = await downloadPromise;
-  const filename = download.suggestedFilename();
-  assert(filename.endsWith(".filmbackup.zip"), `Expected encrypted ZIP backup download, received ${filename}`);
-  const backupPath = resolve(failureDir, filename);
-  await download.saveAs(backupPath);
-  return backupPath;
-}
-
-async function previewEncryptedBackup(page, backupPath) {
-  const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.locator("[data-action='restore-file-preview']:visible").first().click();
-  const fileChooser = await fileChooserPromise;
-  const dialogPromise = page.waitForEvent("dialog");
-  const setFilesPromise = fileChooser.setFiles(backupPath);
-  const dialog = await dialogPromise;
-  await dialog.accept(smokePassphrase);
-  await setFilesPromise;
-  await expectBodyText(page, "Encrypted backup decrypted for preview only");
-  await expectBodyText(page, "No records were overwritten");
 }
 
 async function clickRestoreActionWithConfirmation(page, action) {
@@ -2142,6 +2304,7 @@ async function runDesktopSmoke(url, browser) {
   const page = await context.newPage();
   await mockAuthRoutes(page);
   await mockProviderRoutes(page);
+  await mockNotionImportRoutes(page);
   await mockOperationSyncRoute(page);
   await mockRecordMutationRoutes(page);
   await mockRestoreRoutes(page);
@@ -2149,7 +2312,8 @@ async function runDesktopSmoke(url, browser) {
   try {
     await page.goto(url, { waitUntil: "networkidle" });
     await expectBodyText(page, "Film");
-    await expectBodyText(page, "Pool dry run");
+    await expectBodyText(page, "Integrations");
+    await expectBodyText(page, "7 dry-run");
     await expectNoDocumentOverflow(page, "desktop initial");
     await expectNoSeriousA11yViolations(page, "desktop initial");
     const initialInspectorMetrics = await page.evaluate(() => ({
@@ -2170,6 +2334,9 @@ async function runDesktopSmoke(url, browser) {
     record("desktop app shell loaded without document overflow");
     record("desktop inspector exposed one persistent, grouped workflow view at a time");
 
+    await runTeamSignInGateSmoke(page);
+    record("signed-out team view exposed an in-context sign-in action instead of inert editors");
+
     assert(await page.locator("button.workspace-switch").count() === 0, "Current workspace identity must not be an inert button");
     assert(await page.getByRole("button", { name: "Settings" }).count() === 0, "Unimplemented Settings must not be presented as an action");
     assert(await page.getByRole("button", { name: "Trash" }).count() === 0, "Unimplemented Trash must not be presented as an action");
@@ -2178,6 +2345,7 @@ async function runDesktopSmoke(url, browser) {
     record("desktop workspace audit covered every section with active navigation, headings, command contracts, and document bounds");
 
     const queuedBeforeProjectCreate = await queuedOperationCount(page);
+    await clickWorkspaceSection(page, "projects");
     await page.locator("[data-action='create-project']:visible").first().click();
     await expectBodyText(page, "Create project");
     await expectNoSeriousA11yViolations(page, "project creation dialog");
@@ -2193,6 +2361,15 @@ async function runDesktopSmoke(url, browser) {
     await runAuthSmoke(page, { signOut: false });
     record("desktop magic-link request and verify UI flow completed with mocked Worker auth");
 
+    await runTeamInlineEditingSmoke(page);
+    record("desktop team rows updated project roles, departments, and member status in context");
+
+    await runNotionImportSmoke(page);
+    record("desktop Notion ZIP import preflighted, applied, committed, and rendered task and document records");
+
+    await runPermissionScopeSmoke(page);
+    record("desktop permissions exposed one assignment form across project, task, and document scopes");
+
     await runRecordMutationSmoke(page);
     record("desktop protected record mutation request, approval, diff, and apply flow completed with mocked Worker routes");
 
@@ -2205,6 +2382,7 @@ async function runDesktopSmoke(url, browser) {
     await runProviderChipSmoke(page);
     record("desktop provider dry-run chips and protected runtime live-gate manifest rendered every MVP provider boundary");
 
+    await clickWorkspaceSection(page, "projects");
     await page.locator("[data-action='filter']").fill("ARRI prepped");
     await page.waitForTimeout(100);
     const searchIds = await workspaceProjectIds(page);
@@ -2212,7 +2390,7 @@ async function runDesktopSmoke(url, browser) {
     assert(!searchIds.includes("proj_midnight"), "Expected nested equipment search to filter out Midnight Roads");
     record("desktop nested metadata search filtered the workspace project list");
 
-    await clickWorkspaceSection(page, "projects");
+    await page.locator("[data-project-surface='list']").click();
     await page.locator("[data-action='filter']").fill("equipment 24000");
     await page.waitForTimeout(100);
     const budgetIds = await workspaceProjectIds(page);
@@ -2269,19 +2447,19 @@ async function runDesktopSmoke(url, browser) {
 
     await clickWorkspaceSection(page, "tasks");
     await submitForm(page, "form[data-action='add-task']", { title: "Browser smoke task", due: "Jun 4" });
-    await expectBodyText(page, "Browser smoke task");
+    await expectEditableValue(page, ".tasks-table-row input[name='title']", "Browser smoke task");
     const queuedBeforeStatusUpdate = await queuedOperationCount(page);
-    const smokeTaskRow = page.locator(".tasks-table-row", { hasText: "Browser smoke task" }).first();
-    await smokeTaskRow.locator("[data-action='task-status-update']").selectOption("ready");
-    await expectBodyText(page, "Task status queued in the IndexedDB operation log.");
+    const smokeTaskRow = page.locator(".tasks-table-row").filter({ has: page.locator("input[name='title'][value='Browser smoke task']") }).first();
+    await smokeTaskRow.locator("[name='status']").selectOption("ready");
+    await expectBodyText(page, "Task updated: Browser smoke task Saved locally.");
     assert(
       await queuedOperationCount(page) === queuedBeforeStatusUpdate + 1,
       "Task status updates should queue a local operation",
     );
     await submitForm(page, "form[data-action='add-task']", { title: "Browser completed task" });
-    await expectBodyText(page, "Browser completed task");
+    await expectEditableValue(page, ".tasks-table-row input[name='title']", "Browser completed task");
     const queuedBeforeComplete = await queuedOperationCount(page);
-    const completedTaskRow = page.locator(".tasks-table-row", { hasText: "Browser completed task" }).first();
+    const completedTaskRow = page.locator(".tasks-table-row").filter({ has: page.locator("input[name='title'][value='Browser completed task']") }).first();
     await completedTaskRow.locator("[data-action='task-complete']").click();
     await expectBodyText(page, "Task completed and queued in the IndexedDB operation log.");
     assert(
@@ -2329,8 +2507,8 @@ async function runDesktopSmoke(url, browser) {
 
     await clickWorkspaceSection(page, "people");
     await submitForm(page, "form[data-action='add-person']", { name: "Riley Smoke", role: "Gaffer" });
-    await expectBodyText(page, "Riley Smoke");
-    await expectBodyText(page, "Gaffer");
+    await expectEditableValue(page, ".operational-table-row input[name='name']", "Riley Smoke");
+    await expectEditableValue(page, ".operational-table-row input[name='role']", "Gaffer");
     await mkdir(failureDir, { recursive: true });
     const crewDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-crew-directory']").click();
@@ -2349,8 +2527,8 @@ async function runDesktopSmoke(url, browser) {
 
     await clickWorkspaceSection(page, "equipment");
     await submitForm(page, "form[data-action='add-equipment']", { name: "Smoke Lens Kit", status: "Packed" });
-    await expectBodyText(page, "Smoke Lens Kit");
-    await expectBodyText(page, "Packed");
+    await expectEditableValue(page, ".operational-table-row input[name='name']", "Smoke Lens Kit");
+    await expectEditableValue(page, ".operational-table-row input[name='status']", "Packed");
     const gearDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-gear-pull']").click();
     const gearDownload = await gearDownloadPromise;
@@ -2370,8 +2548,8 @@ async function runDesktopSmoke(url, browser) {
     await submitForm(page, "form[data-action='add-expense']", { category: "Smoke meals", spent: "125", budget: "250" });
     await expectBodyText(page, "Budget Top Sheet");
     await expectBodyText(page, "Near means 85% or higher");
-    await expectBodyText(page, "Smoke meals");
-    await expectBodyText(page, "$125");
+    await expectEditableValue(page, ".expense-record-row input[name='category']", "Smoke meals");
+    await expectEditableValue(page, ".expense-record-row input[name='spent']", "125");
     await mkdir(failureDir, { recursive: true });
     const budgetDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await page.locator("[data-action='export-budget-top-sheet']").click();
@@ -2442,9 +2620,15 @@ async function runDesktopSmoke(url, browser) {
     );
     record("desktop partial reconnect sync kept rejected local operations queued");
 
-    await selectInspectorView(page, "backups");
-    const backupPath = await exportBackupForPreview(page);
-    await previewEncryptedBackup(page, backupPath);
+    const backupPath = await exportEncryptedBackup(page, {
+      outputDir: failureDir,
+      passphrase: smokePassphrase,
+    });
+    await previewEncryptedBackup(page, {
+      backupPath,
+      passphrase: smokePassphrase,
+      expectText: (text) => expectBodyText(page, text),
+    });
     await expectNoDocumentOverflow(page, "desktop after backup preview");
     await expectNoSeriousA11yViolations(page, "desktop backup restore preview");
     record("desktop encrypted backup export and restore preview completed without destructive writes and passed axe checks");
@@ -2494,12 +2678,12 @@ async function runMultiTabOperationMirrorSmoke(url, browser) {
     await pageA.goto(url, { waitUntil: "networkidle" });
     await clickWorkspaceSection(pageA, "tasks");
     await submitForm(pageA, "form[data-action='add-task']", { title: "Tab A sync task" });
-    await expectBodyText(pageA, "Tab A sync task");
+    await expectEditableValue(pageA, ".tasks-table-row input[name='title']", "Tab A sync task");
 
     await pageB.goto(url, { waitUntil: "networkidle" });
     await clickWorkspaceSection(pageB, "people");
     await submitForm(pageB, "form[data-action='add-person']", { name: "Tab B Producer", role: "Producer" });
-    await expectBodyText(pageB, "Tab B Producer");
+    await expectEditableValue(pageB, ".operational-table-row input[name='name']", "Tab B Producer");
 
     await pageA.locator("[data-action='sync-dry-run']").click();
     await expectBodyText(pageA, "Dry-run sync accepted");
@@ -2509,9 +2693,9 @@ async function runMultiTabOperationMirrorSmoke(url, browser) {
     const queuedAfterSync = await queuedOperationCount(pageC);
     assert(queuedAfterSync >= 1, "Expected the second tab's queued operation to survive the first tab sync");
     await clickWorkspaceSection(pageC, "tasks");
-    await expectBodyText(pageC, "Tab A sync task");
+    await expectEditableValue(pageC, ".tasks-table-row input[name='title']", "Tab A sync task");
     await clickWorkspaceSection(pageC, "people");
-    await expectBodyText(pageC, "Tab B Producer");
+    await expectEditableValue(pageC, ".operational-table-row input[name='name']", "Tab B Producer");
     record("multi-tab IndexedDB sync preserved another tab's queued operation and workspace record");
   } catch (error) {
     await mkdir(failureDir, { recursive: true });
@@ -2534,6 +2718,7 @@ async function runMobileSmoke(url, browser) {
 
   try {
     await page.goto(url, { waitUntil: "networkidle" });
+    await clickWorkspaceSection(page, "projects");
     await page.locator("[data-action='create-project']:visible").first().click();
     await expectBodyText(page, "Create project");
     const dialogBox = await page.locator(".project-create-dialog").boundingBox();
@@ -2546,14 +2731,16 @@ async function runMobileSmoke(url, browser) {
     record("mobile project onboarding action and dialog remained reachable and within the viewport");
 
     await auditWorkspaceNavigation(page, "mobile workspace audit");
-    await clickWorkspaceSection(page, "slate");
     record("mobileWorkspaceAudit covered every section with active navigation, headings, command contracts, and document bounds");
 
+    await clickWorkspaceSection(page, "projects");
     await page.locator("[data-action='filter']").fill("riverside warehouse");
     await page.waitForTimeout(100);
     await expectBodyText(page, "Echoes in the Static");
     await expectNoDocumentOverflow(page, "mobile filtered slate");
-    record("mobile slate search did not create document overflow");
+    record("mobile project search did not create document overflow");
+
+    await page.locator("[data-action='filter']").fill("");
 
     await clickWorkspaceSection(page, "backups");
     await expectBodyText(page, "Restore Points");
@@ -2561,7 +2748,6 @@ async function runMobileSmoke(url, browser) {
     await expectNoSeriousA11yViolations(page, "mobile backups workspace");
     record("mobile backups workspace rendered without document overflow");
 
-    await page.locator("[data-action='filter']").fill("");
     await importScreenplaySmokeFixture(page);
     const mobileSearchForm = page.locator("form[data-action='screenplay-search']");
     await mobileSearchForm.locator("input[name='query']").fill("The signal is back");
@@ -2616,6 +2802,7 @@ async function runMobileSmoke(url, browser) {
     await expectNoSeriousA11yViolations(page, "mobile production report");
     await clickWorkspaceSection(page, "locations");
     const mobileLocationCreate = page.locator("form[data-action='production-location-create']");
+    await revealForm(mobileLocationCreate);
     await mobileLocationCreate.locator("select[name='screenplayElementId']").selectOption({ index: 1 });
     await mobileLocationCreate.locator("button[type='submit']").click();
     await page.locator(".production-location-editor-panel").waitFor({ state: "visible" });
@@ -2624,6 +2811,7 @@ async function runMobileSmoke(url, browser) {
     await expectNoSeriousA11yViolations(page, "mobile production location");
     await clickWorkspaceSection(page, "talent");
     const mobileTalentCreate = page.locator("form[data-action='production-talent-create']");
+    await revealForm(mobileTalentCreate);
     await mobileTalentCreate.locator("select[name='screenplayElementId']").selectOption({ label: "MARA" });
     await mobileTalentCreate.locator("button[type='submit']").click();
     await page.locator(".production-talent-editor-panel").waitFor({ state: "visible" });

@@ -2,12 +2,21 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  boundedInteger,
+  normalizeSecureHttpBaseUrl,
+  parseCliArgs,
+  parseEnvFile,
+} from "./script-input.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const args = parseArgs(process.argv.slice(2));
+const args = parseCliArgs(process.argv.slice(2), {
+  booleans: ["--json"],
+  values: ["--source-dev-vars", "--config", "--api-origin", "--script", "--hours"],
+});
 const sourcePath = path.resolve(args["source-dev-vars"] ?? path.join(root, "..", "pool", "worker", ".dev.vars"));
 const configPath = path.resolve(args.config ?? path.join(root, "apps", "worker", "wrangler.toml"));
-const sourceVars = readDevVars(readFileSync(sourcePath, "utf8"));
+const sourceVars = parseEnvFile(readFileSync(sourcePath, "utf8"));
 const accountTag = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || sourceVars.get("CLOUDFLARE_ACCOUNT_ID") || "";
 const analyticsCredential = process.env.CLOUDFLARE_USAGE_API_TOKEN?.trim()
   || sourceVars.get("CLOUDFLARE_USAGE_API_TOKEN")
@@ -18,7 +27,10 @@ const kvCredential = process.env.CLOUDFLARE_API_TOKEN?.trim()
   || sourceVars.get("CLOUDFLARE_API_TOKEN")
   || analyticsCredential;
 const sessionNamespaceId = kvNamespaceId(readFileSync(configPath, "utf8"), "SESSIONS");
-const apiOrigin = normalizeApiOrigin(args["api-origin"] ?? process.env.FILM_CLOUDFLARE_API_ORIGIN ?? "https://api.cloudflare.com/client/v4");
+const apiOrigin = normalizeSecureHttpBaseUrl(
+  args["api-origin"] ?? process.env.FILM_CLOUDFLARE_API_ORIGIN ?? "https://api.cloudflare.com/client/v4",
+  "Cloudflare API origin",
+);
 const scriptName = safeScriptName(args.script ?? "film-worker");
 const windowHours = boundedInteger(args.hours, 24, 1, 720, "hours");
 
@@ -179,31 +191,6 @@ function kvNamespaceId(toml, binding) {
   return "";
 }
 
-function readDevVars(value) {
-  const vars = new Map();
-  for (const line of value.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-    const index = trimmed.indexOf("=");
-    const name = trimmed.slice(0, index).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
-    vars.set(name, unquote(trimmed.slice(index + 1).trim()));
-  }
-  return vars;
-}
-
-function unquote(value) {
-  if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) return value.slice(1, -1);
-  return value;
-}
-
-function normalizeApiOrigin(value) {
-  const parsed = new URL(value);
-  const localHttp = parsed.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname);
-  if (parsed.protocol !== "https:" && !localHttp) throw new Error("Cloudflare API origin must use HTTPS or local HTTP");
-  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
-}
-
 function safeScriptName(value) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{1,119}$/.test(value)) throw new Error("Invalid Worker script name.");
   return value;
@@ -222,36 +209,8 @@ function finiteNumber(value) {
   return Number.isFinite(number) && number >= 0 ? number : 0;
 }
 
-function boundedInteger(value, fallback, min, max, label) {
-  if (value === undefined || value === null || value === "") return fallback;
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) throw new Error(`Invalid ${label}.`);
-  return parsed;
-}
-
 function fail(message) {
   console.error(`Production traffic report failed: ${message}`);
   process.exit(1);
-}
-
-function parseArgs(argv) {
-  const parsed = {};
-  const valueArgs = new Set(["--source-dev-vars", "--config", "--api-origin", "--script", "--hours"]);
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--json") {
-      parsed.json = true;
-      continue;
-    }
-    if (valueArgs.has(arg)) {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
-      parsed[arg.slice(2)] = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return parsed;
 }
 

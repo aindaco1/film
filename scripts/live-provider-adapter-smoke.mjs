@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import {
+  createWorkerJsonClient,
+  normalizeHttpBaseUrl,
+  parseCliArgs,
+  sessionCookieFrom,
+  timeoutMsFrom,
+} from "./worker-smoke-client.mjs";
 
 const PROVIDER_KEYS = ["pool", "store", "stripe", "social", "google", "resend", "sms"];
 const DEFAULT_EMAIL = "film-provider-smoke@example.invalid";
@@ -7,10 +14,14 @@ const DEFAULT_WORKSPACE_ID = "workspace_acme";
 const DEFAULT_PROJECT_ID = "proj_echoes";
 const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
 
-const args = parseArgs(process.argv.slice(2));
+const args = parseCliArgs(process.argv.slice(2), {
+  booleans: ["--require", "--strict", "--allow-stripe", "--send-invite"],
+  values: ["--origin", "--email", "--workspace", "--project", "--invite-email", "--timeout-ms"],
+});
 const requestTimeoutMs = timeoutMsFrom(
   args["timeout-ms"] ?? process.env.FILM_LIVE_PROVIDER_SMOKE_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  "Provider smoke timeout",
 );
 const required = Boolean(
   args.require
@@ -30,7 +41,8 @@ if (!configuredOrigin) {
   process.exit(required ? 1 : 0);
 }
 
-const baseUrl = normalizeBaseUrl(configuredOrigin);
+const baseUrl = normalizeHttpBaseUrl(configuredOrigin, "Provider smoke origin");
+const requestJson = createWorkerJsonClient(baseUrl, { requestTimeoutMs });
 const email = args.email ?? process.env.FILM_LIVE_PROVIDER_SMOKE_EMAIL ?? DEFAULT_EMAIL;
 const workspaceId = args.workspace ?? process.env.FILM_LIVE_PROVIDER_SMOKE_WORKSPACE_ID ?? DEFAULT_WORKSPACE_ID;
 const projectId = args.project ?? process.env.FILM_LIVE_PROVIDER_SMOKE_PROJECT_ID ?? DEFAULT_PROJECT_ID;
@@ -167,95 +179,4 @@ try {
 } catch (error) {
   console.error(`Live provider adapter smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
-}
-
-async function requestJson(method, path, options = {}) {
-  let response;
-  try {
-    response = await fetchWithTimeout(`${baseUrl}${path}`, {
-      method,
-      headers: {
-        accept: "application/json",
-        ...(method === "POST" ? { "content-type": "application/json" } : {}),
-        ...(options.headers ?? {}),
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-  } catch (error) {
-    throw new Error(`${method} ${path} request failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const text = await response.text();
-  const body = parseJson(text);
-  if (!response.ok) {
-    const error = body && typeof body.error === "string" ? body.error : response.statusText;
-    throw new Error(`${method} ${path} returned ${response.status}: ${error}`);
-  }
-  return { response, body };
-}
-
-async function fetchWithTimeout(url, init) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function parseJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("Worker returned a non-JSON response");
-  }
-}
-
-function sessionCookieFrom(setCookie) {
-  const cookie = setCookie?.split(";")[0]?.trim() ?? "";
-  if (!cookie.startsWith("film_session=")) {
-    throw new Error("Magic-link verification did not return a film_session cookie");
-  }
-  return cookie;
-}
-
-function normalizeBaseUrl(value) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Provider smoke origin must be an http(s) URL");
-  }
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  return `${parsed.origin}${pathname}`;
-}
-
-function parseArgs(argv) {
-  const parsed = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--require" || arg === "--strict" || arg === "--allow-stripe" || arg === "--send-invite") {
-      parsed[arg.slice(2)] = true;
-      continue;
-    }
-    if (arg === "--origin" || arg === "--email" || arg === "--workspace" || arg === "--project" || arg === "--invite-email" || arg === "--timeout-ms") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) {
-        throw new Error(`${arg} requires a value`);
-      }
-      parsed[arg.slice(2)] = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return parsed;
-}
-
-function timeoutMsFrom(value, fallback) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return fallback;
-  const timeoutMs = Number(raw);
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 300_000) {
-    throw new Error("Provider smoke timeout must be an integer between 1000 and 300000 milliseconds.");
-  }
-  return timeoutMs;
 }

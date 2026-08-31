@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { checkedOpaqueId, createLocalWorkerProofClient } from "./local-worker-proof-client.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workerDir = path.join(root, "apps", "worker");
-const origin = normalizeOrigin(process.env.FILM_WORKER_SMOKE_ORIGIN ?? "http://127.0.0.1:8787");
+const localWorker = createLocalWorkerProofClient();
+const { executeLocalD1, requestJson } = localWorker;
 const restorePointId = "restore_local_atomic_proof";
 const snapshotRef = "r2://film-backups/workspaces/workspace_acme/backups/20260709T020000000Z-localproof.filmbackup.zip";
 let planningPreviewId = null;
+let ownerSession = null;
 const preview = {
   incomingRecordCount: 4,
   changedRecordCount: 1,
@@ -33,17 +31,8 @@ try {
       );
   `);
 
-  const magic = await requestJson("POST", "/api/auth/magic-link/request", {
-    email: `film-restore-proof-smoke+${Date.now()}@example.invalid`,
-  });
-  assert.match(magic.devOnlyToken, /^dry_/);
-  const verification = await requestJson("POST", "/api/auth/magic-link/verify", {
-    token: magic.devOnlyToken,
-  }, true);
-  const cookie = sessionCookieFrom(verification.headers.get("set-cookie"));
-  const csrfToken = verification.body.session?.csrfToken;
-  assert.equal(typeof csrfToken, "string");
-  const headers = { cookie, "x-film-csrf": csrfToken };
+  ownerSession = await localWorker.createOwnerSession("restore_probe");
+  const headers = ownerSession.headers;
 
   const approval = await requestJson("POST", "/api/restores/approval-dry-run", {
     workspaceId: "workspace_acme",
@@ -100,7 +89,7 @@ try {
       fields: { locationType: "Interior" },
     }],
   }, false, headers);
-  planningPreviewId = checkedId(planningPreview.planningPreviewId, /^restore_planning_preview_/);
+  planningPreviewId = checkedOpaqueId(planningPreview.planningPreviewId, /^restore_planning_preview_/);
   assert.equal(planningPreview.planningPreviewPersistence, "d1_restore_planning_previews");
   assert.equal(planningPreview.auditPersistence, "d1_audit_events");
   assert.equal(planningPreview.destructiveWrite, false);
@@ -147,63 +136,19 @@ try {
   console.error(`Local restore-proof smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 } finally {
+  if (ownerSession) {
+    try {
+      await localWorker.disposeOwnerSession(ownerSession);
+    } catch (error) {
+      console.error(`Local restore-proof owner cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    }
+  }
   try {
     executeLocalD1(cleanupSql());
   } catch (error) {
     console.error(`Local restore-proof smoke cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
-  }
-}
-
-async function requestJson(method, pathname, body, includeHeaders = false, extraHeaders = {}) {
-  const response = await fetch(`${origin}${pathname}`, {
-    method,
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      ...extraHeaders,
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error(`${pathname} returned non-JSON`);
-  }
-  if (!response.ok) {
-    throw new Error(`${pathname} returned ${response.status}: ${parsed.error ?? "unknown_error"}`);
-  }
-  return includeHeaders ? { body: parsed, headers: response.headers } : parsed;
-}
-
-function executeLocalD1(command, json = false) {
-  const result = spawnSync("npx", [
-    "wrangler",
-    "d1",
-    "execute",
-    "DB",
-    "--local",
-    "--yes",
-    ...(json ? ["--json"] : []),
-    "--command",
-    command,
-  ], {
-    cwd: workerDir,
-    env: { ...process.env, NO_COLOR: "1" },
-    encoding: "utf8",
-    timeout: 60_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) {
-    throw new Error(`local D1 command exited with ${result.status}: ${result.error?.message ?? tail(result.stderr || result.stdout)}`);
-  }
-  if (!json) return null;
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new Error(`local D1 command returned non-JSON: ${tail(result.stdout)}`);
   }
 }
 
@@ -226,31 +171,4 @@ function cleanupSql() {
       WHERE pre_restore_backup_id = '${restorePointId}';
     DELETE FROM restore_points WHERE id = '${restorePointId}';
   `;
-}
-
-function checkedId(value, prefix) {
-  assert.equal(typeof value, "string");
-  assert.match(value, prefix);
-  assert.match(value, /^[A-Za-z0-9_-]+$/);
-  return value;
-}
-
-function sessionCookieFrom(setCookie) {
-  const cookie = setCookie?.split(";")[0]?.trim() ?? "";
-  if (!cookie.startsWith("film_session=")) {
-    throw new Error("Magic-link verification did not return a Film session cookie");
-  }
-  return cookie;
-}
-
-function normalizeOrigin(value) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("FILM_WORKER_SMOKE_ORIGIN must be an HTTP(S) URL");
-  }
-  return parsed.origin;
-}
-
-function tail(value) {
-  return value.split(/\r?\n/).slice(-12).join("\n");
 }

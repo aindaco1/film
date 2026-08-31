@@ -1,3 +1,5 @@
+import type { Fetcher } from "./worker-client";
+
 export type CanonicalDocumentMarkdownUpdate = {
   id: string;
   projectId: string;
@@ -16,8 +18,6 @@ type DocumentMarkdownUpdateResponse = {
   document?: CanonicalDocumentMarkdownUpdate;
   error?: string;
 };
-
-type Fetcher = typeof fetch;
 
 export async function saveCanonicalDocumentMarkdown(
   workerUrl: string,

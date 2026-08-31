@@ -1,4 +1,8 @@
-import type { TelnyxSmsCategory } from "@film/providers";
+import {
+  TELNYX_SMS_PROGRAM_NAME,
+  TELNYX_SMS_SENDER_PREFIX,
+  type TelnyxSmsCategory,
+} from "@film/providers";
 import {
   decryptSmsRecipient,
   normalizeSmsRecipient,
@@ -10,7 +14,7 @@ export const TELNYX_LIVE_SEGMENT_CAP = 60;
 export const TELNYX_PER_MESSAGE_SEGMENT_CAP = 6;
 export const TELNYX_MESSAGE_MAX_CHARS = 1_200;
 export const TELNYX_API_ORIGIN = "https://api.telnyx.com";
-export const FILM_SMS_SENDER_PREFIX = "Film by Dust Wave:";
+export const FILM_SMS_SENDER_PREFIX = TELNYX_SMS_SENDER_PREFIX;
 
 const EMERGENCY_REASON_CODES = ["immediate_safety", "location_emergency"] as const;
 type EmergencyReasonCode = typeof EMERGENCY_REASON_CODES[number];
@@ -118,8 +122,12 @@ export function estimateSmsSegments(messageBody: string): number {
 }
 
 export function formatFilmSmsMessage(messageBody: string): string {
-  const content = messageBody.trim().replace(/^Film by Dust Wave:\s*/i, "").trim();
+  const content = messageBody.trim().replace(new RegExp(`^${escapeRegExp(TELNYX_SMS_PROGRAM_NAME)}:\\s*`, "i"), "").trim();
   return content ? `${FILM_SMS_SENDER_PREFIX} ${content}` : "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function isWithinQuietHours(

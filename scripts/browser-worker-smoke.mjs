@@ -4,6 +4,15 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import {
+  clickWorkspaceSection,
+  exportEncryptedBackup,
+  expectInspectorView,
+  previewEncryptedBackup,
+  revealForm,
+  selectInspectorView,
+  submitForm,
+} from "./browser-flow-helpers.mjs";
 
 const PROVIDER_LABELS = {
   pool: "Pool",
@@ -59,7 +68,7 @@ try {
 
   await page.goto(appOrigin, { waitUntil: "networkidle" });
   await expectBodyText(page, "Film");
-  await expectBodyText(page, "Pool dry run");
+  await expectBodyText(page, "7 dry-run");
 
   await submitForm(page, "form[data-action='auth-request']", { email });
   await expectBodyText(page, "Dry-run link ready");
@@ -70,6 +79,8 @@ try {
   await expectBodyText(page, "Signed-in workspace restored.");
   await expectBodyText(page, "owner session");
 
+  await page.locator("[data-action='integrations-open']:visible").click();
+  await expectInspectorView(page, "integrations");
   for (const [key, label] of Object.entries(PROVIDER_LABELS)) {
     await page.locator(`[data-integration="${key}"]:visible`).first().click();
     await expectBodyText(page, `${label} dry run`);
@@ -106,10 +117,17 @@ try {
 
   await runProtectedMutationFlow(page);
 
-  const backupPath = await exportBackupForPreview(page);
+  const backupPath = await exportEncryptedBackup(page, {
+    outputDir: failureDir,
+    passphrase: smokePassphrase,
+  });
   await expectBodyText(page, "Encrypted ZIP backup exported");
   await expectAnyBodyText(page, ["Worker R2 backup storage", "Worker restore-point metadata"]);
-  await previewEncryptedBackup(page, backupPath);
+  await previewEncryptedBackup(page, {
+    backupPath,
+    passphrase: smokePassphrase,
+    expectText: (text) => expectBodyText(page, text),
+  });
 
   await page.locator("[data-action='auth-sign-out']").click();
   await expectBodyText(page, "Signed out of Film.");
@@ -168,15 +186,6 @@ async function ensureAppServer(appOriginValue, workerOriginValue) {
   return { started: true, child };
 }
 
-async function submitForm(page, formSelector, fields) {
-  const form = page.locator(formSelector).first();
-  await form.waitFor({ state: "visible" });
-  for (const [name, value] of Object.entries(fields)) {
-    await form.locator(`[name="${name}"]`).fill(value);
-  }
-  await form.locator("button[type='submit']").click();
-}
-
 async function expectBodyText(page, text) {
   await page.locator("body").filter({ hasText: text }).waitFor({ timeout: REQUEST_TIMEOUT_MS });
 }
@@ -192,6 +201,7 @@ async function expectAnyBodyText(page, texts) {
 }
 
 async function runProtectedMutationFlow(page) {
+  await clickWorkspaceSection(page, "docs");
   await submitForm(page, "form[data-action='add-doc']", { name: "Browser Worker Mutation Notes" });
   await expectBodyText(page, "Document draft added to the local operation log.");
 
@@ -204,7 +214,9 @@ async function runProtectedMutationFlow(page) {
   await documentForm.locator("button[type='submit']").click();
   await expectBodyText(page, "Document draft saved locally and to the canonical workspace.");
 
+  await selectInspectorView(page, "ownership");
   const ownerForm = page.locator("form[data-action='record-owner-transfer']").first();
+  await revealForm(ownerForm);
   await ownerForm.locator("select[name='entityType']").selectOption("document");
   const targetOption = ownerForm.locator("select[name='entityId'] option", { hasText: "Browser Worker Mutation Notes" }).first();
   await targetOption.waitFor({ state: "attached", timeout: REQUEST_TIMEOUT_MS });
@@ -212,10 +224,14 @@ async function runProtectedMutationFlow(page) {
   if (!targetId) throw new Error("Could not find synced mutation target document");
   await ownerForm.locator("select[name='entityId']").selectOption(targetId);
 
-  await page.locator("form[data-action='record-mutation-preflight'] button[type='submit']").click();
+  await selectInspectorView(page, "changes");
+  const preflightForm = page.locator("form[data-action='record-mutation-preflight']").first();
+  await revealForm(preflightForm);
+  await preflightForm.locator("button[type='submit']").click();
   await expectBodyText(page, "update access allowed");
 
   const requestForm = page.locator("form[data-action='record-mutation-request']").first();
+  await revealForm(requestForm);
   await requestForm.locator("input[name='fieldKeys'][value='externalUrl']").check();
   await requestForm.locator("input[name='fieldKeys'][value='sensitive']").check();
   await requestForm.locator("input[name='summary']").fill("Attach browser-worker-smoke external URL and sensitivity.");
@@ -223,11 +239,13 @@ async function runProtectedMutationFlow(page) {
   await expectBodyText(page, "mutation requested");
 
   const resolutionForm = page.locator("form[data-action='record-mutation-resolve']").first();
+  await revealForm(resolutionForm);
   await resolutionForm.locator("input[name='note']").fill("Browser Worker smoke approval.");
   await resolutionForm.locator("button[type='submit']").click();
   await expectBodyText(page, "approved pending apply");
 
   const diffForm = page.locator("form[data-action='record-mutation-diff-preview']").first();
+  await revealForm(diffForm);
   await diffForm.locator("input[name='update:externalUrl']").fill("https://docs.example.com/browser-worker-smoke-deck");
   await diffForm.locator("select[name='update:sensitive']").selectOption("true");
   await diffForm.locator("button[type='submit']").click();
@@ -235,6 +253,7 @@ async function runProtectedMutationFlow(page) {
   await expectBodyText(page, "https://docs.example.com/browser-worker-smoke-deck");
 
   const applyForm = page.locator("form[data-action='record-mutation-apply']").first();
+  await revealForm(applyForm);
   await applyForm.locator("input[name='update:externalUrl']").fill("https://docs.example.com/browser-worker-smoke-deck");
   await applyForm.locator("select[name='update:sensitive']").selectOption("true");
   await applyForm.locator("button[type='submit']").click();
@@ -244,7 +263,9 @@ async function runProtectedMutationFlow(page) {
     "sensitive, externalUrl - destructive write",
   ]);
 
+  await page.locator("[data-change-request-kind='profile']").click();
   const profileRequestForm = page.locator("form[data-action='film-profile-mutation-request']").first();
+  await revealForm(profileRequestForm);
   await profileRequestForm.locator("input[name='fieldKeys'][value='format']").check();
   await profileRequestForm.locator("input[name='fieldKeys'][value='budgetCents']").check();
   await profileRequestForm.locator("input[name='summary']").fill("Update browser-worker-smoke profile metadata.");
@@ -252,11 +273,13 @@ async function runProtectedMutationFlow(page) {
   await expectBodyText(page, "profile review requested");
 
   const profileResolutionForm = page.locator("form[data-action='film-profile-mutation-resolve']").first();
+  await revealForm(profileResolutionForm);
   await profileResolutionForm.locator("input[name='note']").fill("Browser Worker smoke profile approval.");
   await profileResolutionForm.locator("button[type='submit']").click();
   await expectBodyText(page, "profile mutation approved pending apply");
 
   const profileDiffForm = page.locator("form[data-action='film-profile-mutation-diff-preview']").first();
+  await revealForm(profileDiffForm);
   await profileDiffForm.locator("input[name='update:format']").fill("B&W");
   await profileDiffForm.locator("input[name='update:budgetCents']").fill("2600000");
   await profileDiffForm.locator("button[type='submit']").click();
@@ -264,6 +287,7 @@ async function runProtectedMutationFlow(page) {
   await expectBodyText(page, "B&W");
 
   const profileApplyForm = page.locator("form[data-action='film-profile-mutation-apply']").first();
+  await revealForm(profileApplyForm);
   await profileApplyForm.locator("input[name='update:format']").fill("B&W");
   await profileApplyForm.locator("input[name='update:budgetCents']").fill("2600000");
   await profileApplyForm.locator("button[type='submit']").click();
@@ -272,37 +296,6 @@ async function runProtectedMutationFlow(page) {
     "format, budgetCents - destructive write",
     "budgetCents, format - destructive write",
   ]);
-}
-
-async function exportBackupForPreview(page) {
-  await mkdir(failureDir, { recursive: true });
-  const dialogPromise = page.waitForEvent("dialog", { timeout: 5_000 });
-  const clickPromise = page.locator("[data-action='backup']:visible").first().click();
-  const dialog = await dialogPromise;
-  const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
-  await dialog.accept(smokePassphrase);
-  await clickPromise;
-  const download = await downloadPromise;
-  const filename = download.suggestedFilename();
-  if (!filename.endsWith(".filmbackup.zip")) {
-    throw new Error(`Expected encrypted ZIP backup download, received ${filename}`);
-  }
-  const backupPath = path.join(failureDir, filename);
-  await download.saveAs(backupPath);
-  return backupPath;
-}
-
-async function previewEncryptedBackup(page, backupPath) {
-  const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.locator("[data-action='restore-file-preview']:visible").first().click();
-  const fileChooser = await fileChooserPromise;
-  const dialogPromise = page.waitForEvent("dialog");
-  const setFilesPromise = fileChooser.setFiles(backupPath);
-  const dialog = await dialogPromise;
-  await dialog.accept(smokePassphrase);
-  await setFilesPromise;
-  await expectBodyText(page, "Encrypted backup decrypted for preview only");
-  await expectBodyText(page, "No records were overwritten");
 }
 
 async function waitForReachable(url) {

@@ -188,7 +188,15 @@ import {
   type NotionPlanningRecord,
   type ScreenplayImportPreview,
 } from "@film/importers";
-import type { GoogleDriveSyncDryRunStatus, ProviderDryRunStatus } from "@film/providers";
+import {
+  TELNYX_SMS_CATEGORIES,
+  TELNYX_SMS_CATEGORY_LABELS,
+  TELNYX_SMS_CONSENT_DISCLOSURE,
+  TELNYX_SMS_DISCLOSURE_VERSION,
+  isTelnyxSmsCategory,
+  type GoogleDriveSyncDryRunStatus,
+  type ProviderDryRunStatus,
+} from "@film/providers";
 import { filterProjectsBySearch } from "./project-search";
 import {
   createNotionManifest,
@@ -367,9 +375,10 @@ type InspectorView =
   | "ownership"
   | "changes"
   | "permissions"
-  | "backups"
   | "integrations"
   | "imports";
+type ChangeRequestKind = "record" | "profile";
+type PermissionScope = "project" | "task" | "document";
 
 type ScreenplayElementClipboardState = {
   breakdownId: string;
@@ -405,6 +414,8 @@ type UiState = {
   planningKindFilter: PlanningKindFilter;
   inspectorTab: InspectorTab;
   inspectorView: InspectorView;
+  changeRequestKind: ChangeRequestKind;
+  permissionScope: PermissionScope;
   filter: string;
   projectCreateOpen: boolean;
   toast: string | null;
@@ -1059,41 +1070,27 @@ type RecordCommentManifestState = {
   };
   comments: RecordCommentManifestResult["comments"];
 };
-type ProjectPermissionState = {
+type PermissionAssignmentState = {
   memberId: string;
   permission: RecordPermissionLevel;
   department: string;
   expiresAt: string;
   status: "idle" | "assigning" | "assigned";
   persistence: string | null;
-  assignedProjectId: string | null;
   assignedMemberId: string | null;
   assignedPermission: RecordPermissionLevel | null;
 };
-type DocumentPermissionState = {
-  memberId: string;
-  permission: RecordPermissionLevel;
-  department: string;
-  expiresAt: string;
-  status: "idle" | "assigning" | "assigned";
-  persistence: string | null;
+type ProjectPermissionState = PermissionAssignmentState & {
+  assignedProjectId: string | null;
+};
+type DocumentPermissionState = PermissionAssignmentState & {
   assignedProjectId: string | null;
   assignedDocumentId: string | null;
-  assignedMemberId: string | null;
-  assignedPermission: RecordPermissionLevel | null;
 };
-type TaskPermissionState = {
+type TaskPermissionState = PermissionAssignmentState & {
   taskId: string;
-  memberId: string;
-  permission: RecordPermissionLevel;
-  department: string;
-  expiresAt: string;
-  status: "idle" | "assigning" | "assigned";
-  persistence: string | null;
   assignedProjectId: string | null;
   assignedTaskId: string | null;
-  assignedMemberId: string | null;
-  assignedPermission: RecordPermissionLevel | null;
 };
 type AttachmentUploadPrepareResponse = {
   dryRun?: boolean;
@@ -1255,25 +1252,46 @@ const WORKSPACE_SECTIONS: WorkspaceSection[] = [
   "planning",
   "backups",
 ];
-const WORKSPACE_NAV_ITEMS: Array<{ label: string; glyph: string; section: WorkspaceSection }> = [
-  { label: "Slate", glyph: "grid", section: "slate" },
-  { label: "Projects", glyph: "folder", section: "projects" },
-  { label: "Breakdown", glyph: "doc", section: "breakdown" },
-  { label: "Schedule", glyph: "calendar", section: "schedule" },
-  { label: "Shots", glyph: "slate", section: "shots" },
-  { label: "Call Sheets", glyph: "call-sheet", section: "call-sheets" },
-  { label: "Sides", glyph: "doc", section: "sides" },
-  { label: "Reports", glyph: "list", section: "reports" },
-  { label: "Locations", glyph: "pin", section: "locations" },
-  { label: "Talent", glyph: "people", section: "talent" },
-  { label: "Tasks", glyph: "list", section: "tasks" },
-  { label: "Docs", glyph: "doc", section: "docs" },
-  { label: "People", glyph: "people", section: "people" },
-  { label: "Equipment", glyph: "case", section: "equipment" },
-  { label: "Expenses", glyph: "coins", section: "expenses" },
-  { label: "Planning", glyph: "import", section: "planning" },
-  { label: "Backups", glyph: "backup", section: "backups" },
+type WorkspaceNavItem = { label: string; glyph: string; section: WorkspaceSection };
+const WORKSPACE_NAV_GROUPS: Array<{ label: string; items: WorkspaceNavItem[] }> = [
+  {
+    label: "Development",
+    items: [
+      { label: "Breakdown", glyph: "doc", section: "breakdown" },
+      { label: "Planning", glyph: "import", section: "planning" },
+    ],
+  },
+  {
+    label: "Pre-production",
+    items: [
+      { label: "Schedule", glyph: "calendar", section: "schedule" },
+      { label: "Locations", glyph: "pin", section: "locations" },
+      { label: "Talent", glyph: "people", section: "talent" },
+      { label: "Equipment", glyph: "case", section: "equipment" },
+    ],
+  },
+  {
+    label: "Production",
+    items: [
+      { label: "Shots", glyph: "slate", section: "shots" },
+      { label: "Call Sheets", glyph: "call-sheet", section: "call-sheets" },
+      { label: "Sides", glyph: "doc", section: "sides" },
+      { label: "Reports", glyph: "list", section: "reports" },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { label: "Tasks", glyph: "list", section: "tasks" },
+      { label: "Docs", glyph: "doc", section: "docs" },
+      { label: "People", glyph: "people", section: "people" },
+      { label: "Expenses", glyph: "coins", section: "expenses" },
+      { label: "Backups", glyph: "backup", section: "backups" },
+    ],
+  },
 ];
+const OVERVIEW_NAV_ITEM: WorkspaceNavItem = { label: "Overview", glyph: "grid", section: "slate" };
+const PROJECTS_NAV_ITEM: WorkspaceNavItem = { label: "Projects", glyph: "folder", section: "projects" };
 const INSPECTOR_VIEW_GROUPS: Array<{
   label: string;
   views: Array<{ id: InspectorView; label: string }>;
@@ -1296,7 +1314,6 @@ const INSPECTOR_VIEW_GROUPS: Array<{
   {
     label: "Data and services",
     views: [
-      { id: "backups", label: "Backups" },
       { id: "integrations", label: "Integrations" },
       { id: "imports", label: "Imports" },
     ],
@@ -1305,9 +1322,24 @@ const INSPECTOR_VIEW_GROUPS: Array<{
 const INSPECTOR_VIEWS = INSPECTOR_VIEW_GROUPS.flatMap((group) => group.views.map((view) => view.id));
 const INVITE_ROLES: WorkspaceRole[] = ["producer", "director", "department_lead", "contributor", "reviewer"];
 const RECORD_PERMISSION_LEVELS: RecordPermissionLevel[] = ["read", "comment", "write", "admin"];
+const PERMISSION_SCOPES: Array<{ id: PermissionScope; label: string }> = [
+  { id: "project", label: "Entire project" },
+  { id: "task", label: "Specific task" },
+  { id: "document", label: "Specific document" },
+];
+const INTEGRATION_DEFINITIONS: Array<{ key: IntegrationKey; label: string }> = [
+  { key: "pool", label: "Pool" },
+  { key: "store", label: "Store" },
+  { key: "stripe", label: "Stripe" },
+  { key: "social", label: "Meta insights" },
+  { key: "google", label: "Google" },
+  { key: "resend", label: "Resend" },
+  { key: "sms", label: "Telnyx SMS" },
+];
 const OWNER_TRANSFER_ENTITY_TYPES: OwnerTransferEntityType[] = ["project", "task", "document", "person", "equipment", "expense"];
 const RECORD_COMMENT_ENTITY_TYPES: RecordCommentEntityType[] = ["project", "task", "document"];
 const LOCAL_TASK_STATUSES: Array<FilmProject["openTasks"][number]["status"]> = ["overdue", "pending", "ready"];
+const PROJECT_PHASES: FilmProject["phase"][] = ["Development", "Pre-Production", "Production", "Post-Production"];
 const PROJECT_TYPES = ["Feature Film", "Short Film", "Documentary", "Series", "Commercial", "Music Video"] as const;
 const AUTH_SESSION_STORAGE_KEY = "film.auth-session.v1";
 const PLANNING_KINDS: Array<NotionPlanningRecord["kind"]> = [
@@ -1364,6 +1396,7 @@ const SCREENPLAY_ELEMENT_LABELS: Record<ScreenplayElementCategory, string> = {
   equipment: "Equipment",
   other: "Other",
 };
+const TIMELINE_MONTH_LABELS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
 
 const root = document.querySelector<HTMLDivElement>("#app");
 
@@ -1453,7 +1486,7 @@ const state: {
   recordPermissionHistory: RecordPermissionHistoryState | null;
   recordPermissionRevokingId: string | null;
 } = {
-  workspace: localMirror.workspace,
+  workspace: normalizeContextualWorkspaceData(localMirror.workspace),
   ui: loadUi(),
   operations: localMirror.operations,
   storageSource: localMirror.source,
@@ -1744,6 +1777,8 @@ function loadUi(): UiState {
     planningKindFilter: "all",
     inspectorTab: "details",
     inspectorView: "overview",
+    changeRequestKind: "record",
+    permissionScope: "project",
     filter: "",
     projectCreateOpen: false,
     toast: null,
@@ -1758,6 +1793,8 @@ function loadUi(): UiState {
       workspaceSection: isWorkspaceSection(next.workspaceSection) ? next.workspaceSection : "slate",
       planningKindFilter: isPlanningKindFilter(next.planningKindFilter) ? next.planningKindFilter : "all",
       inspectorView: isInspectorView(next.inspectorView) ? next.inspectorView : "overview",
+      changeRequestKind: isChangeRequestKind(next.changeRequestKind) ? next.changeRequestKind : "record",
+      permissionScope: isPermissionScope(next.permissionScope) ? next.permissionScope : "project",
       screenplayElementFilter: isScreenplayElementFilter(next.screenplayElementFilter) ? next.screenplayElementFilter : "all",
       screenplaySceneOrder: isScreenplaySceneOrder(next.screenplaySceneOrder) ? next.screenplaySceneOrder : "script",
       screenplaySearch: "",
@@ -1777,6 +1814,14 @@ function isPlanningKindFilter(value: unknown): value is PlanningKindFilter {
 
 function isInspectorView(value: unknown): value is InspectorView {
   return typeof value === "string" && INSPECTOR_VIEWS.includes(value as InspectorView);
+}
+
+function isChangeRequestKind(value: unknown): value is ChangeRequestKind {
+  return value === "record" || value === "profile";
+}
+
+function isPermissionScope(value: unknown): value is PermissionScope {
+  return value === "project" || value === "task" || value === "document";
 }
 
 function isScreenplayElementFilter(value: unknown): value is ScreenplayElementFilter {
@@ -1854,41 +1899,33 @@ function planningPanelRowsForProject(project: FilmProject): PlanningPanelRow[] {
   if (state.planningExportView) {
     return state.planningExportView.records
       .filter((record) => record.projectId === null || record.projectId === project.id)
-      .map((record) => ({
-        kind: record.kind,
-        title: record.title,
-        projectLabel: record.projectId ? projectTitleForId(record.projectId) : "Workspace",
-        sourcePath: record.sourcePath ?? "D1 planning export",
-        fields: record.fields,
-        sourceLabel: `D1 ${record.id}`,
-      }));
+      .map(planningPanelRowFromExport);
   }
 
-  return planningRowsForProject(project).map((record) => ({
-    kind: record.kind,
-    title: record.title,
-    projectLabel: record.projectTitles.length
-      ? record.projectTitles.join(", ")
-      : record.projectTitle ?? "Workspace",
-    sourcePath: record.sourcePath,
-    fields: record.fields,
-      sourceLabel: `Local import ${record.operationId}`,
-    }));
+  return planningRowsForProject(project).map(planningPanelRowFromLocal);
 }
 
 function planningPanelRowsForWorkspace(): PlanningPanelRow[] {
   if (state.planningExportView) {
-    return state.planningExportView.records.map((record) => ({
-      kind: record.kind,
-      title: record.title,
-      projectLabel: record.projectId ? projectTitleForId(record.projectId) : "Workspace",
-      sourcePath: record.sourcePath ?? "D1 planning export",
-      fields: record.fields,
-      sourceLabel: `D1 ${record.id}`,
-    }));
+    return state.planningExportView.records.map(planningPanelRowFromExport);
   }
 
-  return state.planningRows.map((record) => ({
+  return state.planningRows.map(planningPanelRowFromLocal);
+}
+
+function planningPanelRowFromExport(record: BackupPlanningExport["records"][number]): PlanningPanelRow {
+  return {
+    kind: record.kind,
+    title: record.title,
+    projectLabel: record.projectId ? projectTitleForId(record.projectId) : "Workspace",
+    sourcePath: record.sourcePath ?? "D1 planning export",
+    fields: record.fields,
+    sourceLabel: `D1 ${record.id}`,
+  };
+}
+
+function planningPanelRowFromLocal(record: LocalPlanningRecord): PlanningPanelRow {
+  return {
     kind: record.kind,
     title: record.title,
     projectLabel: record.projectTitles.length
@@ -1897,13 +1934,120 @@ function planningPanelRowsForWorkspace(): PlanningPanelRow[] {
     sourcePath: record.sourcePath,
     fields: record.fields,
     sourceLabel: `Local import ${record.operationId}`,
-  }));
+  };
 }
 
 function planningKindCounts(records: Array<{ kind: NotionPlanningRecord["kind"] }>): Array<[NotionPlanningRecord["kind"], number]> {
   return PLANNING_KINDS
     .map((kind) => [kind, records.filter((record) => record.kind === kind).length] as [NotionPlanningRecord["kind"], number])
     .filter(([, count]) => count > 0);
+}
+
+function renderCreateDisclosure(label: string, form: string): string {
+  return `
+    <details class="create-disclosure">
+      <summary>${icon("plus")} <span>${escapeHtml(label)}</span> ${icon("chevron")}</summary>
+      <div class="create-disclosure-body">${form}</div>
+    </details>
+  `;
+}
+
+function renderInlineSaveButton(label: string, disabled = false): string {
+  return `<button class="icon-button contextual-save-button" type="submit" title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}" ${disabled ? "disabled" : ""}>${icon("save")}</button>`;
+}
+
+function expenseCategoryLabel(expense: FilmProject["expenses"][number]): string {
+  const legacyName = (expense as FilmProject["expenses"][number] & { name?: unknown }).name;
+  return typeof expense.category === "string" && expense.category.trim()
+    ? expense.category.trim()
+    : typeof legacyName === "string" && legacyName.trim()
+      ? legacyName.trim()
+    : "Uncategorized";
+}
+
+function contextualRecordText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function contextualEquipmentTone(value: unknown): EquipmentItem["statusTone"] {
+  return value === "teal" || value === "amber" || value === "blue" || value === "red" ? value : "gray";
+}
+
+function normalizeContextualWorkspaceData(workspace: WorkspaceData): WorkspaceData {
+  return {
+    ...workspace,
+    projects: workspace.projects.map((project) => {
+      const openTasks = project.openTasks.map((task, index) => {
+        const legacy = task as FilmProject["openTasks"][number] & { name?: unknown; dueAt?: unknown; taskId?: unknown };
+        const status = task.status === "overdue" || task.status === "ready" ? task.status : "pending";
+        return {
+          ...task,
+          id: contextualRecordText(task.id ?? legacy.taskId, `task_${project.id}_${index + 1}`),
+          title: contextualRecordText(task.title ?? legacy.name, "Untitled task"),
+          due: contextualRecordText(task.due ?? legacy.dueAt, "TBD"),
+          status,
+        };
+      });
+      const people = project.people.map((person, index) => {
+        const legacy = person as FilmProject["people"][number] & { displayName?: unknown; title?: unknown; personId?: unknown };
+        const name = contextualRecordText(person.name ?? legacy.displayName, "Unnamed person");
+        return {
+          ...person,
+          id: contextualRecordText(person.id ?? legacy.personId, `person_${project.id}_${index + 1}`),
+          name,
+          role: contextualRecordText(person.role ?? legacy.title, "Crew"),
+          initials: contextualRecordText(person.initials, initialsFor(name)),
+        };
+      });
+      const equipment = project.equipment.map((item, index) => {
+        const legacy = item as EquipmentItem & { equipmentId?: unknown; label?: unknown; type?: unknown };
+        return {
+          ...item,
+          id: contextualRecordText(item.id ?? legacy.equipmentId, `equipment_${project.id}_${index + 1}`),
+          name: contextualRecordText(item.name ?? legacy.label, "Unnamed equipment"),
+          status: contextualRecordText(item.status ?? legacy.type, "TBD"),
+          statusTone: contextualEquipmentTone(item.statusTone),
+        };
+      });
+      const expenses = project.expenses.map((expense, index) => {
+        const legacy = expense as FilmProject["expenses"][number] & {
+          expenseId?: unknown;
+          spentCents?: unknown;
+          budgetCents?: unknown;
+        };
+        const spent = Number.isFinite(expense.spent)
+          ? expense.spent
+          : typeof legacy.spentCents === "number" && Number.isFinite(legacy.spentCents)
+            ? legacy.spentCents / 100
+            : 0;
+        const budget = Number.isFinite(expense.budget)
+          ? expense.budget
+          : typeof legacy.budgetCents === "number" && Number.isFinite(legacy.budgetCents)
+            ? legacy.budgetCents / 100
+            : 0;
+        const id = typeof expense.id === "string" && expense.id
+          ? expense.id
+          : typeof legacy.expenseId === "string" && legacy.expenseId
+            ? legacy.expenseId
+            : `expense_${project.id}_${index + 1}`;
+
+        return {
+          ...expense,
+          id,
+          category: expenseCategoryLabel(expense),
+          spent,
+          budget,
+          percent: Number.isFinite(expense.percent)
+            ? expense.percent
+            : budget > 0
+              ? Math.round((spent / budget) * 100)
+              : 0,
+        };
+      });
+
+      return { ...project, openTasks, people, equipment, expenses };
+    }),
+  };
 }
 
 function projectTitleForId(projectId: string): string {
@@ -1920,8 +2064,8 @@ function renderTaskStatusSelect(task: FilmProject["openTasks"][number]): string 
   return `
     <select
       class="task-status-select"
-      data-action="task-status-update"
-      data-task-id="${escapeAttribute(task.id)}"
+      name="status"
+      data-contextual-autosave
       aria-label="Status for ${escapeAttribute(task.title)}"
     >
       ${LOCAL_TASK_STATUSES.map((status) => `
@@ -1992,7 +2136,7 @@ function render(): void {
 
   root.innerHTML = `
     <div class="app-shell">
-      ${renderSidebar(selectedProject)}
+      ${renderSidebar()}
       <section class="workspace-shell" aria-label="Workspace">
         ${renderTopbar()}
         ${renderMobileWorkspaceNav()}
@@ -2036,7 +2180,6 @@ function renderProjectCreateDialog(): string {
             </select>
           </label>
           <div class="dialog-actions">
-            <button class="secondary-button" type="button" data-action="project-create-cancel">Cancel</button>
             <button type="submit">${icon("plus")} Create project</button>
           </div>
         </form>
@@ -2131,18 +2274,13 @@ function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject
       return renderBackupsWorkspace();
     case "slate":
     default:
-      return renderSlateWorkspace(filteredProjects, selectedProject);
+      return renderSlateWorkspace(selectedProject);
   }
 }
 
-function renderSlateWorkspace(filteredProjects: FilmProject[], selectedProject: FilmProject): string {
+function renderSlateWorkspace(selectedProject: FilmProject): string {
   return `
-    ${renderSlateHeader(filteredProjects.length)}
-    ${
-      state.ui.viewMode === "list"
-        ? renderProjectList(filteredProjects, selectedProject.id)
-        : renderProjectBoard(filteredProjects, selectedProject.id)
-    }
+    ${renderSlateHeader(selectedProject)}
     ${renderTimeline(selectedProject)}
     ${renderOperationsGrid(selectedProject)}
     ${renderBottomGrid(selectedProject)}
@@ -2152,19 +2290,7 @@ function renderSlateWorkspace(filteredProjects: FilmProject[], selectedProject: 
 
 function renderProjectsWorkspace(filteredProjects: FilmProject[], selectedProject: FilmProject): string {
   return `
-    <div class="slate-head projects-workspace-head">
-      <div>
-        <h1>Projects</h1>
-        <p>${filteredProjects.length} visible projects - selected ${escapeHtml(selectedProject.title)}</p>
-      </div>
-      <div class="view-controls" aria-label="Project view controls">
-        <button data-view="board" class="${state.ui.viewMode === "board" ? "is-active" : ""}" type="button">Board</button>
-        <button data-view="list" class="${state.ui.viewMode === "list" ? "is-active" : ""}" type="button">List</button>
-        <button data-action="filter-focus" type="button">${icon("filter")} Filter</button>
-        <button type="button" data-action="export-project-directory">${icon("doc")} Export directory</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
-      </div>
-    </div>
+    ${renderProjectWorkspaceHeader(filteredProjects.length, selectedProject)}
     ${
       state.ui.viewMode === "list"
         ? renderProjectList(filteredProjects, selectedProject.id)
@@ -2186,9 +2312,8 @@ function renderBreakdownWorkspace(project: FilmProject): string {
         <p>${escapeHtml(project.title)}${breakdown ? ` - ${escapeHtml(breakdown.revision.title)}` : ""}</p>
       </div>
       <div class="view-controls" aria-label="Breakdown controls">
-        <button type="button" data-action="screenplay-import">${icon("import")} Import</button>
+        <button type="button" data-action="screenplay-import">${icon("import")} Import screenplay</button>
         <button type="button" data-action="screenplay-export" ${breakdown ? "" : "disabled"}>${icon("doc")} Export</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
       </div>
     </div>
     ${
@@ -2197,9 +2322,8 @@ function renderBreakdownWorkspace(project: FilmProject): string {
           <section class="panel screenplay-empty-state" aria-labelledby="screenplay-empty-title">
             <div>
               <h2 id="screenplay-empty-title">No screenplay breakdown</h2>
-              <p>${escapeHtml(project.title)} has no local screenplay revision.</p>
+              <p>Use Import above to add the first local screenplay revision for ${escapeHtml(project.title)}.</p>
             </div>
-            <button class="secondary-button" type="button" data-action="screenplay-import">${icon("import")} Import screenplay</button>
           </section>
         `
         : renderScreenplayBreakdown(breakdowns, breakdown, baseBreakdown, scene)
@@ -2748,9 +2872,6 @@ function screenplaySceneMeta(scene: ScreenplayBreakdown["scenes"][number]): stri
 }
 
 function renderScheduleWorkspace(project: FilmProject): string {
-  const callSheet = project.callSheet;
-  const activePhase = project.timeline.find((item) => item.label === project.phase) ?? project.timeline[0] ?? null;
-  const upcomingTasks = project.openTasks.slice(0, 8);
   const selectedSchedule = selectedProductionSchedule(project.id);
 
   return `
@@ -2762,75 +2883,12 @@ function renderScheduleWorkspace(project: FilmProject): string {
       <div class="view-controls" aria-label="Schedule controls">
         <button type="button" data-action="schedule-export" ${selectedSchedule ? "" : "disabled"}>${icon("doc")} Export stripboard</button>
         <button type="button" data-action="export-project-packet">${icon("doc")} Export packet</button>
-        <button type="button" data-workspace-section="tasks">${icon("list")} Tasks</button>
-        <button type="button" data-workspace-section="planning">${icon("import")} Planning</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     ${renderProductionStripboard(project, selectedSchedule)}
     ${renderProductionAvailability(project, selectedSchedule)}
     ${renderProductionScheduleScenarios(project, selectedSchedule)}
     ${renderProductionBudgetEstimate(project, selectedSchedule)}
-    <section class="schedule-workspace-grid" aria-label="Schedule workspace">
-      <section class="panel schedule-summary-panel" aria-labelledby="schedule-summary-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="schedule-summary-title">Production Clock</h2>
-            <p>${activePhase ? `Active lane: ${escapeHtml(activePhase.label)}` : "No phase lane"}</p>
-          </div>
-        </div>
-        <div class="schedule-stat-grid">
-          <span><strong>${project.progress}%</strong><small>Overall progress</small></span>
-          <span><strong>${project.tasks.done}/${project.tasks.total}</strong><small>Tasks complete</small></span>
-          <span><strong>${callSheet.dayNumber}/${callSheet.totalDays}</strong><small>Shoot days</small></span>
-          <span><strong>${callSheet.scenes}</strong><small>Scenes on deck</small></span>
-        </div>
-        <div class="schedule-call-card" aria-label="Upcoming call sheet">
-          <div class="call-date"><strong>${escapeHtml(callSheet.day)}</strong><span>${escapeHtml(callSheet.month)}</span></div>
-          <div>
-            <p><strong>Call:</strong> ${escapeHtml(callSheet.callTime)}</p>
-            <p><strong>Wrap:</strong> ${escapeHtml(callSheet.wrapTime)}</p>
-            <p>${escapeHtml(callSheet.location)}</p>
-          </div>
-          <div>
-            <p>People <strong>${callSheet.people}</strong></p>
-            <p>Weather <strong>${escapeHtml(callSheet.weather)}</strong></p>
-            <p>Pages <strong>${escapeHtml(callSheet.pages)}</strong></p>
-          </div>
-        </div>
-      </section>
-      ${renderScheduleTimelinePanel(project)}
-      <section class="panel schedule-task-panel" aria-labelledby="schedule-task-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="schedule-task-title">Date-Driven Tasks</h2>
-            <p>${upcomingTasks.length} visible tasks</p>
-          </div>
-        </div>
-        <div class="schedule-task-table" aria-label="Schedule tasks" tabindex="0">
-          <div class="schedule-task-row schedule-task-head">
-            <span>Status</span>
-            <span>Task</span>
-            <span>Due</span>
-          </div>
-          ${
-            upcomingTasks.length
-              ? upcomingTasks
-                .map(
-                  (task) => `
-                    <div class="schedule-task-row">
-                      <span><span class="task-dot ${task.status}"></span>${escapeHtml(formatTaskStatus(task.status))}</span>
-                      <span>${escapeHtml(task.title)}</span>
-                      <span class="${task.status === "overdue" ? "danger" : ""}">${escapeHtml(task.due)}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-              : `<div class="empty-inline">No dated tasks for this project.</div>`
-          }
-        </div>
-      </section>
-    </section>
   `;
 }
 
@@ -3452,37 +3510,6 @@ function productionBudgetScenarioForSchedule(scheduleId: string): ProductionBudg
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
 }
 
-function renderScheduleTimelinePanel(project: FilmProject): string {
-  const monthLabels = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
-
-  return `
-    <section class="panel schedule-timeline-panel" aria-labelledby="schedule-timeline-title">
-      <div class="section-head row">
-        <div>
-          <h2 id="schedule-timeline-title">Phase Lanes</h2>
-          <p>Read-only schedule metadata</p>
-        </div>
-      </div>
-      <div class="timeline schedule-timeline">
-        <div class="timeline-months">
-          ${monthLabels.map((month) => `<span>${month}</span>`).join("")}
-        </div>
-        <div class="timeline-lanes">
-          ${project.timeline
-            .map(
-              (item, index) => `
-                <div class="timeline-bar ${item.tone}" style="left:${item.start}%; width:${item.width}%; top:${8 + index * 29}px">
-                  ${escapeHtml(item.label)}
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </div>
-    </section>
-  `;
-}
-
 function renderShotsWorkspace(project: FilmProject): string {
   const breakdown = selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id));
   const shots = filteredProductionShotsForProject(project.id);
@@ -3508,8 +3535,6 @@ function renderShotsWorkspace(project: FilmProject): string {
         ` : ""}
         <button type="button" data-action="production-shots-markdown-export" ${shots.length ? "" : "disabled"}>${icon("doc")} Export list</button>
         <button type="button" data-action="production-shots-csv-export" ${shots.length ? "" : "disabled"}>${icon("list")} Export CSV</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
-        <button type="button" data-workspace-section="call-sheets">${icon("call-sheet")} Call Sheets</button>
       </div>
     </div>
     <section class="shots-workspace-grid" aria-label="Shots workspace">
@@ -3695,9 +3720,6 @@ function renderCallSheetsWorkspace(project: FilmProject): string {
         ` : ""}
         ${callSheet ? `<button type="button" data-action="call-sheet-status-toggle">${icon(callSheet.status === "final" ? "unlock" : "check")} ${callSheet.status === "final" ? "Reopen" : "Finalize"}</button>` : ""}
         <button type="button" data-action="export-call-sheet">${icon("doc")} Export call sheet</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
-        <button type="button" data-workspace-section="locations">${icon("pin")} Locations</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="call-sheets-workspace-grid" aria-label="Call Sheets workspace">
@@ -4024,8 +4046,6 @@ function renderSidesWorkspace(project: FilmProject): string {
         ` : ""}
         <button type="button" data-action="production-sides-markdown-export" ${sides ? "" : "disabled"}>${icon("doc")} Source .md</button>
         <button type="button" data-action="production-sides-html-export" ${sides ? "" : "disabled"}>${icon("doc")} Print HTML</button>
-        <button type="button" data-workspace-section="call-sheets">${icon("call-sheet")} Call Sheets</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
       </div>
     </div>
     <section class="sides-workspace-grid" aria-label="Sides workspace">
@@ -4101,7 +4121,6 @@ function renderProductionReportsWorkspace(project: FilmProject): string {
         ${report ? `<button type="button" data-action="production-report-status-toggle">${icon(report.status === "final" ? "unlock" : "check")} ${report.status === "final" ? "Reopen" : "Finalize"}</button>` : ""}
         <button type="button" data-action="production-report-export" ${report && manifest ? "" : "disabled"}>${icon("doc")} Export report</button>
         <button type="button" data-action="production-report-csv-export" ${report && manifest ? "" : "disabled"}>${icon("list")} Export scene CSV</button>
-        <button type="button" data-workspace-section="call-sheets">${icon("call-sheet")} Call Sheets</button>
       </div>
     </div>
     <section class="production-reports-workspace-grid" aria-label="Production Reports workspace">
@@ -4266,41 +4285,41 @@ function renderLocationsWorkspace(project: FilmProject): string {
         <p>${escapeHtml(project.title)} - ${records.length} scouting records - ${confirmedCount} confirmed</p>
       </div>
       <div class="view-controls" aria-label="Location controls">
-        ${records.length ? `
-          <label class="compact-select-label">
-            <span>Record</span>
-            <select data-action="production-location-select" aria-label="Selected production location">
-              ${records.map((record) => `<option value="${escapeAttribute(record.id)}" ${record.id === location?.id ? "selected" : ""}>${escapeHtml(record.name)}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
         <button type="button" data-action="production-location-export" ${location && manifest ? "" : "disabled"}>${icon("doc")} Export brief</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
-        <button type="button" data-workspace-section="planning">${icon("import")} Planning</button>
       </div>
     </div>
-    <section class="locations-workspace-grid" aria-label="Locations workspace">
+    <section class="locations-workspace-grid ${location ? "" : "is-empty"}" aria-label="Locations workspace">
       <section class="panel location-create-panel" aria-labelledby="location-create-title">
         <div class="section-head row">
           <div>
-            <h2 id="location-create-title">Add Scouting Record</h2>
-            <p>Link a reviewed screenplay location or add a manual candidate.</p>
+            <h2 id="location-create-title">Scouting Records</h2>
+            <p>${records.length} local/private records</p>
           </div>
         </div>
-        <form class="production-resource-create-form" data-action="production-location-create">
-          <label>
-            <span>Screenplay location</span>
-            <select name="screenplayElementId">
-              <option value="">Manual candidate</option>
-              ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
-            </select>
-          </label>
-          <label>
-            <span>Manual name</span>
-            <input name="name" maxlength="200" placeholder="Required for manual candidates" />
-          </label>
-          <button class="primary-action" type="submit">${icon("plus")} Add record</button>
-        </form>
+        <div class="production-record-list" aria-label="Scouting records">
+          ${records.length ? records.map((record) => `
+            <button type="button" class="production-record-row ${record.id === location?.id ? "is-selected" : ""}" data-action="production-location-row-select" data-location-id="${escapeAttribute(record.id)}">
+              <span>${escapeHtml(record.name)}</span>
+              <small>${escapeHtml(productionValueLabel(record.status))} - ${escapeHtml(productionValueLabel(record.permitStatus))}</small>
+            </button>
+          `).join("") : `<div class="empty-inline">No scouting records.</div>`}
+        </div>
+        ${renderCreateDisclosure("Add scouting record", `
+          <form class="production-resource-create-form" data-action="production-location-create">
+            <label>
+              <span>Screenplay location</span>
+              <select name="screenplayElementId">
+                <option value="">Manual candidate</option>
+                ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>Manual name</span>
+              <input name="name" maxlength="200" placeholder="Required for manual candidates" />
+            </label>
+            <button class="primary-action" type="submit">${icon("plus")} Add record</button>
+          </form>
+        `)}
         ${candidateBreakdown ? `<p class="production-resource-source-note">${candidateElements.length} unlinked location elements in ${escapeHtml(candidateBreakdown.revision.title)}.</p>` : `<p class="production-resource-source-note">Import a screenplay to link scenes, or start with a manual scouting candidate.</p>`}
       </section>
       ${location && manifest ? renderProductionLocationEditor(project, location, manifest, callSheet) : `
@@ -4511,33 +4530,33 @@ function renderTalentWorkspace(project: FilmProject): string {
         <p>${escapeHtml(project.title)} - ${records.length} character records - ${castCount} cast</p>
       </div>
       <div class="view-controls" aria-label="Talent controls">
-        ${records.length ? `
-          <label class="compact-select-label">
-            <span>Record</span>
-            <select data-action="production-talent-select" aria-label="Selected talent record">
-              ${records.map((record) => `<option value="${escapeAttribute(record.id)}" ${record.id === talent?.id ? "selected" : ""}>${escapeHtml(record.characterName)}${record.performerName ? ` - ${escapeHtml(record.performerName)}` : ""}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
         <button type="button" data-action="production-talent-export" ${talent && manifest ? "" : "disabled"}>${icon("doc")} Export brief</button>
-        <button type="button" data-workspace-section="schedule">${icon("calendar")} Schedule</button>
-        <button type="button" data-workspace-section="call-sheets">${icon("call-sheet")} Call Sheets</button>
       </div>
     </div>
     <section class="talent-workspace-grid" aria-label="Talent workspace">
       <section class="panel talent-create-panel" aria-labelledby="talent-create-title">
-        <div class="section-head row"><div><h2 id="talent-create-title">Add Character Record</h2><p>Link reviewed cast or add a manual character.</p></div></div>
-        <form class="production-resource-create-form" data-action="production-talent-create">
-          <label>
-            <span>Screenplay character</span>
-            <select name="screenplayElementId">
-              <option value="">Manual character</option>
-              ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
-            </select>
-          </label>
-          <label><span>Manual character</span><input name="characterName" maxlength="200" placeholder="Required for manual records" /></label>
-          <button class="primary-action" type="submit">${icon("plus")} Add record</button>
-        </form>
+        <div class="section-head row"><div><h2 id="talent-create-title">Casting Roster</h2><p>${records.length} local/private records</p></div></div>
+        <div class="production-record-list" aria-label="Talent casting roster">
+          ${records.length ? records.map((record) => `
+            <button type="button" class="production-record-row ${record.id === talent?.id ? "is-selected" : ""}" data-action="production-talent-row-select" data-talent-id="${escapeAttribute(record.id)}">
+              <span>${escapeHtml(record.characterName)}${record.performerName ? ` - ${escapeHtml(record.performerName)}` : ""}</span>
+              <small>${escapeHtml(productionValueLabel(record.status))} - paperwork ${escapeHtml(productionValueLabel(record.paperworkStatus))}</small>
+            </button>
+          `).join("") : `<div class="empty-inline">No talent records.</div>`}
+        </div>
+        ${renderCreateDisclosure("Add character record", `
+          <form class="production-resource-create-form" data-action="production-talent-create">
+            <label>
+              <span>Screenplay character</span>
+              <select name="screenplayElementId">
+                <option value="">Manual character</option>
+                ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
+              </select>
+            </label>
+            <label><span>Manual character</span><input name="characterName" maxlength="200" placeholder="Required for manual records" /></label>
+            <button class="primary-action" type="submit">${icon("plus")} Add record</button>
+          </form>
+        `)}
         ${breakdown ? `<p class="production-resource-source-note">${candidateElements.length} unlinked cast elements in ${escapeHtml(breakdown.revision.title)}.</p>` : `<p class="production-resource-source-note">Import a screenplay to link scenes, or start with a manual character.</p>`}
       </section>
       ${talent && manifest ? renderProductionTalentEditor(project, talent, manifest, callSheet) : `
@@ -4551,17 +4570,6 @@ function renderTalentWorkspace(project: FilmProject): string {
         sourceName: talent.characterName,
         sourceDetail: talent.screenplayBreakdownId ? "Local/private breakdown" : "No linked breakdown",
       }) : ""}
-      <section class="panel talent-roster-panel" aria-labelledby="talent-roster-title">
-        <div class="section-head row"><div><h2 id="talent-roster-title">Casting Roster</h2><p>${records.length} local/private records</p></div></div>
-        <div class="talent-roster-table" tabindex="0" aria-label="Talent casting roster">
-          <div class="talent-roster-row talent-roster-head"><span>Character</span><span>Performer</span><span>Status</span><span>Paperwork</span></div>
-          ${records.length ? records.map((record) => `
-            <button type="button" class="talent-roster-row" data-action="production-talent-row-select" data-talent-id="${escapeAttribute(record.id)}">
-              <span>${escapeHtml(record.characterName)}</span><span>${escapeHtml(record.performerName || "TBD")}</span><span>${escapeHtml(productionValueLabel(record.status))}</span><span>${escapeHtml(productionValueLabel(record.paperworkStatus))}</span>
-            </button>
-          `).join("") : `<div class="empty-inline">No talent records.</div>`}
-        </div>
-      </section>
     </section>
   `;
 }
@@ -4722,7 +4730,6 @@ function renderPlanningWorkspace(): string {
         </label>
         <button type="button" data-action="planning-export-refresh" ${state.auth.session ? "" : "disabled"}>${icon("backup")} Refresh D1</button>
         <button type="button" data-action="export-planning-view">${icon("doc")} Export view</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="panel planning-panel planning-workspace-panel" aria-labelledby="planning-workspace-title">
@@ -4788,7 +4795,6 @@ function renderTasksWorkspace(project: FilmProject): string {
       </div>
       <div class="view-controls" aria-label="Task controls">
         <button type="button" data-action="export-task-list">${icon("doc")} Export tasks</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="panel tasks-workspace-panel" aria-labelledby="tasks-workspace-title">
@@ -4816,34 +4822,38 @@ function renderTasksWorkspace(project: FilmProject): string {
             ? project.openTasks
               .map(
                 (task) => `
-                  <div class="tasks-table-row">
+                  <form class="tasks-table-row contextual-record-row" data-action="contextual-record-update" data-record-kind="task" data-record-id="${escapeAttribute(task.id)}">
                     <span class="task-status-cell"><span class="task-dot ${task.status}"></span>${renderTaskStatusSelect(task)}</span>
-                    <span>${escapeHtml(task.title)}</span>
-                    <span class="${task.status === "overdue" ? "danger" : ""}">${escapeHtml(task.due)}</span>
+                    <label class="contextual-field"><span class="sr-only">Task</span><input name="title" value="${escapeAttribute(task.title)}" autocomplete="off" /></label>
+                    <label class="contextual-field"><span class="sr-only">Due</span><input name="due" value="${escapeAttribute(task.due)}" autocomplete="off" class="${task.status === "overdue" ? "danger" : ""}" /></label>
                     <span>${escapeHtml(project.title)}</span>
-                    <span>
+                    <span class="contextual-row-actions">
+                      ${renderInlineSaveButton(`Save ${task.title}`)}
                       <button
-                        class="task-complete-button"
+                        class="icon-button task-complete-button"
                         type="button"
                         data-action="task-complete"
                         data-task-id="${escapeAttribute(task.id)}"
+                        title="Complete ${escapeAttribute(task.title)}"
                         aria-label="Complete ${escapeAttribute(task.title)}"
                       >
-                        ${icon("check")} Complete
+                        ${icon("check")}
                       </button>
                     </span>
-                  </div>
+                  </form>
                 `,
               )
               .join("")
             : `<div class="empty-inline">No open tasks for this project.</div>`
         }
       </div>
-      <form class="inline-form tasks-workspace-form task-create-form" data-action="add-task">
-        <input name="title" placeholder="New task" autocomplete="off" />
-        <input name="due" placeholder="Due" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add task</button>
-      </form>
+      ${renderCreateDisclosure("Add task", `
+        <form class="inline-form tasks-workspace-form task-create-form" data-action="add-task">
+          <input name="title" placeholder="Task" autocomplete="off" />
+          <input name="due" placeholder="Due" autocomplete="off" />
+          <button type="submit">${icon("plus")} Add task</button>
+        </form>
+      `)}
     </section>
   `;
 }
@@ -4860,7 +4870,6 @@ function renderDocsWorkspace(project: FilmProject): string {
       </div>
       <div class="view-controls" aria-label="Document controls">
         <button type="button" data-action="export-selected-doc" ${selectedDoc?.type === "MD" ? "" : "disabled"}>${icon("doc")} Export draft</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="docs-workspace-grid" aria-label="Document workspace">
@@ -4886,10 +4895,12 @@ function renderDocsWorkspace(project: FilmProject): string {
             )
             .join("")}
         </ul>
-        <form class="inline-form docs-workspace-form" data-action="add-doc">
-          <input name="name" placeholder="New Markdown doc" autocomplete="off" />
-          <button type="submit">${icon("plus")} Add doc</button>
-        </form>
+        ${renderCreateDisclosure("Add document", `
+          <form class="inline-form docs-workspace-form" data-action="add-doc">
+            <input name="name" placeholder="Markdown document name" autocomplete="off" />
+            <button type="submit">${icon("plus")} Add document</button>
+          </form>
+        `)}
       </section>
       <section class="panel docs-editor-panel" aria-labelledby="docs-editor-title">
         <div class="section-head row">
@@ -4913,7 +4924,6 @@ function renderPeopleWorkspace(project: FilmProject): string {
       </div>
       <div class="view-controls" aria-label="People controls">
         <button type="button" data-action="export-crew-directory">${icon("doc")} Export crew</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="panel operational-workspace-panel" aria-labelledby="people-workspace-title">
@@ -4928,28 +4938,32 @@ function renderPeopleWorkspace(project: FilmProject): string {
           <span>Initials</span>
           <span>Name</span>
           <span>Role</span>
+          <span class="sr-only">Actions</span>
         </div>
         ${
           project.people.length
             ? project.people
               .map(
                 (person) => `
-                  <div class="operational-table-row">
+                  <form class="operational-table-row contextual-record-row" data-action="contextual-record-update" data-record-kind="person" data-record-id="${escapeAttribute(person.id)}">
                     <span><span class="file-token ${escapeAttribute(person.initials)}">${escapeHtml(person.initials)}</span></span>
-                    <span>${escapeHtml(person.name)}</span>
-                    <span>${escapeHtml(person.role)}</span>
-                  </div>
+                    <label class="contextual-field"><span class="sr-only">Name</span><input name="name" value="${escapeAttribute(person.name)}" autocomplete="off" /></label>
+                    <label class="contextual-field"><span class="sr-only">Role</span><input name="role" value="${escapeAttribute(person.role)}" autocomplete="off" /></label>
+                    ${renderInlineSaveButton(`Save ${person.name}`)}
+                  </form>
                 `,
               )
               .join("")
             : `<div class="empty-inline">No people added for this project.</div>`
         }
       </div>
-      <form class="inline-form multi-field-form operational-workspace-form" data-action="add-person">
-        <input name="name" placeholder="Person" autocomplete="off" />
-        <input name="role" placeholder="Role" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add person</button>
-      </form>
+      ${renderCreateDisclosure("Add person", `
+        <form class="inline-form multi-field-form operational-workspace-form" data-action="add-person">
+          <input name="name" placeholder="Name" autocomplete="off" />
+          <input name="role" placeholder="Role" autocomplete="off" />
+          <button type="submit">${icon("plus")} Add person</button>
+        </form>
+      `)}
     </section>
   `;
 }
@@ -4963,7 +4977,6 @@ function renderEquipmentWorkspace(project: FilmProject): string {
       </div>
       <div class="view-controls" aria-label="Equipment controls">
         <button type="button" data-action="export-gear-pull">${icon("doc")} Export gear</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="panel operational-workspace-panel" aria-labelledby="equipment-workspace-title">
@@ -4978,28 +4991,32 @@ function renderEquipmentWorkspace(project: FilmProject): string {
           <span>Type</span>
           <span>Item</span>
           <span>Status</span>
+          <span class="sr-only">Actions</span>
         </div>
         ${
           project.equipment.length
             ? project.equipment
               .map(
                 (item) => `
-                  <div class="operational-table-row">
+                  <form class="operational-table-row contextual-record-row" data-action="contextual-record-update" data-record-kind="equipment" data-record-id="${escapeAttribute(item.id)}">
                     <span><span class="file-token EQ">EQ</span></span>
-                    <span>${escapeHtml(item.name)}</span>
-                    <span>${escapeHtml(item.status)}</span>
-                  </div>
+                    <label class="contextual-field"><span class="sr-only">Item</span><input name="name" value="${escapeAttribute(item.name)}" autocomplete="off" /></label>
+                    <label class="contextual-field"><span class="sr-only">Status</span><input name="status" value="${escapeAttribute(item.status)}" autocomplete="off" /></label>
+                    ${renderInlineSaveButton(`Save ${item.name}`)}
+                  </form>
                 `,
               )
               .join("")
             : `<div class="empty-inline">No equipment added for this project.</div>`
         }
       </div>
-      <form class="inline-form multi-field-form operational-workspace-form" data-action="add-equipment">
-        <input name="name" placeholder="Equipment" autocomplete="off" />
-        <input name="status" placeholder="Status" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add equipment</button>
-      </form>
+      ${renderCreateDisclosure("Add equipment", `
+        <form class="inline-form multi-field-form operational-workspace-form" data-action="add-equipment">
+          <input name="name" placeholder="Equipment" autocomplete="off" />
+          <input name="status" placeholder="Status" autocomplete="off" />
+          <button type="submit">${icon("plus")} Add equipment</button>
+        </form>
+      `)}
     </section>
   `;
 }
@@ -5039,7 +5056,6 @@ function renderExpensesWorkspace(project: FilmProject): string {
       </div>
       <div class="view-controls" aria-label="Expense controls">
         <button type="button" data-action="export-budget-top-sheet">${icon("doc")} Export budget</button>
-        <button type="button" data-workspace-section="slate">${icon("grid")} Slate</button>
       </div>
     </div>
     <section class="expenses-workspace-grid" aria-label="Expenses workspace">
@@ -5097,28 +5113,379 @@ function renderExpensesWorkspace(project: FilmProject): string {
           </div>
         </div>
         <div class="expense-table operational-expense-table">
+          <div class="expense-record-row expense-record-head" aria-hidden="true">
+            <span>Category</span>
+            <span>Spent</span>
+            <span>Budget</span>
+            <span>Used</span>
+            <span>Progress</span>
+            <span></span>
+          </div>
           ${project.expenses
             .map(
               (expense) => `
-                <div>
-                  <span>${escapeHtml(expense.category)}</span>
-                  <span>${formatCurrency(expense.spent)}</span>
-                  <span>${formatCurrency(expense.budget)}</span>
+                <form class="expense-record-row contextual-record-row" data-action="contextual-record-update" data-record-kind="expense" data-record-id="${escapeAttribute(expense.id)}">
+                  <label class="contextual-field"><span class="sr-only">Category</span><input name="category" value="${escapeAttribute(expenseCategoryLabel(expense))}" autocomplete="off" /></label>
+                  <label class="contextual-field money-field"><span class="sr-only">Spent</span><input name="spent" inputmode="decimal" value="${expense.spent}" autocomplete="off" /></label>
+                  <label class="contextual-field money-field"><span class="sr-only">Budget</span><input name="budget" inputmode="decimal" value="${expense.budget}" autocomplete="off" /></label>
                   <span>${expense.percent}%</span>
                   <span class="meter small"><span style="width:${Math.min(100, expense.percent)}%"></span></span>
-                </div>
+                  ${renderInlineSaveButton(`Save ${expenseCategoryLabel(expense)}`)}
+                </form>
               `,
             )
             .join("")}
         </div>
-        <form class="inline-form expense-create-form operational-workspace-form" data-action="add-expense">
-          <input name="category" placeholder="Category" autocomplete="off" />
-          <input name="spent" inputmode="decimal" placeholder="Spent" autocomplete="off" />
-          <input name="budget" inputmode="decimal" placeholder="Budget" autocomplete="off" />
-          <button type="submit">${icon("plus")} Add expense</button>
-        </form>
+        ${renderCreateDisclosure("Add expense", `
+          <form class="inline-form expense-create-form operational-workspace-form" data-action="add-expense">
+            <input name="category" placeholder="Category" autocomplete="off" />
+            <input name="spent" inputmode="decimal" placeholder="Spent" autocomplete="off" />
+            <input name="budget" inputmode="decimal" placeholder="Budget" autocomplete="off" />
+            <button type="submit">${icon("plus")} Add expense</button>
+          </form>
+        `)}
       </section>
     </section>
+  `;
+}
+
+function renderBackupRestoreWorkflow(): string {
+  return `
+    <section class="panel backup-restore-workflow" aria-labelledby="backup-restore-workflow-title">
+                <div class="section-head row"><div><h2 id="backup-restore-workflow-title">Restore Workflow</h2><p>Preview, verify, and apply one restore in order.</p></div></div>
+                ${
+                  state.backupDryRun
+                    ? `
+                      <div class="provider-preview" role="status">
+                        <strong>Worker restore point</strong>
+                        <span>${escapeHtml(state.backupDryRun.persistence.replaceAll("_", " "))}</span>
+                        ${
+                          state.backupDryRun.storagePersistence
+                            ? `<span>${escapeHtml(state.backupDryRun.storagePersistence.replaceAll("_", " "))}${state.backupDryRun.sizeBytes ? ` - ${formatBytes(state.backupDryRun.sizeBytes)}` : ""}</span>`
+                            : ""
+                        }
+                        <span>${escapeHtml(state.backupDryRun.retentionPolicy.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.backupDryRun.restorePointLabel)}</small>
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.backupExport
+                    ? `
+                      <div class="provider-preview" role="status">
+                        <strong>Stored backup manifest</strong>
+                        <span>${state.backupExport.rowCount} stored restore points - ${state.backupExport.truncated ? "truncated" : "complete"}</span>
+                        <small>${escapeHtml(state.backupExport.persistence.replaceAll("_", " "))}</small>
+                      </div>
+                    `
+                    : ""
+                }
+                <div class="backup-workflow-actions">
+                <label class="restore-row">
+                  <span>Restore point</span>
+                  <select data-action="restore-select">
+                    ${state.workspace.restorePoints
+                      .map((point) => `<option value="${point.id}">${escapeHtml(point.label)}</option>`)
+                      .join("")}
+                  </select>
+                  <button type="button" data-action="restore">Restore</button>
+                </label>
+                <button class="secondary-button full-width" type="button" data-action="backup-r2-manifest">${icon("backup")} Stored backups</button>
+                <button class="secondary-button full-width" type="button" data-action="backup-r2-preview">${icon("backup")} Preview stored backup</button>
+                <button class="secondary-button full-width" type="button" data-action="restore-file-preview">${icon("backup")} Preview encrypted backup</button>
+                </div>
+                <div class="restore-stage-actions">
+                ${
+                  state.restorePreview
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-gate-check">${icon("check")} Check restore gate</button>`
+                    : ""
+                }
+                ${
+                  state.restorePreview && state.restoreGate
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-approval-record">${icon("check")} Record approval</button>`
+                    : ""
+                }
+                ${
+                  state.restorePreview && state.restoreApproval?.approvalId && state.restoreApproval.approvalStatus === "approved_pending_commit"
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-commit-storage-check">${icon("check")} Check commit storage</button>`
+                    : ""
+                }
+                ${
+                  state.restorePreview && state.restoreCommitAttempt?.commitAttemptId && state.restoreCommitAttempt.commitAttemptStatus === "blocked_until_restore_apply"
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-preflight-check">${icon("check")} Check application preflight</button>`
+                    : ""
+                }
+                ${
+                  state.restoreSnapshot
+                    && state.restorePreview
+                    && state.restoreApplicationPreflight?.applicationPreflightId
+                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-commit">${icon("check")} Apply snapshot records</button>`
+                    : ""
+                }
+                ${
+                  state.restorePreview?.applicationPlan.attachmentPackagePlan.packageRequired
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-check">${icon("check")} Check attachment package</button>`
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
+                    && state.attachmentExport?.packageDownload?.sha256
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-verify">${icon("check")} Verify package manifest</button>`
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
+                    && !state.attachmentExport?.packageDownload
+                    ? `<small class="restore-action-note">Download package in Imports before package verification.</small>`
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentPackageVerification?.attachmentPackageVerificationId
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-plan">${icon("check")} Plan attachment object restore</button>`
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentObjectPlan?.attachmentObjectPlanId
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit-preflight">${icon("check")} Check attachment commit preflight</button>`
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentObjectCommitPreflight?.readyForByteCommit
+                    && state.restoreAttachmentObjectCommitPreflight.attachmentObjectCommitPreflightId
+                    && state.attachmentExport?.packageDownload?.blob
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit">${icon("backup")} Restore attachment bytes</button>`
+                    : ""
+                }
+                ${
+                  state.restorePreview && state.restorePlanningRecords.length > 0
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-check">${icon("check")} Check planning restore</button>`
+                    : ""
+                }
+                ${
+                  state.restorePlanningRecords.length > 0
+                    && state.restorePlanningDryRun?.planningPreviewId
+                    && state.restorePlanningDryRun.planningPreviewStatus === "preview_only"
+                    && state.restorePlanningDryRun.rejectedCount === 0
+                    && state.restoreApplicationPreflight?.applicationPreflightId
+                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
+                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-commit">${icon("check")} Apply planning rows</button>`
+                    : ""
+                }
+                </div>
+                <div class="restore-workflow-results">
+                ${
+                  state.restorePreview
+                    ? renderRestorePreview(state.restorePreview)
+                    : ""
+                }
+                ${
+                  state.restorePlanningDryRun
+                    ? renderRestorePlanningDryRun(state.restorePlanningDryRun, state.restorePlanningRecords)
+                    : ""
+                }
+                ${
+                  state.restorePlanningCommit
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Planning commit</strong>
+                        <span>${escapeHtml(state.restorePlanningCommit.planningCommitStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restorePlanningCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restorePlanningCommit.commitStatus.replaceAll("_", " "))}</span>
+                        <span>${escapeHtml(formatRestorePlanningCommitSummary(state.restorePlanningCommit.result))}</span>
+                        <small>${escapeHtml(state.restorePlanningCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restorePlanningCommit.planningCommitPersistence.replaceAll("_", " "))}${state.restorePlanningCommit.auditPersistence ? ` - ${escapeHtml(state.restorePlanningCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        <small>${escapeHtml(shortHash(state.restorePlanningCommit.planningCommitId))}</small>
+                        ${
+                          state.restorePlanningCommit.unsupportedRestoreDomains.length
+                            ? `<small>Still blocked: ${escapeHtml(state.restorePlanningCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentPackagePreflight
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Attachment package preflight</strong>
+                        <span>${state.restoreAttachmentPackagePreflight.metadataRecordCount} metadata records - ${formatBytes(state.restoreAttachmentPackagePreflight.totalSourceBytes)}</span>
+                        <span>${state.restoreAttachmentPackagePreflight.canRestoreBytes ? "Byte restore ready" : "Byte restore blocked"} - ${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightStatus.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightPersistence.replaceAll("_", " "))}${state.restoreAttachmentPackagePreflight.auditPersistence ? ` - ${escapeHtml(state.restoreAttachmentPackagePreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        ${
+                          state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId
+                            ? `<small>${escapeHtml(shortHash(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreAttachmentPackagePreflight.blockers.length
+                            ? `<small>${escapeHtml(state.restoreAttachmentPackagePreflight.blockers.slice(0, 2).join(" "))}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentPackageVerification
+                    ? renderRestoreAttachmentPackageVerification(state.restoreAttachmentPackageVerification)
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentObjectPlan
+                    ? renderRestoreAttachmentObjectPlan(state.restoreAttachmentObjectPlan)
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentObjectCommitPreflight
+                    ? renderRestoreAttachmentObjectCommitPreflight(state.restoreAttachmentObjectCommitPreflight)
+                    : ""
+                }
+                ${
+                  state.restoreAttachmentObjectCommit
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Attachment byte restore</strong>
+                        <span>${state.restoreAttachmentObjectCommit.committedCount} stored - ${state.restoreAttachmentObjectCommit.idempotentCount} idempotent - ${state.restoreAttachmentObjectCommit.failedCount} failed</span>
+                        <span>${formatBytes(state.restoreAttachmentObjectCommit.totalBytes)} committed through verified package objects</span>
+                        <small>New R2 objects only - destructive writes audited</small>
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreGate
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Restore gate</strong>
+                        <span>${escapeHtml(state.restoreGate.commitStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restoreGate.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${state.restoreGate.preRestoreBackupRequired ? "pre-restore backup required" : "pre-restore backup not required"}</span>
+                        <span>Pre-restore backup: ${state.restoreGate.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreGate.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.restoreGate.authorizationPolicy.replaceAll("_", " "))}${state.restoreGate.auditPersistence ? ` - ${escapeHtml(state.restoreGate.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        ${
+                          state.restoreGate.preRestoreBackupBlocker
+                            ? `<small>${escapeHtml(state.restoreGate.preRestoreBackupBlocker)}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreApproval
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Restore approval</strong>
+                        <span>${escapeHtml(state.restoreApproval.approvalStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restoreApproval.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApproval.commitStatus.replaceAll("_", " "))}</span>
+                        <span>Pre-restore backup: ${state.restoreApproval.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApproval.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.restoreApproval.approvalPersistence.replaceAll("_", " "))}${state.restoreApproval.auditPersistence ? ` - ${escapeHtml(state.restoreApproval.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        ${
+                          state.restoreApproval.approvalId
+                            ? `<small>${escapeHtml(shortHash(state.restoreApproval.approvalId))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreApproval.preRestoreBackupBlocker
+                            ? `<small>${escapeHtml(state.restoreApproval.preRestoreBackupBlocker)}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreApproval.approvalBlockers.length
+                            ? `<small>${escapeHtml(state.restoreApproval.approvalBlockers.join(" "))}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreCommitAttempt
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Commit storage</strong>
+                        <span>${escapeHtml(state.restoreCommitAttempt.commitAttemptStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restoreCommitAttempt.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreCommitAttempt.commitStatus.replaceAll("_", " "))}</span>
+                        <span>Pre-restore backup: ${state.restoreCommitAttempt.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreCommitAttempt.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.restoreCommitAttempt.commitAttemptPersistence.replaceAll("_", " "))}${state.restoreCommitAttempt.auditPersistence ? ` - ${escapeHtml(state.restoreCommitAttempt.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        ${
+                          state.restoreCommitAttempt.commitAttemptId
+                            ? `<small>${escapeHtml(shortHash(state.restoreCommitAttempt.commitAttemptId))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreCommitAttempt.preRestoreBackupBlocker
+                            ? `<small>${escapeHtml(state.restoreCommitAttempt.preRestoreBackupBlocker)}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreApplicationPreflight
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Application preflight</strong>
+                        <span>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restoreApplicationPreflight.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationPreflight.commitStatus.replaceAll("_", " "))}</span>
+                        <span>Pre-restore backup: ${state.restoreApplicationPreflight.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
+                        <small>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightPersistence.replaceAll("_", " "))}${state.restoreApplicationPreflight.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationPreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        ${
+                          state.restoreApplicationPreflight.applicationPreflightId
+                            ? `<small>${escapeHtml(shortHash(state.restoreApplicationPreflight.applicationPreflightId))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreApplicationPreflight.rollbackGuidance.blockers?.length
+                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.blockers.join(" "))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply?.length
+                            ? `<small>Before apply: ${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply.join(", ").replaceAll("_", " "))}</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan?.length
+                            ? `<small>Preflight table plan: ${state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan.length} tables</small>`
+                            : ""
+                        }
+                        ${
+                          state.restoreSnapshot && state.restorePreview
+                            ? renderRestoreSnapshotReviewTable(state.restoreSnapshot, state.restorePreview)
+                            : ""
+                        }
+                        ${
+                          state.restoreApplicationPreflight.preRestoreBackupBlocker
+                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupBlocker)}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  state.restoreApplicationCommit
+                    ? `
+                      <div class="restore-preview" role="status">
+                        <strong>Application commit</strong>
+                        <span>${escapeHtml(state.restoreApplicationCommit.applicationCommitStatus.replaceAll("_", " "))}</span>
+                        <span>${state.restoreApplicationCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationCommit.commitStatus.replaceAll("_", " "))}</span>
+                        <span>${escapeHtml(formatRestoreRecordSummary(state.restoreApplicationCommit.recordSummary))}</span>
+                        <small>${escapeHtml(state.restoreApplicationCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restoreApplicationCommit.applicationCommitPersistence.replaceAll("_", " "))}${state.restoreApplicationCommit.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
+                        <small>${escapeHtml(shortHash(state.restoreApplicationCommit.applicationCommitId))}</small>
+                        ${
+                          state.restoreApplicationCommit.unsupportedRestoreDomains.length
+                            ? `<small>Still blocked: ${escapeHtml(state.restoreApplicationCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+                </div>
+              </section>
   `;
 }
 
@@ -5143,8 +5510,6 @@ function renderBackupsWorkspace(): string {
       </div>
       <div class="view-controls" aria-label="Backup controls">
         <button type="button" data-action="backup">${icon("backup")} Backup now</button>
-        <button type="button" data-action="restore-file-preview">${icon("backup")} Preview encrypted backup</button>
-        <button type="button" data-action="backup-r2-manifest">${icon("backup")} Stored backups</button>
       </div>
     </div>
     <section class="backup-workspace-grid" aria-label="Backup workspace">
@@ -5193,10 +5558,11 @@ function renderBackupsWorkspace(): string {
         </dl>
       </section>
     </section>
+    ${renderBackupRestoreWorkflow()}
   `;
 }
 
-function renderSidebar(selectedProject: FilmProject): string {
+function renderSidebar(): string {
   return `
     <aside class="sidebar">
       <div class="brand-row">
@@ -5212,37 +5578,23 @@ function renderSidebar(selectedProject: FilmProject): string {
       </div>
       <nav class="nav-group" aria-label="Workspace navigation">
         <p class="nav-label">Workspace</p>
-        ${WORKSPACE_NAV_ITEMS
-          .map(
-            (item) => `
-              <button
-                class="nav-item ${item.section === state.ui.workspaceSection ? "is-active" : ""}"
-                type="button"
-                ${item.section ? `data-workspace-section="${item.section}"` : `data-action="view-dry-run"`}
-              >
-                ${icon(item.glyph)}
-                <span>${item.label}</span>
-              </button>
-            `,
-          )
-          .join("")}
+        ${renderWorkspaceNavItem(OVERVIEW_NAV_ITEM)}
+        ${renderWorkspaceNavItem(PROJECTS_NAV_ITEM)}
+        ${WORKSPACE_NAV_GROUPS.map((group) => {
+          const isCurrentGroup = group.items.some((item) => item.section === state.ui.workspaceSection);
+          return `
+            <details class="nav-cluster" ${isCurrentGroup ? "open" : ""}>
+              <summary>
+                <span>${escapeHtml(group.label)}</span>
+                ${icon("chevron")}
+              </summary>
+              <div class="nav-cluster-items">
+                ${group.items.map((item) => renderWorkspaceNavItem(item)).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
       </nav>
-      <div class="project-nav">
-        <div class="project-nav-head">
-          <p class="nav-label">Projects</p>
-          <button class="icon-button" type="button" data-action="create-project" aria-label="Create project">${icon("plus")}</button>
-        </div>
-        ${state.workspace.projects
-          .map(
-            (project) => `
-              <button class="project-pill ${project.id === selectedProject.id ? "is-active" : ""}" data-project-id="${project.id}" type="button">
-                <span class="status-dot ${project.color}"></span>
-                <span>${escapeHtml(project.title)}</span>
-              </button>
-            `,
-          )
-          .join("")}
-      </div>
       ${renderAuthPanel()}
       <div class="sidebar-footer">
         <div class="sidebar-legal-links" aria-label="Legal links">
@@ -5259,25 +5611,36 @@ function renderSidebar(selectedProject: FilmProject): string {
 function renderMobileWorkspaceNav(): string {
   return `
     <nav class="mobile-workspace-nav" aria-label="Mobile workspace navigation">
-      ${WORKSPACE_NAV_ITEMS
-        .map(
-          (item) => `
-            <button
-              class="nav-item ${item.section === state.ui.workspaceSection ? "is-active" : ""}"
-              type="button"
-              data-workspace-section="${item.section}"
-            >
-              ${icon(item.glyph)}
-              <span>${item.label}</span>
-            </button>
-          `,
-        )
-        .join("")}
-      <button class="nav-item mobile-project-create" type="button" data-action="create-project">
-        ${icon("plus")}
-        <span>New project</span>
-      </button>
+      <label class="mobile-workspace-picker">
+        <span class="sr-only">Workspace area</span>
+        <select data-action="workspace-section-select">
+          <optgroup label="Projects">
+            <option value="slate" ${state.ui.workspaceSection === "slate" ? "selected" : ""}>Overview</option>
+            <option value="projects" ${state.ui.workspaceSection === "projects" ? "selected" : ""}>Projects</option>
+          </optgroup>
+          ${WORKSPACE_NAV_GROUPS.map((group) => `
+            <optgroup label="${escapeAttribute(group.label)}">
+              ${group.items.map((item) => `
+                <option value="${item.section}" ${item.section === state.ui.workspaceSection ? "selected" : ""}>${escapeHtml(item.label)}</option>
+              `).join("")}
+            </optgroup>
+          `).join("")}
+        </select>
+      </label>
     </nav>
+  `;
+}
+
+function renderWorkspaceNavItem(item: WorkspaceNavItem, active = item.section === state.ui.workspaceSection): string {
+  return `
+    <button
+      class="nav-item ${active ? "is-active" : ""}"
+      type="button"
+      data-workspace-section="${item.section}"
+    >
+      ${icon(item.glyph)}
+      <span>${escapeHtml(item.label)}</span>
+    </button>
   `;
 }
 
@@ -5301,13 +5664,18 @@ function renderAuthPanel(): string {
   const linkReady = (state.auth.status === "link_requested" || state.auth.status === "verifying")
     && state.auth.devOnlyToken;
   const liveLinkRequested = state.auth.status === "link_requested" && !state.auth.devOnlyToken;
+  const authPanelOpen = Boolean(state.invite.acceptToken) || isRequesting || isVerifying || isAcceptingInvite || linkReady || liveLinkRequested;
 
   return `
-    <div class="sidebar-auth-stack">
-      <section class="auth-panel" aria-label="Sign in">
+    <details class="auth-panel auth-disclosure" ${authPanelOpen ? "open" : ""}>
+      <summary>
+        <span class="auth-head"><span class="status-dot amber"></span><strong>Sign in or join</strong></span>
+        ${icon("chevron")}
+      </summary>
+      <div class="auth-disclosure-body">
+      <section class="auth-mode" aria-label="Sign in">
         <div class="auth-head">
-          <span class="status-dot amber"></span>
-          <strong>Magic link</strong>
+          <strong>Sign in by email</strong>
         </div>
         <form class="auth-form" data-action="auth-request">
           <input
@@ -5341,10 +5709,9 @@ function renderAuthPanel(): string {
             : ""
         }
       </section>
-      <section class="auth-panel" aria-label="Accept invite">
+      <section class="auth-mode" aria-label="Accept invite">
         <div class="auth-head">
-          <span class="status-dot blue"></span>
-          <strong>Invite token</strong>
+          <strong>Accept an invitation</strong>
         </div>
         <form class="auth-form" data-action="invite-accept">
           <input
@@ -5374,59 +5741,65 @@ function renderAuthPanel(): string {
             : ""
         }
       </section>
-    </div>
+      </div>
+    </details>
   `;
 }
 
 function renderTopbar(): string {
   const queuedOperations = countQueuedOperations(state.operations);
   const syncLabel = queuedOperations > 0 ? `${queuedOperations} local ops queued` : "Synced locally";
+  const latestBackup = state.workspace.restorePoints[0];
+  const liveIntegrationCount = state.workspace.integrations.filter((integration) => integration.mode === "live").length;
+  const integrationSummary = liveIntegrationCount > 0
+    ? `${liveIntegrationCount} live, ${INTEGRATION_DEFINITIONS.length - liveIntegrationCount} dry-run`
+    : `${INTEGRATION_DEFINITIONS.length} dry-run`;
 
   return `
     <header class="topbar">
-      <label class="search-box">
-        ${icon("search")}
-        <input value="${escapeAttribute(state.ui.filter)}" data-action="filter" placeholder="Search projects, tasks, docs, people, gear, budgets..." />
-        <span class="shortcut">Cmd K</span>
-      </label>
       <div class="status-strip" aria-label="Runtime status">
-        <button class="status-chip success" data-integration="offline" type="button">${icon("check")} Offline ready</button>
-        ${renderIntegrationChip("pool", "Pool dry run")}
-        ${renderIntegrationChip("store", "Store dry run")}
-        ${renderIntegrationChip("stripe", "Stripe dry run")}
-        ${renderIntegrationChip("social", "Meta insights dry run")}
-        ${renderIntegrationChip("google", "Google dry run")}
-        ${renderIntegrationChip("resend", "Resend dry run")}
-        ${renderIntegrationChip("sms", "Telnyx SMS dry run")}
+        <span class="status-chip success">${icon("check")} Offline ready</span>
+        <button class="status-chip dry" data-action="integrations-open" type="button">
+          ${icon("provider")}
+          <span>Integrations</span>
+          <small>${escapeHtml(integrationSummary)}</small>
+        </button>
       </div>
       <button class="sync-state" data-action="sync-dry-run" title="Local mirror: ${escapeAttribute(state.storageSource)}" type="button">${icon("check")} ${escapeHtml(syncLabel)}</button>
-      <button class="backup-button" data-action="backup" type="button">${icon("backup")} Backup now</button>
+      <span class="backup-state" title="Manage backups in the Backups workspace">${icon("backup")} ${escapeHtml(latestBackup?.label ?? "No backup yet")}</span>
     </header>
   `;
 }
 
-function renderIntegrationChip(key: IntegrationKey, label: string): string {
-  const integration = state.workspace.integrations.find((item) => item.key === key);
+function renderSlateHeader(selectedProject: FilmProject): string {
   return `
-    <button class="status-chip dry" data-integration="${key}" type="button">
-      ${icon("provider")}
-      ${escapeHtml(label)}
-      <span class="sr-only">${escapeHtml(integration?.mode ?? "dry-run")}</span>
-    </button>
+    <div class="slate-head overview-workspace-head">
+      <div>
+        <h1>Overview</h1>
+        <p>${escapeHtml(selectedProject.title)} - ${escapeHtml(selectedProject.phase)} - ${selectedProject.progress}% complete</p>
+      </div>
+    </div>
   `;
 }
 
-function renderSlateHeader(projectCount: number): string {
+function renderProjectWorkspaceHeader(projectCount: number, selectedProject: FilmProject): string {
   return `
-    <div class="slate-head">
+    <div class="slate-head projects-workspace-head">
       <div>
-        <h1>Slate</h1>
-        <p>${projectCount} projects - ${state.workspace.archivedProjectCount} archived</p>
+        <h1>Projects</h1>
+        <p>${projectCount} visible - ${state.workspace.archivedProjectCount} archived - selected ${escapeHtml(selectedProject.title)}</p>
       </div>
       <div class="view-controls" aria-label="View controls">
-        <button data-view="board" class="${state.ui.viewMode === "board" ? "is-active" : ""}" type="button">Board</button>
-        <button data-view="list" class="${state.ui.viewMode === "list" ? "is-active" : ""}" type="button">List</button>
-        <button data-action="filter-focus" type="button">${icon("filter")} Filter</button>
+        <label class="search-box workspace-search-box">
+          ${icon("search")}
+          <input value="${escapeAttribute(state.ui.filter)}" data-action="filter" placeholder="Search project metadata" />
+        </label>
+        <span class="segmented-control project-surface-control" aria-label="Project view">
+          <button data-project-surface="board" class="${state.ui.viewMode === "board" ? "is-active" : ""}" type="button">Board</button>
+          <button data-project-surface="list" class="${state.ui.viewMode === "list" ? "is-active" : ""}" type="button">List</button>
+        </span>
+        <button type="button" data-action="export-project-directory">${icon("doc")} Export directory</button>
+        <button type="button" data-action="create-project">${icon("plus")} Create project</button>
       </div>
     </div>
   `;
@@ -5444,7 +5817,6 @@ function renderProjectList(projects: FilmProject[], selectedId: string): string 
           <span>Shoot Dates</span>
           <span>Budget</span>
           <span>Tasks</span>
-          <span></span>
         </div>
         ${
           projects.length
@@ -5467,7 +5839,6 @@ function renderProjectRow(project: FilmProject, selectedId: string): string {
       <span>${escapeHtml(project.shootDates)}</span>
       <span><strong>${formatCurrency(project.spentBudget)}</strong><small>of ${formatCurrency(project.totalBudget)}</small></span>
       <span class="progress-cell"><span>${project.tasks.done} / ${project.tasks.total}</span><span class="meter small"><span style="width:${taskProgress}%"></span></span></span>
-      <span class="row-menu">${icon("more")}</span>
     </button>
   `;
 }
@@ -5496,8 +5867,6 @@ function renderProjectBoard(projects: FilmProject[], selectedId: string): string
 }
 
 function renderTimeline(project: FilmProject): string {
-  const monthLabels = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
-
   return `
     <section class="panel timeline-panel" aria-labelledby="timeline-title">
       <div class="section-head">
@@ -5507,23 +5876,25 @@ function renderTimeline(project: FilmProject): string {
         </div>
         <span class="today-marker">Today</span>
       </div>
-      <div class="timeline">
-        <div class="timeline-months">
-          ${monthLabels.map((month) => `<span>${month}</span>`).join("")}
-        </div>
-        <div class="timeline-lanes">
-          ${project.timeline
-            .map(
-              (item, index) => `
-                <div class="timeline-bar ${item.tone}" style="left:${item.start}%; width:${item.width}%; top:${8 + index * 29}px">
-                  ${escapeHtml(item.label)}
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </div>
+      ${renderProjectTimeline(project)}
     </section>
+  `;
+}
+
+function renderProjectTimeline(project: FilmProject): string {
+  return `
+    <div class="timeline">
+      <div class="timeline-months">
+        ${TIMELINE_MONTH_LABELS.map((month) => `<span>${month}</span>`).join("")}
+      </div>
+      <div class="timeline-lanes">
+        ${project.timeline.map((item, index) => `
+          <div class="timeline-bar ${item.tone}" style="left:${item.start}%; width:${item.width}%; top:${8 + index * 29}px">
+            ${escapeHtml(item.label)}
+          </div>
+        `).join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -5543,7 +5914,7 @@ function renderTaskPanel(project: FilmProject): string {
     <section class="panel compact-panel">
       <div class="section-head row">
         <h2>Tasks</h2>
-        <button type="button" data-action="view-dry-run">View all</button>
+        <button type="button" data-workspace-section="tasks">View all</button>
       </div>
       <ul class="line-list">
         ${project.openTasks
@@ -5558,36 +5929,6 @@ function renderTaskPanel(project: FilmProject): string {
           )
           .join("")}
       </ul>
-      <form class="inline-form task-create-form" data-action="add-task">
-        <input name="title" placeholder="New task" autocomplete="off" />
-        <input name="due" placeholder="Due" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add</button>
-      </form>
-    </section>
-  `;
-}
-
-function renderListPanel(title: string, rows: string[][]): string {
-  return `
-    <section class="panel compact-panel">
-      <div class="section-head row">
-        <h2>${escapeHtml(title)}</h2>
-        <button type="button" data-action="view-dry-run">View all</button>
-      </div>
-      <ul class="line-list">
-        ${rows
-          .map(
-            ([primary, secondary, token]) => `
-              <li>
-                <span class="file-token ${escapeAttribute(token)}">${escapeHtml(token)}</span>
-                <span>${escapeHtml(primary)}</span>
-                <strong>${escapeHtml(secondary)}</strong>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
-      <button class="text-action" type="button" data-action="view-dry-run">${icon("plus")} Add ${escapeHtml(title.toLowerCase())}</button>
     </section>
   `;
 }
@@ -5597,7 +5938,7 @@ function renderPeoplePanel(project: FilmProject): string {
     <section class="panel compact-panel">
       <div class="section-head row">
         <h2>People</h2>
-        <button type="button" data-action="view-dry-run">View all</button>
+        <button type="button" data-workspace-section="people">View all</button>
       </div>
       <ul class="line-list">
         ${project.people
@@ -5612,11 +5953,6 @@ function renderPeoplePanel(project: FilmProject): string {
           )
           .join("")}
       </ul>
-      <form class="inline-form multi-field-form" data-action="add-person">
-        <input name="name" placeholder="Person" autocomplete="off" />
-        <input name="role" placeholder="Role" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add</button>
-      </form>
     </section>
   `;
 }
@@ -5626,7 +5962,7 @@ function renderEquipmentPanel(project: FilmProject): string {
     <section class="panel compact-panel">
       <div class="section-head row">
         <h2>Equipment</h2>
-        <button type="button" data-action="view-dry-run">View all</button>
+        <button type="button" data-workspace-section="equipment">View all</button>
       </div>
       <ul class="line-list">
         ${project.equipment
@@ -5641,11 +5977,6 @@ function renderEquipmentPanel(project: FilmProject): string {
           )
           .join("")}
       </ul>
-      <form class="inline-form multi-field-form" data-action="add-equipment">
-        <input name="name" placeholder="Equipment" autocomplete="off" />
-        <input name="status" placeholder="Status" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add</button>
-      </form>
     </section>
   `;
 }
@@ -5656,14 +5987,14 @@ function renderDocsPanel(project: FilmProject): string {
     <section class="panel compact-panel">
       <div class="section-head row">
         <h2>Docs</h2>
-        <button type="button" data-action="doc-select-first">View all</button>
+        <button type="button" data-workspace-section="docs">View all</button>
       </div>
       <ul class="line-list">
         ${project.docs
           .map(
             (doc) => `
               <li>
-                <button class="doc-row-button ${doc.id === selectedDoc?.id ? "is-selected" : ""}" type="button" data-doc-id="${escapeAttribute(doc.id)}">
+                <button class="doc-row-button ${doc.id === selectedDoc?.id ? "is-selected" : ""}" type="button" data-open-doc="${escapeAttribute(doc.id)}">
                   <span class="file-token ${escapeAttribute(doc.type)}">${escapeHtml(doc.type)}</span>
                   <span>${escapeHtml(doc.name)}</span>
                   <strong>${escapeHtml(formatDocStatus(doc))}</strong>
@@ -5673,11 +6004,6 @@ function renderDocsPanel(project: FilmProject): string {
           )
           .join("")}
       </ul>
-      <form class="inline-form" data-action="add-doc">
-        <input name="name" placeholder="New doc" autocomplete="off" />
-        <button type="submit">${icon("plus")} Add</button>
-      </form>
-      ${selectedDoc ? renderDocumentEditor(selectedDoc) : ""}
     </section>
   `;
 }
@@ -6100,14 +6426,14 @@ function renderBottomGrid(project: FilmProject): string {
       <section class="panel expense-panel">
         <div class="section-head row">
           <h2>Expenses</h2>
-          <button type="button" data-action="view-dry-run">View all</button>
+          <button type="button" data-workspace-section="expenses">View all</button>
         </div>
         <div class="expense-table">
           ${project.expenses
             .map(
               (expense) => `
                 <div>
-                  <span>${escapeHtml(expense.category)}</span>
+                  <span>${escapeHtml(expenseCategoryLabel(expense))}</span>
                   <span>${formatCurrency(expense.spent)}</span>
                   <span>${formatCurrency(expense.budget)}</span>
                   <span>${expense.percent}%</span>
@@ -6117,17 +6443,10 @@ function renderBottomGrid(project: FilmProject): string {
             )
             .join("")}
         </div>
-        <form class="inline-form expense-create-form" data-action="add-expense">
-          <input name="category" placeholder="Category" autocomplete="off" />
-          <input name="spent" inputmode="decimal" placeholder="Spent" autocomplete="off" />
-          <input name="budget" inputmode="decimal" placeholder="Budget" autocomplete="off" />
-          <button type="submit">${icon("plus")} Add</button>
-        </form>
       </section>
       <section class="panel call-sheet-panel">
         <div class="section-head row">
           <h2>Upcoming Call Sheet</h2>
-          <button type="button" data-action="view-dry-run">View all</button>
         </div>
         <div class="call-sheet">
           <div class="call-date"><strong>${project.callSheet.day}</strong><span>${escapeHtml(project.callSheet.month)}</span></div>
@@ -6141,7 +6460,7 @@ function renderBottomGrid(project: FilmProject): string {
             <p>Scenes <strong>${project.callSheet.scenes}</strong></p>
             <p>People <strong>${project.callSheet.people}</strong></p>
             <p>Weather <strong>${escapeHtml(project.callSheet.weather)}</strong></p>
-            <button class="secondary-button" type="button" data-action="view-dry-run">${icon("doc")} Open Call Sheet</button>
+            <button class="secondary-button" type="button" data-workspace-section="call-sheets">${icon("doc")} Open Call Sheet</button>
           </div>
         </div>
       </section>
@@ -6151,7 +6470,6 @@ function renderBottomGrid(project: FilmProject): string {
 
 function renderPlanningPanel(project: FilmProject): string {
   const projectRows = planningPanelRowsForProject(project);
-  const visibleRows = projectRows.slice(0, 8);
   const kindCounts = planningKindCounts(projectRows);
   const totalImported = state.planningRows.length;
   const truncatedCount = state.planningRows.filter((record) => record.sourceTruncated).length;
@@ -6165,9 +6483,9 @@ function renderPlanningPanel(project: FilmProject): string {
       <div class="section-head row">
         <div>
           <h2 id="planning-panel-title">Planning</h2>
-          <p>${projectRows.length} rows shown - ${escapeHtml(sourceSummary)}</p>
+          <p>${projectRows.length} rows for this project - ${escapeHtml(sourceSummary)}</p>
         </div>
-        <button type="button" data-action="planning-export-refresh" ${state.auth.session ? "" : "disabled"}>${icon("backup")} Refresh D1</button>
+        <button type="button" data-workspace-section="planning">Review planning</button>
       </div>
       ${
         projectRows.length > 0 || totalImported > 0 || d1Export
@@ -6183,20 +6501,6 @@ function renderPlanningPanel(project: FilmProject): string {
                   `,
                 )
                 .join("")}
-            </div>
-            <div class="planning-table" aria-label="Imported planning rows" tabindex="0">
-              <div class="planning-table-row planning-table-head">
-                <span>Type</span>
-                <span>Row</span>
-                <span>Project</span>
-                <span>Fields</span>
-                <span>Source</span>
-              </div>
-              ${
-                visibleRows.length
-                  ? visibleRows.map(renderLocalPlanningRow).join("")
-                  : `<div class="empty-inline">No planning rows match this project.</div>`
-              }
             </div>
             ${
               d1Export
@@ -6375,6 +6679,97 @@ function renderProjectMembershipHistory(history: ProjectMembershipHistoryState):
           : "<small>No project team changes recorded for this project.</small>"
       }
     </div>
+  `;
+}
+
+function teamAssignmentFor(projectId: string, member: WorkspaceData["members"][number]): { role: WorkspaceRole; department: string } {
+  const recentAssignment = state.assignment.assignedProjectId === projectId
+    && state.assignment.assignedMemberId === member.id
+    && state.assignment.assignedRole
+    ? { role: state.assignment.assignedRole, department: state.assignment.department }
+    : null;
+  if (recentAssignment) return recentAssignment;
+
+  const savedAssignment = state.projectMembershipManifest?.projectId === projectId
+    ? state.projectMembershipManifest.memberships.find((membership) => membership.memberId === member.id) ?? null
+    : null;
+  return {
+    role: savedAssignment?.role ?? member.role,
+    department: savedAssignment?.department ?? "",
+  };
+}
+
+function renderTeamEditGate(): string {
+  if (state.auth.session?.role === "owner" || state.auth.session?.role === "producer") return "";
+  const signedIn = Boolean(state.auth.session);
+  return `
+    <div class="team-edit-gate" role="note">
+      <div>
+        <strong>${signedIn ? "Owner or producer access required" : "Sign in to edit the team"}</strong>
+        <small>${signedIn ? "Your current session can view this roster but cannot change access." : "Team roles and member status are protected workspace changes."}</small>
+      </div>
+      ${signedIn ? "" : `<button class="secondary-button" type="button" data-action="auth-open">Sign in</button>`}
+    </div>
+  `;
+}
+
+function renderTeamMemberRow(
+  project: FilmProject,
+  member: WorkspaceData["members"][number],
+  canManageTeam: boolean,
+  isUpdatingMemberStatus: boolean,
+  isAssigningMember: boolean,
+): string {
+  const assignment = teamAssignmentFor(project.id, member);
+  const roleOptions = Array.from(new Set<WorkspaceRole>([member.role, ...INVITE_ROLES]));
+  const canEditStatus = canManageTeam && member.status !== "invited";
+  const canEditAssignment = canManageTeam && member.status === "active";
+
+  return `
+    <li class="team-member-row">
+      <span class="avatar">${escapeHtml(initialsFor(member.displayName))}</span>
+      <div class="team-member-identity">
+        <strong>${escapeHtml(member.displayName)}</strong>
+        ${
+          canEditStatus
+            ? `
+              <form data-action="member-status-update" class="team-status-form">
+                <input type="hidden" name="memberId" value="${escapeAttribute(member.id)}" />
+                <input type="hidden" name="status" value="${member.status === "active" ? "disabled" : "active"}" />
+                <button
+                  type="submit"
+                  class="inline-status-button is-${member.status}"
+                  title="${member.status === "active" ? "Disable" : "Reactivate"} ${escapeAttribute(member.displayName)}"
+                  ${isUpdatingMemberStatus ? "disabled" : ""}
+                >${escapeHtml(formatWorkspaceMemberStatus(member.status))}</button>
+              </form>
+            `
+            : `<small class="team-member-status">${escapeHtml(formatWorkspaceMemberStatus(member.status))}</small>`
+        }
+      </div>
+      ${
+        canEditAssignment
+          ? `
+            <form class="team-role-form" data-action="membership-assign">
+              <input type="hidden" name="memberId" value="${escapeAttribute(member.id)}" />
+              <label class="contextual-field">
+                <span class="sr-only">Project role for ${escapeHtml(member.displayName)}</span>
+                <select name="role" data-contextual-autosave aria-label="Project role for ${escapeAttribute(member.displayName)}" ${isAssigningMember ? "disabled" : ""}>
+                  ${roleOptions.map((candidateRole) => `
+                    <option value="${candidateRole}" ${assignment.role === candidateRole ? "selected" : ""}>${escapeHtml(formatWorkspaceRole(candidateRole))}</option>
+                  `).join("")}
+                </select>
+              </label>
+              <label class="contextual-field team-department-field">
+                <span class="sr-only">Department for ${escapeHtml(member.displayName)}</span>
+                <input name="department" value="${escapeAttribute(assignment.department)}" placeholder="Department" autocomplete="off" ${isAssigningMember ? "disabled" : ""} />
+              </label>
+              ${renderInlineSaveButton(`Save ${member.displayName} assignment`, isAssigningMember)}
+            </form>
+          `
+          : `<strong class="team-member-role">${escapeHtml(formatWorkspaceRole(assignment.role))}</strong>`
+      }
+    </li>
   `;
 }
 
@@ -6737,6 +7132,7 @@ function renderRecordMutationFieldSelector(
   const fields = getRecordMutationFieldDefinitions(entityType);
   return `
     <div class="mutation-field-grid" role="group" aria-label="Update fields">
+      <strong class="mutation-form-label">Fields to change</strong>
       ${fields.map((field) => `
         <label class="mutation-field-option">
           <input
@@ -6759,6 +7155,7 @@ function renderFilmProfileMutationFieldSelector(disabled: boolean): string {
   const fields = getFilmProfileMutationFieldDefinitions();
   return `
     <div class="mutation-field-grid" role="group" aria-label="Film profile update fields">
+      <strong class="mutation-form-label">Fields to change</strong>
       ${fields.map((field) => `
         <label class="mutation-field-option">
           <input
@@ -6994,7 +7391,7 @@ function recordMutationDefaultValue(
   }
     const expense = project.expenses.find((candidate) => candidate.id === request.entityId);
     if (!expense) return field.key === "projectId" ? project.id : undefined;
-    if (field.key === "category") return expense.category;
+    if (field.key === "category") return expenseCategoryLabel(expense);
     if (field.key === "amountCents") return Math.round(expense.spent * 100);
     if (field.key === "projectId") return project.id;
   return undefined;
@@ -7142,6 +7539,50 @@ function emptyRecordMutationDeleteRecoveryState(): RecordMutationDeleteRecoveryS
   };
 }
 
+function resetRecordMutationWorkflow(mutation = state.recordMutation.mutation): void {
+  state.recordMutation = {
+    mutation,
+    status: "idle",
+    targetLabel: null,
+    persistence: null,
+    auditPersistence: null,
+    mutationPolicy: null,
+    preflight: null,
+  };
+  state.recordMutationRequest = {
+    status: "idle",
+    targetLabel: null,
+    persistence: null,
+    auditPersistence: null,
+    requestPolicy: null,
+    request: null,
+  };
+  state.recordMutationRequestManifest = null;
+  state.recordMutationResolution = emptyRecordMutationResolutionState();
+  state.recordMutationDiff = emptyRecordMutationDiffState();
+  state.recordMutationApply = emptyRecordMutationApplyState();
+  state.recordMutationAuditManifest = null;
+  state.recordMutationRollback = emptyRecordMutationRollbackState();
+  state.recordMutationDeleteRecovery = emptyRecordMutationDeleteRecoveryState();
+}
+
+function resetOwnerTransferTarget(target: Pick<OwnerTransferState, "entityType" | "entityId">): void {
+  state.ownerTransfer = {
+    ...state.ownerTransfer,
+    ...target,
+    status: "idle",
+    persistence: null,
+    transferredEntityType: null,
+    transferredEntityId: null,
+    transferredTargetLabel: null,
+    ownerMemberId: null,
+    previousOwnerMemberId: null,
+  };
+  state.ownerManifest = null;
+  state.ownerHistory = null;
+  resetRecordMutationWorkflow();
+}
+
 function renderRecordCommentManifest(manifest: RecordCommentManifestState): string {
   return `
     <div class="invite-preview" role="status">
@@ -7268,16 +7709,123 @@ function inspectorViewPanelAttributes(view: InspectorView): string {
   return `data-inspector-view-panel="${view}"${state.ui.inspectorView === view ? "" : " hidden"}`;
 }
 
+function workflowStageClass(index: number, currentIndex: number): string {
+  if (index < currentIndex) return "is-complete";
+  if (index === currentIndex) return "is-current";
+  return "is-upcoming";
+}
+
+function renderWorkflowStageSummary(index: number, title: string, description: string, currentIndex: number): string {
+  const status = index < currentIndex ? "Complete" : index === currentIndex ? "Current" : "Upcoming";
+  return `
+    <span class="workflow-step-marker">${index < currentIndex ? icon("check") : index + 1}</span>
+    <span class="workflow-step-copy">
+      <strong>${escapeHtml(title)}</strong>
+      <small>${escapeHtml(description)}</small>
+    </span>
+    <span class="workflow-step-status">${status}</span>
+  `;
+}
+
+function renderWorkflowRequestId(requestId: string): string {
+  return `<input type="hidden" name="requestId" value="${escapeAttribute(requestId)}" />`;
+}
+
+function permissionTargetsFor(project: FilmProject, scope: PermissionScope): Array<{ id: string; label: string }> {
+  if (scope === "task") return project.openTasks.map((task) => ({ id: task.id, label: task.title }));
+  if (scope === "document") return project.docs.map((doc) => ({ id: doc.id, label: doc.name }));
+  return [{ id: project.id, label: project.title }];
+}
+
+function selectedPermissionTargetId(project: FilmProject, scope: PermissionScope): string {
+  const targets = permissionTargetsFor(project, scope);
+  if (scope === "task") {
+    return targets.some((target) => target.id === state.taskPermission.taskId) ? state.taskPermission.taskId : targets[0]?.id ?? "";
+  }
+  if (scope === "document") {
+    return targets.some((target) => target.id === state.ui.selectedDocId) ? state.ui.selectedDocId ?? "" : targets[0]?.id ?? "";
+  }
+  return project.id;
+}
+
+function renderPermissionAssignment(project: FilmProject, activeMembers: WorkspaceData["members"], canAssign: boolean): string {
+  const scope = state.ui.permissionScope;
+  const assignment = permissionAssignmentState(scope);
+  const targets = permissionTargetsFor(project, scope);
+  const targetId = selectedPermissionTargetId(project, scope);
+  const target = targets.find((candidate) => candidate.id === targetId) ?? targets[0] ?? null;
+  const memberId = assignment.memberId || activeMembers[0]?.id || "";
+  const isAssigning = assignment.status === "assigning";
+  const assignedTargetId = scope === "project"
+    ? state.projectPermission.assignedProjectId
+    : scope === "task"
+      ? state.taskPermission.assignedTaskId
+      : state.documentPermission.assignedDocumentId;
+  const assignmentMatches = assignment.status === "assigned"
+    && assignment.assignedPermission
+    && assignedTargetId === target?.id;
+
+  return `
+    <div class="segmented-control permission-scope-control" aria-label="Permission scope">
+      ${PERMISSION_SCOPES.map((candidate) => `
+        <button type="button" data-permission-scope="${candidate.id}" class="${scope === candidate.id ? "is-active" : ""}">${escapeHtml(candidate.label)}</button>
+      `).join("")}
+    </div>
+    <form class="permission-assignment-form" data-action="permission-assign" data-permission-assignment-scope="${scope}">
+      <label class="inspector-form-field">
+        <span>${scope === "project" ? "Project" : scope === "task" ? "Task" : "Document"}</span>
+        <select name="targetId" data-action="permission-target" ${isAssigning || targets.length === 0 ? "disabled" : ""}>
+          ${targets.map((candidate) => `<option value="${escapeAttribute(candidate.id)}" ${candidate.id === target?.id ? "selected" : ""}>${escapeHtml(candidate.label)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="inspector-form-field">
+        <span>Member</span>
+        <select name="memberId" ${isAssigning ? "disabled" : ""}>
+          ${activeMembers.map((member) => `<option value="${escapeAttribute(member.id)}" ${memberId === member.id ? "selected" : ""}>${escapeHtml(member.displayName)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="inspector-form-field">
+        <span>Access level</span>
+        <select name="permission" ${isAssigning ? "disabled" : ""}>
+          ${RECORD_PERMISSION_LEVELS.map((permission) => `<option value="${permission}" ${assignment.permission === permission ? "selected" : ""}>${escapeHtml(formatRecordPermissionLevel(permission))}</option>`).join("")}
+        </select>
+      </label>
+      <label class="inspector-form-field">
+        <span>Department <small>Optional</small></span>
+        <input name="department" value="${escapeAttribute(assignment.department)}" autocomplete="off" ${isAssigning ? "disabled" : ""} />
+      </label>
+      <label class="inspector-form-field">
+        <span>Expires <small>Optional</small></span>
+        <input name="expiresAt" type="date" value="${escapeAttribute(assignment.expiresAt)}" ${isAssigning ? "disabled" : ""} />
+      </label>
+      <button type="submit" ${!canAssign || !target || !memberId || isAssigning ? "disabled" : ""}>${isAssigning ? "Granting..." : "Grant access"}</button>
+    </form>
+    ${assignmentMatches ? `
+      <div class="invite-preview" role="status">
+        <strong>Access saved</strong>
+        <span>${escapeHtml(target?.label ?? "Selected target")} - ${escapeHtml(formatRecordPermissionLevel(assignment.assignedPermission ?? assignment.permission))}</span>
+        <small>${escapeHtml((assignment.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${assignment.department ? ` - ${escapeHtml(assignment.department)}` : ""}${assignment.expiresAt ? ` - expires ${escapeHtml(assignment.expiresAt)}` : ""}</small>
+      </div>
+    ` : ""}
+    <details class="advanced-disclosure permission-review-disclosure">
+      <summary>${icon("people")} <span>Review existing access</span> ${icon("chevron")}</summary>
+      <div class="advanced-disclosure-body permission-review-actions">
+        <button class="secondary-button" type="button" data-action="permission-manifest" data-permission-mode="active" ${!canAssign || !target ? "disabled" : ""}>Active grants</button>
+        <button class="secondary-button" type="button" data-action="permission-manifest" data-permission-mode="expired" ${!canAssign || !target ? "disabled" : ""}>Expired grants</button>
+        <button class="secondary-button" type="button" data-action="permission-history" ${!canAssign || !target ? "disabled" : ""}>Access history</button>
+      </div>
+    </details>
+  `;
+}
+
 function renderInspector(project: FilmProject): string {
-  const latestBackup = state.workspace.restorePoints[0];
   const auditEvents = state.workspace.auditLog.slice(0, 5);
   const members = state.workspace.members ?? [];
   const canCreateInvite = Boolean(state.auth.session?.csrfToken);
+  const canManageTeam = state.auth.session?.role === "owner" || state.auth.session?.role === "producer";
   const isCreatingInvite = state.invite.status === "creating";
   const activeMembers = members.filter((member) => member.status === "active");
-  const memberStatusMemberId = state.memberStatus.memberId || members[0]?.id || "";
   const isUpdatingMemberStatus = state.memberStatus.status === "updating";
-  const assignmentMemberId = state.assignment.memberId || activeMembers[0]?.id || "";
   const isAssigningMember = state.assignment.status === "assigning";
   const ownerTransferMemberId = state.ownerTransfer.memberId || activeMembers[0]?.id || "";
   const ownerTransferTargets = ownerTransferTargetsFor(project, state.ownerTransfer.entityType);
@@ -7344,17 +7892,28 @@ function renderInspector(project: FilmProject): string {
   const isResolvingProfileMutation = state.filmProfileMutationResolution.status === "resolving";
   const isPreviewingProfileMutationDiff = state.filmProfileMutationDiff.status === "previewing";
   const isApplyingProfileMutation = state.filmProfileMutationApply.status === "applying";
+  const recordMutationApplied = Boolean(
+    state.recordMutationApply.status === "applied"
+      && state.recordMutationApply.request
+      && ownerTransferTarget
+      && state.recordMutationApply.request.entityId === ownerTransferTarget.entityId
+      && state.recordMutationApply.request.entityType === ownerTransferTarget.entityType,
+  );
+  const recordMutationPreviewed = Boolean(
+    state.recordMutationDiff.status === "previewed"
+      && state.recordMutationDiff.request?.id === approvedMutationRequestId,
+  );
+  const recordWorkflowStep = recordMutationApplied ? 4 : recordMutationPreviewed ? 3 : approvedMutationRequestId ? 2 : pendingMutationRequestId ? 1 : 0;
+  const profileMutationApplied = state.filmProfileMutationApply.status === "applied"
+    && state.filmProfileMutationApply.request?.projectId === project.id;
+  const profileMutationPreviewed = state.filmProfileMutationDiff.status === "previewed"
+    && state.filmProfileMutationDiff.request?.id === approvedProfileMutationRequestId;
+  const profileWorkflowStep = profileMutationApplied ? 4 : profileMutationPreviewed ? 3 : approvedProfileMutationRequestId ? 2 : pendingProfileMutationRequestId ? 1 : 0;
   const commentTargets = recordCommentTargetsFor(project, state.recordComment.entityType);
   const commentTarget = recordCommentTargetFor(project, state.recordComment.entityType, state.recordComment.entityId);
   const isCreatingComment = state.recordComment.status === "creating";
-  const permissionMemberId = state.projectPermission.memberId || activeMembers[0]?.id || "";
-  const isAssigningPermission = state.projectPermission.status === "assigning";
   const selectedTask = project.openTasks.find((task) => task.id === state.taskPermission.taskId) ?? project.openTasks[0] ?? null;
-  const taskPermissionMemberId = state.taskPermission.memberId || activeMembers[0]?.id || "";
-  const isAssigningTaskPermission = state.taskPermission.status === "assigning";
   const selectedDocument = project.docs.find((doc) => doc.id === state.ui.selectedDocId) ?? project.docs[0] ?? null;
-  const documentPermissionMemberId = state.documentPermission.memberId || activeMembers[0]?.id || "";
-  const isAssigningDocumentPermission = state.documentPermission.status === "assigning";
   const uploadableAttachmentCount = collectUploadableAttachmentMetadata(state.workspace).length;
   const storedAttachmentCount = countStoredR2Attachments(state.workspace);
 
@@ -7370,103 +7929,59 @@ function renderInspector(project: FilmProject): string {
             <div class="inspector-body inspector-details">
               ${renderInspectorViewPicker()}
               <div class="inspector-view-panel" ${inspectorViewPanelAttributes("overview")}>
-              <div class="project-summary">
-                <span class="status-dot ${project.color}"></span>
-                <h2>${escapeHtml(project.title)}</h2>
-                ${project.starred ? icon("star") : ""}
-              </div>
-              <p>${escapeHtml(project.type)} - ${project.runtimeMinutes} min - ${escapeHtml(project.format)}</p>
-              <dl class="detail-list">
-                <div><dt>Phase</dt><dd><span class="phase-badge ${project.phaseTone}">${escapeHtml(project.phase)}</span></dd></div>
-                <div><dt>Shoot Dates</dt><dd>${escapeHtml(project.shootDates)}</dd></div>
-                <div><dt>Budget</dt><dd>${formatCurrency(project.totalBudget)}</dd></div>
-                <div><dt>Location</dt><dd>${escapeHtml(project.location)}</dd></div>
-                <div><dt>Workflow</dt><dd>${escapeHtml(project.workflow)}</dd></div>
-              </dl>
-              <section class="inspector-section">
-                <div class="section-head row"><h3>Description</h3><button type="button" data-action="edit-dry-run">${icon("edit")} Edit</button></div>
-                <p>${escapeHtml(project.description)}</p>
-              </section>
+              <form class="project-overview-form" data-action="project-inline-update" data-project-id="${escapeAttribute(project.id)}">
+                <div class="project-summary">
+                  <span class="status-dot ${project.color}"></span>
+                  <h2>${escapeHtml(project.title)}</h2>
+                  ${project.starred ? icon("star") : ""}
+                </div>
+                <p>${escapeHtml(project.type)} - ${project.runtimeMinutes} min - ${escapeHtml(project.format)}</p>
+                <div class="project-overview-fields">
+                  <label class="inspector-form-field">
+                    <span>Phase</span>
+                    <select name="phase" data-contextual-autosave>
+                      ${PROJECT_PHASES.map((phase) => `<option value="${phase}" ${project.phase === phase ? "selected" : ""}>${phase}</option>`).join("")}
+                    </select>
+                  </label>
+                  <label class="inspector-form-field">
+                    <span>Shoot dates</span>
+                    <input name="shootDates" value="${escapeAttribute(project.shootDates)}" autocomplete="off" />
+                  </label>
+                  <label class="inspector-form-field">
+                    <span>Budget</span>
+                    <input name="totalBudget" value="${project.totalBudget}" inputmode="decimal" autocomplete="off" />
+                  </label>
+                  <label class="inspector-form-field">
+                    <span>Location</span>
+                    <input name="location" value="${escapeAttribute(project.location)}" autocomplete="off" />
+                  </label>
+                </div>
+                <label class="inspector-form-field project-description-field">
+                  <span>Description</span>
+                  <textarea name="description" rows="3">${escapeHtml(project.description)}</textarea>
+                </label>
+                <div class="project-overview-footer">
+                  <small>${escapeHtml(project.workflow)}</small>
+                  <button type="submit">${icon("check")} Save project details</button>
+                </div>
+              </form>
               </div>
               <div class="inspector-view-panel" ${inspectorViewPanelAttributes("team")}>
               <section class="inspector-section inspector-section-first">
                 <div class="section-head row"><h3>Team</h3><button type="button" data-action="export-team-roster">${icon("doc")} Export team</button></div>
+                ${renderTeamEditGate()}
                 <ul class="team-list">
-                  ${members
-                    .map(
-                      (member) => `
-                        <li>
-                          <span class="avatar">${escapeHtml(initialsFor(member.displayName))}</span>
-                          <span>${escapeHtml(member.displayName)}</span>
-                          <strong>${escapeHtml(formatWorkspaceRole(member.role))}</strong>
-                          <small>${escapeHtml(formatWorkspaceMemberStatus(member.status))}</small>
-                        </li>
-                      `,
-                    )
-                    .join("")}
+                  ${members.map((member) => renderTeamMemberRow(project, member, canManageTeam, isUpdatingMemberStatus, isAssigningMember)).join("")}
                 </ul>
-                <form class="invite-form member-status-form" data-action="member-status-update">
-                  <select name="memberId" ${isUpdatingMemberStatus ? "disabled" : ""}>
-                    ${members.map((member) => `
-                      <option value="${escapeAttribute(member.id)}" ${memberStatusMemberId === member.id ? "selected" : ""}>
-                        ${escapeHtml(member.displayName)} - ${escapeHtml(formatWorkspaceMemberStatus(member.status))}
-                      </option>
-                    `).join("")}
-                  </select>
-                  <select name="status" ${isUpdatingMemberStatus ? "disabled" : ""}>
-                    <option value="disabled" ${state.memberStatus.targetStatus === "disabled" ? "selected" : ""}>Disable</option>
-                    <option value="active" ${state.memberStatus.targetStatus === "active" ? "selected" : ""}>Reactivate</option>
-                  </select>
-                  <button type="submit" ${!canCreateInvite || !memberStatusMemberId || isUpdatingMemberStatus ? "disabled" : ""}>
-                    ${isUpdatingMemberStatus ? "Updating..." : "Update member status"}
-                  </button>
-                </form>
-                ${
-                  state.memberStatus.status === "updated" && state.memberStatus.updatedMemberId
-                    ? `
-                      <div class="invite-preview" role="status">
-                        <strong>Member status saved</strong>
-                        <span>${escapeHtml(memberDisplayName(state.memberStatus.updatedMemberId))} - ${escapeHtml(formatWorkspaceMemberStatus(state.memberStatus.updatedStatus ?? "active"))}</span>
-                        <small>${escapeHtml((state.memberStatus.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${state.memberStatus.sessionPolicy ? ` - ${escapeHtml(state.memberStatus.sessionPolicy.replaceAll("_", " "))}` : ""}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <form class="invite-form assignment-form" data-action="membership-assign">
-                  <select name="memberId" ${isAssigningMember ? "disabled" : ""}>
-                    ${activeMembers.map((member) => `
-                      <option value="${escapeAttribute(member.id)}" ${assignmentMemberId === member.id ? "selected" : ""}>${escapeHtml(member.displayName)}</option>
-                    `).join("")}
-                  </select>
-                  <select name="role" ${isAssigningMember ? "disabled" : ""}>
-                    ${INVITE_ROLES.map((role) => `
-                      <option value="${role}" ${state.assignment.role === role ? "selected" : ""}>${escapeHtml(formatWorkspaceRole(role))}</option>
-                    `).join("")}
-                  </select>
-                  <input
-                    name="department"
-                    value="${escapeAttribute(state.assignment.department)}"
-                    placeholder="Department"
-                    autocomplete="off"
-                    ${isAssigningMember ? "disabled" : ""}
-                  />
-                  <button type="submit" ${!canCreateInvite || !assignmentMemberId || isAssigningMember ? "disabled" : ""}>${isAssigningMember ? "Assigning..." : "Assign to project"}</button>
-                </form>
-                ${
-                  state.assignment.status === "assigned" && state.assignment.assignedProjectId === project.id && state.assignment.assignedRole
-                    ? `
-                      <div class="invite-preview" role="status">
-                        <strong>Project assignment saved</strong>
-                        <span>${escapeHtml(formatWorkspaceRole(state.assignment.assignedRole))} - ${escapeHtml(state.assignment.department || "No department")}</span>
-                        <small>${escapeHtml((state.assignment.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <button class="secondary-button full-width" type="button" data-action="project-membership-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project team</button>
-                <button class="secondary-button full-width" type="button" data-action="project-membership-history" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project team history</button>
-                ${state.projectMembershipManifest ? renderProjectMembershipManifest(state.projectMembershipManifest) : ""}
-                ${state.projectMembershipHistory && state.projectMembershipHistory.projectId === project.id ? renderProjectMembershipHistory(state.projectMembershipHistory) : ""}
+                <details class="advanced-disclosure team-history-disclosure">
+                  <summary>${icon("people")} <span>Team history</span> ${icon("chevron")}</summary>
+                  <div class="advanced-disclosure-body permission-review-actions">
+                    <button class="secondary-button" type="button" data-action="project-membership-manifest" ${!canCreateInvite ? "disabled" : ""}>Current assignments</button>
+                    <button class="secondary-button" type="button" data-action="project-membership-history" ${!canCreateInvite ? "disabled" : ""}>Assignment history</button>
+                    ${state.projectMembershipManifest ? renderProjectMembershipManifest(state.projectMembershipManifest) : ""}
+                    ${state.projectMembershipHistory && state.projectMembershipHistory.projectId === project.id ? renderProjectMembershipHistory(state.projectMembershipHistory) : ""}
+                  </div>
+                </details>
               </section>
               </div>
               <div class="inspector-view-panel" ${inspectorViewPanelAttributes("ownership")}>
@@ -7538,12 +8053,24 @@ function renderInspector(project: FilmProject): string {
               <div class="inspector-view-panel" ${inspectorViewPanelAttributes("changes")}>
               <section class="inspector-section inspector-section-first">
                 <div class="section-head row"><h3>Change requests</h3></div>
-                <h4 class="inspector-subheading">Record changes</h4>
+                <p class="inspector-intro">Move one controlled change from draft through approval and application.</p>
+                <div class="segmented-control change-kind-control" aria-label="Change request type">
+                  <button type="button" data-change-request-kind="record" class="${state.ui.changeRequestKind === "record" ? "is-active" : ""}">Record</button>
+                  <button type="button" data-change-request-kind="profile" class="${state.ui.changeRequestKind === "profile" ? "is-active" : ""}">Film profile</button>
+                </div>
+                <div class="change-kind-panel" data-change-kind-panel="record" ${state.ui.changeRequestKind === "record" ? "" : "hidden"}>
+                <div class="workflow-stack">
+                <details class="workflow-stage ${workflowStageClass(0, recordWorkflowStep)}" ${recordWorkflowStep === 0 ? "open" : ""}>
+                  <summary>${renderWorkflowStageSummary(0, "Draft", "Choose the change and request review", recordWorkflowStep)}</summary>
+                  <div class="workflow-stage-body">
                 <form class="invite-form mutation-form" data-action="record-mutation-preflight">
-                  <select name="mutation" ${isCheckingMutation ? "disabled" : ""}>
-                    <option value="update" ${state.recordMutation.mutation === "update" ? "selected" : ""}>Update access</option>
-                    <option value="delete" ${state.recordMutation.mutation === "delete" ? "selected" : ""}>Delete access</option>
-                  </select>
+                  <label class="inspector-form-field">
+                    <span>Change type</span>
+                    <select name="mutation" ${isCheckingMutation ? "disabled" : ""}>
+                      <option value="update" ${state.recordMutation.mutation === "update" ? "selected" : ""}>Update access</option>
+                      <option value="delete" ${state.recordMutation.mutation === "delete" ? "selected" : ""}>Delete access</option>
+                    </select>
+                  </label>
                   <button type="submit" ${!canCreateInvite || !ownerTransferTarget || isCheckingMutation ? "disabled" : ""}>${isCheckingMutation ? "Checking..." : "Check mutation access"}</button>
                 </form>
 	                ${
@@ -7557,14 +8084,17 @@ function renderInspector(project: FilmProject): string {
 	                }
 	                <form class="invite-form mutation-request-form" data-action="record-mutation-request">
 	                  ${renderRecordMutationFieldSelector(ownerTransferTarget?.entityType ?? state.ownerTransfer.entityType, state.recordMutation.mutation, isRequestingMutation)}
-	                  <input
-	                    name="summary"
-	                    value=""
-	                    placeholder="Mutation request summary"
-	                    autocomplete="off"
-	                    maxlength="500"
-	                    ${isRequestingMutation ? "disabled" : ""}
-	                  />
+	                  <label class="inspector-form-field">
+	                    <span>Review summary</span>
+	                    <input
+	                      name="summary"
+	                      value=""
+	                      placeholder="What should the reviewer know?"
+	                      autocomplete="off"
+	                      maxlength="500"
+	                      ${isRequestingMutation ? "disabled" : ""}
+	                    />
+	                  </label>
 	                  <button type="submit" ${!canCreateInvite || !ownerTransferTarget || isRequestingMutation ? "disabled" : ""}>${isRequestingMutation ? "Requesting..." : "Request mutation review"}</button>
 	                </form>
 	                ${
@@ -7573,35 +8103,40 @@ function renderInspector(project: FilmProject): string {
 	                    && ownerTransferTarget
 	                    && state.recordMutationRequest.request.entityId === ownerTransferTarget.entityId
 	                    && state.recordMutationRequest.request.entityType === ownerTransferTarget.entityType
-	                    ? renderRecordMutationRequest(state.recordMutationRequest)
-	                    : ""
-	                }
-	                <button class="secondary-button full-width" type="button" data-action="record-mutation-request-manifest" ${!canCreateInvite || !ownerTransferTarget || isRequestingMutation ? "disabled" : ""}>${icon("people")} Review mutation requests</button>
+		                    ? renderRecordMutationRequest(state.recordMutationRequest)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(1, recordWorkflowStep)}" ${recordWorkflowStep === 1 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(1, "Review", "Approve or reject the pending request", recordWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <button class="secondary-button full-width" type="button" data-action="record-mutation-request-manifest" ${!canCreateInvite || !ownerTransferTarget || isRequestingMutation ? "disabled" : ""}>${icon("people")} Review mutation requests</button>
 	                ${
 	                  mutationManifestMatchesTarget && state.recordMutationRequestManifest
 	                    ? renderRecordMutationRequestManifest(state.recordMutationRequestManifest)
 	                    : ""
 	                }
 	                <form class="invite-form mutation-resolution-form" data-action="record-mutation-resolve">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(pendingMutationRequestId)}"
-	                    placeholder="Request ID"
-	                    autocomplete="off"
-	                    ${isResolvingMutation ? "disabled" : ""}
-	                  />
-	                  <select name="decision" ${isResolvingMutation ? "disabled" : ""}>
-	                    <option value="approve">Approve</option>
-	                    <option value="reject">Reject</option>
-	                  </select>
-	                  <input
-	                    name="note"
-	                    value=""
-	                    placeholder="Resolution note"
-	                    autocomplete="off"
-	                    maxlength="500"
-	                    ${isResolvingMutation ? "disabled" : ""}
-	                  />
+	                  ${renderWorkflowRequestId(pendingMutationRequestId)}
+	                  <label class="inspector-form-field">
+	                    <span>Decision</span>
+	                    <select name="decision" ${isResolvingMutation ? "disabled" : ""}>
+	                      <option value="approve">Approve</option>
+	                      <option value="reject">Reject</option>
+	                    </select>
+	                  </label>
+	                  <label class="inspector-form-field">
+	                    <span>Review note</span>
+	                    <input
+	                      name="note"
+	                      value=""
+	                      placeholder="Reason or context"
+	                      autocomplete="off"
+	                      maxlength="500"
+	                      ${isResolvingMutation ? "disabled" : ""}
+	                    />
+	                  </label>
 	                  <button type="submit" ${!canCreateInvite || !ownerTransferTarget || !pendingMutationRequestId || isResolvingMutation ? "disabled" : ""}>${isResolvingMutation ? "Resolving..." : "Resolve mutation"}</button>
 	                </form>
 	                ${
@@ -7610,17 +8145,16 @@ function renderInspector(project: FilmProject): string {
 	                    && ownerTransferTarget
 	                    && state.recordMutationResolution.request.entityId === ownerTransferTarget.entityId
 	                    && state.recordMutationResolution.request.entityType === ownerTransferTarget.entityType
-	                    ? renderRecordMutationResolution(state.recordMutationResolution)
-	                    : ""
-	                }
-	                <form class="invite-form mutation-diff-form" data-action="record-mutation-diff-preview">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(approvedMutationRequestId)}"
-	                    placeholder="Approved request ID"
-	                    autocomplete="off"
-	                    ${isPreviewingMutationDiff ? "disabled" : ""}
-	                  />
+		                    ? renderRecordMutationResolution(state.recordMutationResolution)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(2, recordWorkflowStep)}" ${recordWorkflowStep === 2 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(2, "Preview", "Confirm exactly what will change", recordWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <form class="invite-form mutation-diff-form" data-action="record-mutation-diff-preview">
+	                  ${renderWorkflowRequestId(approvedMutationRequestId)}
 	                  ${renderRecordMutationUpdateControls(approvedMutationRequest, isPreviewingMutationDiff, project)}
 	                  <button type="submit" ${!canCreateInvite || !ownerTransferTarget || !approvedMutationRequestId || isPreviewingMutationDiff ? "disabled" : ""}>${isPreviewingMutationDiff ? "Previewing..." : "Preview mutation diff"}</button>
 	                </form>
@@ -7630,17 +8164,16 @@ function renderInspector(project: FilmProject): string {
 	                    && ownerTransferTarget
 	                    && state.recordMutationDiff.request.entityId === ownerTransferTarget.entityId
 	                    && state.recordMutationDiff.request.entityType === ownerTransferTarget.entityType
-	                    ? renderRecordMutationDiffPreview(state.recordMutationDiff)
-	                    : ""
-	                }
-	                <form class="invite-form mutation-apply-form" data-action="record-mutation-apply">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(approvedMutationRequestId)}"
-	                    placeholder="Approved request ID"
-	                    autocomplete="off"
-	                    ${isApplyingMutation ? "disabled" : ""}
-	                  />
+		                    ? renderRecordMutationDiffPreview(state.recordMutationDiff)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(3, recordWorkflowStep)}" ${recordWorkflowStep === 3 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(3, "Apply", "Commit the approved change", recordWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <form class="invite-form mutation-apply-form" data-action="record-mutation-apply">
+	                  ${renderWorkflowRequestId(approvedMutationRequestId)}
 	                  ${renderRecordMutationUpdateControls(approvedMutationRequest, isApplyingMutation, project)}
 	                  <button type="submit" ${!canCreateInvite || !ownerTransferTarget || !approvedMutationRequestId || isApplyingMutation ? "disabled" : ""}>${isApplyingMutation ? "Applying..." : "Apply mutation"}</button>
 	                </form>
@@ -7650,10 +8183,22 @@ function renderInspector(project: FilmProject): string {
 	                    && ownerTransferTarget
 	                    && state.recordMutationApply.request.entityId === ownerTransferTarget.entityId
 	                    && state.recordMutationApply.request.entityType === ownerTransferTarget.entityType
-	                    ? renderRecordMutationApply(state.recordMutationApply)
-	                    : ""
-	                }
-	                <form class="invite-form mutation-audit-form" data-action="record-mutation-audit-manifest">
+		                    ? renderRecordMutationApply(state.recordMutationApply)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(4, recordWorkflowStep)}" ${recordWorkflowStep === 4 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(4, "Complete", "Review the result and recovery options", recordWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		            ${recordMutationApplied ? renderRecordMutationApply(state.recordMutationApply) : `<p class="workflow-prerequisite">Apply the approved request to complete this workflow.</p>`}
+		          </div>
+		        </details>
+		        </div>
+		        <details class="advanced-disclosure">
+		          <summary>${icon("settings")} <span>Audit and recovery</span> ${icon("chevron")}</summary>
+		          <div class="advanced-disclosure-body">
+		                <form class="invite-form mutation-audit-form" data-action="record-mutation-audit-manifest">
 	                  <input
 	                    name="requestId"
 	                    value="${escapeAttribute(mutationAuditRequestId)}"
@@ -7713,102 +8258,128 @@ function renderInspector(project: FilmProject): string {
 	                    && ownerTransferTarget
 	                    && state.recordMutationDeleteRecovery.sourceRequest.entityId === ownerTransferTarget.entityId
 	                    && state.recordMutationDeleteRecovery.sourceRequest.entityType === ownerTransferTarget.entityType
-	                    ? renderRecordMutationDeleteRecovery(state.recordMutationDeleteRecovery)
-	                    : ""
-	                }
-		                <h4 class="inspector-subheading">Film profile</h4>
-		                <form class="invite-form profile-mutation-request-form" data-action="film-profile-mutation-request">
+		                    ? renderRecordMutationDeleteRecovery(state.recordMutationDeleteRecovery)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        </div>
+		        <div class="change-kind-panel" data-change-kind-panel="profile" ${state.ui.changeRequestKind === "profile" ? "" : "hidden"}>
+		        <div class="workflow-stack">
+		        <details class="workflow-stage ${workflowStageClass(0, profileWorkflowStep)}" ${profileWorkflowStep === 0 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(0, "Draft", "Choose profile fields and request review", profileWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+			                <form class="invite-form profile-mutation-request-form" data-action="film-profile-mutation-request">
 	                  ${renderFilmProfileMutationFieldSelector(isRequestingProfileMutation)}
-	                  <input
-	                    name="summary"
-	                    value=""
-	                    placeholder="Profile mutation request summary"
-	                    autocomplete="off"
-	                    maxlength="500"
-	                    ${isRequestingProfileMutation ? "disabled" : ""}
-	                  />
+	                  <label class="inspector-form-field">
+	                    <span>Review summary</span>
+	                    <input
+	                      name="summary"
+	                      value=""
+	                      placeholder="What should the reviewer know?"
+	                      autocomplete="off"
+	                      maxlength="500"
+	                      ${isRequestingProfileMutation ? "disabled" : ""}
+	                    />
+	                  </label>
 	                  <button type="submit" ${!canCreateInvite || isRequestingProfileMutation ? "disabled" : ""}>${isRequestingProfileMutation ? "Requesting..." : "Request profile review"}</button>
 	                </form>
 	                ${
 	                  state.filmProfileMutationRequest.status === "requested"
 	                    && state.filmProfileMutationRequest.request?.projectId === project.id
-	                    ? renderFilmProfileMutationRequest(state.filmProfileMutationRequest)
-	                    : ""
-	                }
-	                <button class="secondary-button full-width" type="button" data-action="film-profile-mutation-request-manifest" ${!canCreateInvite || isRequestingProfileMutation ? "disabled" : ""}>${icon("people")} Review profile requests</button>
+		                    ? renderFilmProfileMutationRequest(state.filmProfileMutationRequest)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(1, profileWorkflowStep)}" ${profileWorkflowStep === 1 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(1, "Review", "Approve or reject the profile request", profileWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <button class="secondary-button full-width" type="button" data-action="film-profile-mutation-request-manifest" ${!canCreateInvite || isRequestingProfileMutation ? "disabled" : ""}>${icon("people")} Review profile requests</button>
 	                ${
 	                  profileMutationManifestMatchesProject && state.filmProfileMutationRequestManifest
 	                    ? renderFilmProfileMutationRequestManifest(state.filmProfileMutationRequestManifest)
 	                    : ""
 	                }
 	                <form class="invite-form profile-mutation-resolution-form" data-action="film-profile-mutation-resolve">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(pendingProfileMutationRequestId)}"
-	                    placeholder="Profile request ID"
-	                    autocomplete="off"
-	                    ${isResolvingProfileMutation ? "disabled" : ""}
-	                  />
-	                  <select name="decision" ${isResolvingProfileMutation ? "disabled" : ""}>
-	                    <option value="approve">Approve</option>
-	                    <option value="reject">Reject</option>
-	                  </select>
-	                  <input
-	                    name="note"
-	                    value=""
-	                    placeholder="Profile resolution note"
-	                    autocomplete="off"
-	                    maxlength="500"
-	                    ${isResolvingProfileMutation ? "disabled" : ""}
-	                  />
+	                  ${renderWorkflowRequestId(pendingProfileMutationRequestId)}
+	                  <label class="inspector-form-field">
+	                    <span>Decision</span>
+	                    <select name="decision" ${isResolvingProfileMutation ? "disabled" : ""}>
+	                      <option value="approve">Approve</option>
+	                      <option value="reject">Reject</option>
+	                    </select>
+	                  </label>
+	                  <label class="inspector-form-field">
+	                    <span>Review note</span>
+	                    <input
+	                      name="note"
+	                      value=""
+	                      placeholder="Reason or context"
+	                      autocomplete="off"
+	                      maxlength="500"
+	                      ${isResolvingProfileMutation ? "disabled" : ""}
+	                    />
+	                  </label>
 	                  <button type="submit" ${!canCreateInvite || !pendingProfileMutationRequestId || isResolvingProfileMutation ? "disabled" : ""}>${isResolvingProfileMutation ? "Resolving..." : "Resolve profile mutation"}</button>
 	                </form>
 	                ${
 	                  state.filmProfileMutationResolution.status === "resolved"
 	                    && state.filmProfileMutationResolution.request?.projectId === project.id
-	                    ? renderFilmProfileMutationResolution(state.filmProfileMutationResolution)
-	                    : ""
-	                }
-	                <form class="invite-form profile-mutation-diff-form" data-action="film-profile-mutation-diff-preview">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(approvedProfileMutationRequestId)}"
-	                    placeholder="Approved profile request ID"
-	                    autocomplete="off"
-	                    ${isPreviewingProfileMutationDiff ? "disabled" : ""}
-	                  />
+		                    ? renderFilmProfileMutationResolution(state.filmProfileMutationResolution)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(2, profileWorkflowStep)}" ${profileWorkflowStep === 2 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(2, "Preview", "Confirm profile field changes", profileWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <form class="invite-form profile-mutation-diff-form" data-action="film-profile-mutation-diff-preview">
+	                  ${renderWorkflowRequestId(approvedProfileMutationRequestId)}
 	                  ${renderFilmProfileMutationUpdateControls(approvedProfileMutationRequest, isPreviewingProfileMutationDiff, project)}
 	                  <button type="submit" ${!canCreateInvite || !approvedProfileMutationRequestId || isPreviewingProfileMutationDiff ? "disabled" : ""}>${isPreviewingProfileMutationDiff ? "Previewing..." : "Preview profile diff"}</button>
 	                </form>
 	                ${
 	                  state.filmProfileMutationDiff.status === "previewed"
 	                    && state.filmProfileMutationDiff.request?.projectId === project.id
-	                    ? renderFilmProfileMutationDiffPreview(state.filmProfileMutationDiff)
-	                    : ""
-	                }
-	                <form class="invite-form profile-mutation-apply-form" data-action="film-profile-mutation-apply">
-	                  <input
-	                    name="requestId"
-	                    value="${escapeAttribute(approvedProfileMutationRequestId)}"
-	                    placeholder="Approved profile request ID"
-	                    autocomplete="off"
-	                    ${isApplyingProfileMutation ? "disabled" : ""}
-	                  />
+		                    ? renderFilmProfileMutationDiffPreview(state.filmProfileMutationDiff)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(3, profileWorkflowStep)}" ${profileWorkflowStep === 3 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(3, "Apply", "Commit the approved profile update", profileWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		                <form class="invite-form profile-mutation-apply-form" data-action="film-profile-mutation-apply">
+	                  ${renderWorkflowRequestId(approvedProfileMutationRequestId)}
 	                  ${renderFilmProfileMutationUpdateControls(approvedProfileMutationRequest, isApplyingProfileMutation, project)}
 	                  <button type="submit" ${!canCreateInvite || !approvedProfileMutationRequestId || isApplyingProfileMutation ? "disabled" : ""}>${isApplyingProfileMutation ? "Applying..." : "Apply profile mutation"}</button>
 	                </form>
 	                ${
 		                  state.filmProfileMutationApply.status === "applied"
 		                    && state.filmProfileMutationApply.request?.projectId === project.id
-		                    ? renderFilmProfileMutationApply(state.filmProfileMutationApply)
-		                    : ""
-		                }
+			                    ? renderFilmProfileMutationApply(state.filmProfileMutationApply)
+			                    : ""
+			                }
+		          </div>
+		        </details>
+		        <details class="workflow-stage ${workflowStageClass(4, profileWorkflowStep)}" ${profileWorkflowStep === 4 ? "open" : ""}>
+		          <summary>${renderWorkflowStageSummary(4, "Complete", "Profile update and audit are available", profileWorkflowStep)}</summary>
+		          <div class="workflow-stage-body">
+		            ${profileMutationApplied ? renderFilmProfileMutationApply(state.filmProfileMutationApply) : `<p class="workflow-prerequisite">Apply the approved profile request to complete this workflow.</p>`}
+		          </div>
+		        </details>
+		        </div>
+		        </div>
               </section>
               </div>
               <div class="inspector-view-panel" ${inspectorViewPanelAttributes("permissions")}>
               <section class="inspector-section inspector-section-first">
                 <div class="section-head row"><h3>Permissions</h3></div>
-		        <h4 class="inspector-subheading">Comments</h4>
+		        <p class="inspector-intro">Grant access to one scope at a time. Comments and invitations remain available as secondary tools.</p>
+		        <details class="advanced-disclosure">
+		          <summary>${icon("people")} <span>Comments</span> ${icon("chevron")}</summary>
+		          <div class="advanced-disclosure-body">
 		        <form class="invite-form comment-form" data-action="record-comment-create">
                   <select name="entityType" ${isCreatingComment ? "disabled" : ""}>
                     ${RECORD_COMMENT_ENTITY_TYPES.map((entityType) => {
@@ -7847,154 +8418,14 @@ function renderInspector(project: FilmProject): string {
                     && commentTarget
                     && state.recordCommentManifest.target.entityId === commentTarget.entityId
                     && state.recordCommentManifest.target.entityType === commentTarget.entityType
-                    ? renderRecordCommentManifest(state.recordCommentManifest)
-                    : ""
-                }
-                <h4 class="inspector-subheading">Project access</h4>
-                <form class="invite-form permission-form" data-action="record-permission-assign">
-                  <select name="memberId" ${isAssigningPermission ? "disabled" : ""}>
-                    ${activeMembers.map((member) => `
-                      <option value="${escapeAttribute(member.id)}" ${permissionMemberId === member.id ? "selected" : ""}>${escapeHtml(member.displayName)}</option>
-                    `).join("")}
-                  </select>
-                  <select name="permission" ${isAssigningPermission ? "disabled" : ""}>
-                    ${RECORD_PERMISSION_LEVELS.map((permission) => `
-                      <option value="${permission}" ${state.projectPermission.permission === permission ? "selected" : ""}>${escapeHtml(formatRecordPermissionLevel(permission))}</option>
-                    `).join("")}
-                  </select>
-                  <input
-                    name="department"
-                    value="${escapeAttribute(state.projectPermission.department)}"
-                    placeholder="Dept scope"
-                    autocomplete="off"
-                    ${isAssigningPermission ? "disabled" : ""}
-                  />
-                  <input
-                    name="expiresAt"
-                    type="date"
-                    value="${escapeAttribute(state.projectPermission.expiresAt)}"
-                    ${isAssigningPermission ? "disabled" : ""}
-                  />
-                  <button type="submit" ${!canCreateInvite || !permissionMemberId || isAssigningPermission ? "disabled" : ""}>${isAssigningPermission ? "Granting..." : "Grant project permission"}</button>
-                </form>
-                ${
-                  state.projectPermission.status === "assigned"
-                    && state.projectPermission.assignedProjectId === project.id
-                    && state.projectPermission.assignedPermission
-                    ? `
-                      <div class="invite-preview" role="status">
-                        <strong>Project permission saved</strong>
-                        <span>${escapeHtml(formatRecordPermissionLevel(state.projectPermission.assignedPermission))} - ${escapeHtml(state.projectPermission.department || "No department")}</span>
-                        <small>${escapeHtml((state.projectPermission.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${state.projectPermission.expiresAt ? ` - expires ${escapeHtml(state.projectPermission.expiresAt)}` : ""}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <button class="secondary-button full-width" type="button" data-action="project-permission-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="project-permission-expired-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review expired project permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="project-permission-history" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review project permission history</button>
-                <h4 class="inspector-subheading">Task access</h4>
-                <div class="permission-target">
-                  <span>Selected task</span>
-                  <strong>${selectedTask ? escapeHtml(selectedTask.title) : "No open task"}</strong>
-                </div>
-                <form class="invite-form permission-form" data-action="task-permission-assign">
-                  <select name="taskId" ${isAssigningTaskPermission ? "disabled" : ""}>
-                    ${project.openTasks.map((task) => `
-                      <option value="${escapeAttribute(task.id)}" ${selectedTask?.id === task.id ? "selected" : ""}>${escapeHtml(task.title)}</option>
-                    `).join("")}
-                  </select>
-                  <select name="memberId" ${isAssigningTaskPermission ? "disabled" : ""}>
-                    ${activeMembers.map((member) => `
-                      <option value="${escapeAttribute(member.id)}" ${taskPermissionMemberId === member.id ? "selected" : ""}>${escapeHtml(member.displayName)}</option>
-                    `).join("")}
-                  </select>
-                  <select name="permission" ${isAssigningTaskPermission ? "disabled" : ""}>
-                    ${RECORD_PERMISSION_LEVELS.map((permission) => `
-                      <option value="${permission}" ${state.taskPermission.permission === permission ? "selected" : ""}>${escapeHtml(formatRecordPermissionLevel(permission))}</option>
-                    `).join("")}
-                  </select>
-                  <input
-                    name="department"
-                    value="${escapeAttribute(state.taskPermission.department)}"
-                    placeholder="Dept scope"
-                    autocomplete="off"
-                    ${isAssigningTaskPermission ? "disabled" : ""}
-                  />
-                  <input
-                    name="expiresAt"
-                    type="date"
-                    value="${escapeAttribute(state.taskPermission.expiresAt)}"
-                    ${isAssigningTaskPermission ? "disabled" : ""}
-                  />
-                  <button type="submit" ${!canCreateInvite || !selectedTask || !taskPermissionMemberId || isAssigningTaskPermission ? "disabled" : ""}>${isAssigningTaskPermission ? "Granting..." : "Grant task permission"}</button>
-                </form>
-                ${
-                  state.taskPermission.status === "assigned"
-                    && state.taskPermission.assignedProjectId === project.id
-                    && state.taskPermission.assignedTaskId === selectedTask?.id
-                    && state.taskPermission.assignedPermission
-                    ? `
-                      <div class="invite-preview" role="status">
-                        <strong>Task permission saved</strong>
-                        <span>${escapeHtml(formatRecordPermissionLevel(state.taskPermission.assignedPermission))} - ${escapeHtml(state.taskPermission.department || "No department")}</span>
-                        <small>${escapeHtml((state.taskPermission.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${state.taskPermission.expiresAt ? ` - expires ${escapeHtml(state.taskPermission.expiresAt)}` : ""}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <button class="secondary-button full-width" type="button" data-action="task-permission-manifest" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review task permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="task-permission-expired-manifest" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review expired task permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="task-permission-history" ${!canCreateInvite || !selectedTask ? "disabled" : ""}>${icon("people")} Review task permission history</button>
-                <h4 class="inspector-subheading">Document access</h4>
-                <div class="permission-target">
-                  <span>Selected document</span>
-                  <strong>${selectedDocument ? escapeHtml(selectedDocument.name) : "No document"}</strong>
-                </div>
-                <form class="invite-form permission-form" data-action="document-permission-assign">
-                  <select name="memberId" ${isAssigningDocumentPermission ? "disabled" : ""}>
-                    ${activeMembers.map((member) => `
-                      <option value="${escapeAttribute(member.id)}" ${documentPermissionMemberId === member.id ? "selected" : ""}>${escapeHtml(member.displayName)}</option>
-                    `).join("")}
-                  </select>
-                  <select name="permission" ${isAssigningDocumentPermission ? "disabled" : ""}>
-                    ${RECORD_PERMISSION_LEVELS.map((permission) => `
-                      <option value="${permission}" ${state.documentPermission.permission === permission ? "selected" : ""}>${escapeHtml(formatRecordPermissionLevel(permission))}</option>
-                    `).join("")}
-                  </select>
-                  <input
-                    name="department"
-                    value="${escapeAttribute(state.documentPermission.department)}"
-                    placeholder="Dept scope"
-                    autocomplete="off"
-                    ${isAssigningDocumentPermission ? "disabled" : ""}
-                  />
-                  <input
-                    name="expiresAt"
-                    type="date"
-                    value="${escapeAttribute(state.documentPermission.expiresAt)}"
-                    ${isAssigningDocumentPermission ? "disabled" : ""}
-                  />
-                  <button type="submit" ${!canCreateInvite || !selectedDocument || !documentPermissionMemberId || isAssigningDocumentPermission ? "disabled" : ""}>${isAssigningDocumentPermission ? "Granting..." : "Grant document permission"}</button>
-                </form>
-                ${
-                  state.documentPermission.status === "assigned"
-                    && state.documentPermission.assignedProjectId === project.id
-                    && state.documentPermission.assignedDocumentId === selectedDocument?.id
-                    && state.documentPermission.assignedPermission
-                    ? `
-                      <div class="invite-preview" role="status">
-                        <strong>Document permission saved</strong>
-                        <span>${escapeHtml(formatRecordPermissionLevel(state.documentPermission.assignedPermission))} - ${escapeHtml(state.documentPermission.department || "No department")}</span>
-                        <small>${escapeHtml((state.documentPermission.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${state.documentPermission.expiresAt ? ` - expires ${escapeHtml(state.documentPermission.expiresAt)}` : ""}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <button class="secondary-button full-width" type="button" data-action="document-permission-manifest" ${!canCreateInvite || !selectedDocument ? "disabled" : ""}>${icon("people")} Review document permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="document-permission-expired-manifest" ${!canCreateInvite || !selectedDocument ? "disabled" : ""}>${icon("people")} Review expired document permissions</button>
-                <button class="secondary-button full-width" type="button" data-action="document-permission-history" ${!canCreateInvite || !selectedDocument ? "disabled" : ""}>${icon("people")} Review document permission history</button>
-                ${state.recordPermissionManifest ? renderRecordPermissionManifest(state.recordPermissionManifest) : ""}
+		                    ? renderRecordCommentManifest(state.recordCommentManifest)
+		                    : ""
+		                }
+		          </div>
+		        </details>
+		        <h4 class="inspector-subheading">Grant access</h4>
+		        ${renderPermissionAssignment(project, activeMembers, canCreateInvite)}
+		                ${state.recordPermissionManifest ? renderRecordPermissionManifest(state.recordPermissionManifest) : ""}
                 ${
                   state.recordPermissionHistory
                     && (
@@ -8005,8 +8436,10 @@ function renderInspector(project: FilmProject): string {
                     ? renderRecordPermissionHistory(state.recordPermissionHistory)
                     : ""
                 }
-                <h4 class="inspector-subheading">Invitations</h4>
-                <button class="secondary-button full-width" type="button" data-action="invite-delivery-readiness">${icon("provider")} Check invite delivery</button>
+		        <details class="advanced-disclosure">
+		          <summary>${icon("people")} <span>Invitations</span> ${icon("chevron")}</summary>
+		          <div class="advanced-disclosure-body">
+		                <button class="secondary-button full-width" type="button" data-action="invite-delivery-readiness">${icon("provider")} Check invite delivery</button>
                 ${state.inviteDelivery ? renderInviteDeliveryReadiness(state.inviteDelivery) : ""}
                 <button class="secondary-button full-width" type="button" data-action="invite-manifest" ${!canCreateInvite ? "disabled" : ""}>${icon("people")} Review pending invites</button>
                 ${state.inviteManifest ? renderInviteManifest(state.inviteManifest) : ""}
@@ -8030,7 +8463,7 @@ function renderInspector(project: FilmProject): string {
                 </form>
                 ${
                   state.invite.status === "created"
-                    ? `
+		                    ? `
                       <div class="invite-preview" role="status">
                         <strong>${state.invite.devOnlyToken ? "Invite token ready" : "Invite delivery ready"}</strong>
                         <span>${escapeHtml(formatWorkspaceRole(state.invite.role))} - ${escapeHtml(shortHash(state.invite.emailHash))}</span>
@@ -8042,358 +8475,44 @@ function renderInspector(project: FilmProject): string {
                         <small>${escapeHtml((state.invite.persistence ?? "dry_run_memoryless").replaceAll("_", " "))}${state.invite.deliveryPersistence ? ` - ${escapeHtml(state.invite.deliveryPersistence.replaceAll("_", " "))}` : ""}</small>
                       </div>
                     `
-                    : ""
-                }
+		                    : ""
+		                }
+		          </div>
+		        </details>
               </section>
               </div>
-              <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("backups")}>
-                <div class="section-head row"><h3>Backups</h3><button type="button" data-action="view-dry-run">View all</button></div>
-                <dl class="detail-list compact">
-                  <div><dt>Latest backup</dt><dd>${escapeHtml(latestBackup?.label ?? "None")}</dd></div>
-                  <div><dt>Next backup</dt><dd>${escapeHtml(state.workspace.nextBackup)}</dd></div>
-                  <div><dt>Auto backup</dt><dd>${escapeHtml(state.workspace.backupPolicy)}</dd></div>
-                  <div><dt>Local ops</dt><dd>${countQueuedOperations(state.operations)} queued</dd></div>
-                </dl>
-                ${
-                  state.backupDryRun
-                    ? `
-                      <div class="provider-preview" role="status">
-                        <strong>Worker restore point</strong>
-                        <span>${escapeHtml(state.backupDryRun.persistence.replaceAll("_", " "))}</span>
-                        ${
-                          state.backupDryRun.storagePersistence
-                            ? `<span>${escapeHtml(state.backupDryRun.storagePersistence.replaceAll("_", " "))}${state.backupDryRun.sizeBytes ? ` - ${formatBytes(state.backupDryRun.sizeBytes)}` : ""}</span>`
-                            : ""
-                        }
-                        <span>${escapeHtml(state.backupDryRun.retentionPolicy.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.backupDryRun.restorePointLabel)}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.backupExport
-                    ? `
-                      <div class="provider-preview" role="status">
-                        <strong>Stored backup manifest</strong>
-                        <span>${state.backupExport.rowCount} stored restore points - ${state.backupExport.truncated ? "truncated" : "complete"}</span>
-                        <small>${escapeHtml(state.backupExport.persistence.replaceAll("_", " "))}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <label class="restore-row">
-                  <span>Restore point</span>
-                  <select data-action="restore-select">
-                    ${state.workspace.restorePoints
-                      .map((point) => `<option value="${point.id}">${escapeHtml(point.label)}</option>`)
-                      .join("")}
-                  </select>
-                  <button type="button" data-action="restore">Restore</button>
-                </label>
-                <button class="secondary-button full-width" type="button" data-action="backup-r2-manifest">${icon("backup")} Stored backups</button>
-                <button class="secondary-button full-width" type="button" data-action="backup-r2-preview">${icon("backup")} Preview stored backup</button>
-                <button class="secondary-button full-width" type="button" data-action="restore-file-preview">${icon("backup")} Preview encrypted backup</button>
-                ${
-                  state.restorePreview
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-gate-check">${icon("check")} Check restore gate</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreGate
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-approval-record">${icon("check")} Record approval</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreApproval?.approvalId && state.restoreApproval.approvalStatus === "approved_pending_commit"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-commit-storage-check">${icon("check")} Check commit storage</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreCommitAttempt?.commitAttemptId && state.restoreCommitAttempt.commitAttemptStatus === "blocked_until_restore_apply"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-preflight-check">${icon("check")} Check application preflight</button>`
-                    : ""
-                }
-                ${
-                  state.restoreSnapshot
-                    && state.restorePreview
-                    && state.restoreApplicationPreflight?.applicationPreflightId
-                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-commit">${icon("check")} Apply snapshot records</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview?.applicationPlan.attachmentPackagePlan.packageRequired
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-check">${icon("check")} Check attachment package</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
-                    && state.attachmentExport?.packageDownload?.sha256
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-verify">${icon("check")} Verify package manifest</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
-                    && !state.attachmentExport?.packageDownload
-                    ? `<small class="restore-action-note">Download package in Imports before package verification.</small>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackageVerification?.attachmentPackageVerificationId
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-plan">${icon("check")} Plan attachment object restore</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectPlan?.attachmentObjectPlanId
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit-preflight">${icon("check")} Check attachment commit preflight</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommitPreflight?.readyForByteCommit
-                    && state.restoreAttachmentObjectCommitPreflight.attachmentObjectCommitPreflightId
-                    && state.attachmentExport?.packageDownload?.blob
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit">${icon("backup")} Restore attachment bytes</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restorePlanningRecords.length > 0
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-check">${icon("check")} Check planning restore</button>`
-                    : ""
-                }
-                ${
-                  state.restorePlanningRecords.length > 0
-                    && state.restorePlanningDryRun?.planningPreviewId
-                    && state.restorePlanningDryRun.planningPreviewStatus === "preview_only"
-                    && state.restorePlanningDryRun.rejectedCount === 0
-                    && state.restoreApplicationPreflight?.applicationPreflightId
-                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-commit">${icon("check")} Apply planning rows</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview
-                    ? renderRestorePreview(state.restorePreview)
-                    : ""
-                }
-                ${
-                  state.restorePlanningDryRun
-                    ? renderRestorePlanningDryRun(state.restorePlanningDryRun, state.restorePlanningRecords)
-                    : ""
-                }
-                ${
-                  state.restorePlanningCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Planning commit</strong>
-                        <span>${escapeHtml(state.restorePlanningCommit.planningCommitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restorePlanningCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restorePlanningCommit.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${escapeHtml(formatRestorePlanningCommitSummary(state.restorePlanningCommit.result))}</span>
-                        <small>${escapeHtml(state.restorePlanningCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restorePlanningCommit.planningCommitPersistence.replaceAll("_", " "))}${state.restorePlanningCommit.auditPersistence ? ` - ${escapeHtml(state.restorePlanningCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        <small>${escapeHtml(shortHash(state.restorePlanningCommit.planningCommitId))}</small>
-                        ${
-                          state.restorePlanningCommit.unsupportedRestoreDomains.length
-                            ? `<small>Still blocked: ${escapeHtml(state.restorePlanningCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Attachment package preflight</strong>
-                        <span>${state.restoreAttachmentPackagePreflight.metadataRecordCount} metadata records - ${formatBytes(state.restoreAttachmentPackagePreflight.totalSourceBytes)}</span>
-                        <span>${state.restoreAttachmentPackagePreflight.canRestoreBytes ? "Byte restore ready" : "Byte restore blocked"} - ${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightStatus.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightPersistence.replaceAll("_", " "))}${state.restoreAttachmentPackagePreflight.auditPersistence ? ` - ${escapeHtml(state.restoreAttachmentPackagePreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId
-                            ? `<small>${escapeHtml(shortHash(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreAttachmentPackagePreflight.blockers.length
-                            ? `<small>${escapeHtml(state.restoreAttachmentPackagePreflight.blockers.slice(0, 2).join(" "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackageVerification
-                    ? renderRestoreAttachmentPackageVerification(state.restoreAttachmentPackageVerification)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectPlan
-                    ? renderRestoreAttachmentObjectPlan(state.restoreAttachmentObjectPlan)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommitPreflight
-                    ? renderRestoreAttachmentObjectCommitPreflight(state.restoreAttachmentObjectCommitPreflight)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Attachment byte restore</strong>
-                        <span>${state.restoreAttachmentObjectCommit.committedCount} stored - ${state.restoreAttachmentObjectCommit.idempotentCount} idempotent - ${state.restoreAttachmentObjectCommit.failedCount} failed</span>
-                        <span>${formatBytes(state.restoreAttachmentObjectCommit.totalBytes)} committed through verified package objects</span>
-                        <small>New R2 objects only - destructive writes audited</small>
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreGate
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Restore gate</strong>
-                        <span>${escapeHtml(state.restoreGate.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreGate.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${state.restoreGate.preRestoreBackupRequired ? "pre-restore backup required" : "pre-restore backup not required"}</span>
-                        <span>Pre-restore backup: ${state.restoreGate.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreGate.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreGate.authorizationPolicy.replaceAll("_", " "))}${state.restoreGate.auditPersistence ? ` - ${escapeHtml(state.restoreGate.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreGate.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreGate.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApproval
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Restore approval</strong>
-                        <span>${escapeHtml(state.restoreApproval.approvalStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApproval.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApproval.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreApproval.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApproval.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreApproval.approvalPersistence.replaceAll("_", " "))}${state.restoreApproval.auditPersistence ? ` - ${escapeHtml(state.restoreApproval.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreApproval.approvalId
-                            ? `<small>${escapeHtml(shortHash(state.restoreApproval.approvalId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApproval.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreApproval.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApproval.approvalBlockers.length
-                            ? `<small>${escapeHtml(state.restoreApproval.approvalBlockers.join(" "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreCommitAttempt
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Commit storage</strong>
-                        <span>${escapeHtml(state.restoreCommitAttempt.commitAttemptStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreCommitAttempt.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreCommitAttempt.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreCommitAttempt.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreCommitAttempt.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreCommitAttempt.commitAttemptPersistence.replaceAll("_", " "))}${state.restoreCommitAttempt.auditPersistence ? ` - ${escapeHtml(state.restoreCommitAttempt.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreCommitAttempt.commitAttemptId
-                            ? `<small>${escapeHtml(shortHash(state.restoreCommitAttempt.commitAttemptId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreCommitAttempt.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreCommitAttempt.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApplicationPreflight
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Application preflight</strong>
-                        <span>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApplicationPreflight.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationPreflight.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreApplicationPreflight.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightPersistence.replaceAll("_", " "))}${state.restoreApplicationPreflight.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationPreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreApplicationPreflight.applicationPreflightId
-                            ? `<small>${escapeHtml(shortHash(state.restoreApplicationPreflight.applicationPreflightId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.blockers?.length
-                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.blockers.join(" "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply?.length
-                            ? `<small>Before apply: ${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan?.length
-                            ? `<small>Preflight table plan: ${state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan.length} tables</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreSnapshot && state.restorePreview
-                            ? renderRestoreSnapshotReviewTable(state.restoreSnapshot, state.restorePreview)
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApplicationCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Application commit</strong>
-                        <span>${escapeHtml(state.restoreApplicationCommit.applicationCommitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApplicationCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationCommit.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${escapeHtml(formatRestoreRecordSummary(state.restoreApplicationCommit.recordSummary))}</span>
-                        <small>${escapeHtml(state.restoreApplicationCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restoreApplicationCommit.applicationCommitPersistence.replaceAll("_", " "))}${state.restoreApplicationCommit.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        <small>${escapeHtml(shortHash(state.restoreApplicationCommit.applicationCommitId))}</small>
-                        ${
-                          state.restoreApplicationCommit.unsupportedRestoreDomains.length
-                            ? `<small>Still blocked: ${escapeHtml(state.restoreApplicationCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-              </section>
               <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
                 <div class="section-head row">
                   <h3>Integrations</h3>
                   <button type="button" data-action="provider-runtime-readiness">Runtime</button>
                 </div>
+                <div class="integration-picker" role="list" aria-label="Integration providers">
+                  ${INTEGRATION_DEFINITIONS.map((definition) => {
+                    const integration = state.workspace.integrations.find((item) => item.key === definition.key);
+                    const isSelected = state.providerPreview?.key === definition.key;
+                    return `
+                      <button
+                        class="integration-option ${isSelected ? "is-active" : ""}"
+                        type="button"
+                        role="listitem"
+                        data-integration="${definition.key}"
+                      >
+                        ${icon("provider")}
+                        <span>
+                          <strong>${escapeHtml(definition.label)}</strong>
+                          <small>${escapeHtml(integration?.mode ?? "dry-run")}</small>
+                        </span>
+                      </button>
+                    `;
+                  }).join("")}
+                </div>
                 ${state.providerRuntimeReadiness ? renderProviderRuntimeReadiness(state.providerRuntimeReadiness) : `<p class="empty-inline">Runtime gates not checked.</p>`}
               </section>
               <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("imports")}>
-                <div class="section-head row"><h3>Imports</h3><button type="button" data-action="view-dry-run">History</button></div>
+                <div class="section-head row"><h3>Imports</h3></div>
                 <div class="import-actions">
                   <button class="secondary-button full-width" type="button" data-action="notion-import-folder">${icon("folder")} Import folder</button>
                   <button class="secondary-button full-width" type="button" data-action="notion-import-zip">${icon("zip")} Import ZIP</button>
-                  <button class="secondary-button full-width" type="button" data-action="screenplay-import">${icon("doc")} Import screenplay</button>
                   ${
                     uploadableAttachmentCount > 0
                       ? `<button class="secondary-button full-width" type="button" data-action="attachments-store-r2">${icon("backup")} Store attachments</button>`
@@ -8517,7 +8636,7 @@ function renderInspector(project: FilmProject): string {
                 state.providerPreview
                   ? `
                     <section class="inspector-section inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
-                      <div class="section-head row"><h3>Provider</h3><button type="button" data-action="view-dry-run">Scopes</button></div>
+                      <div class="section-head row"><h3>${escapeHtml(state.providerPreview.label)}</h3><span class="section-kicker">Provider details</span></div>
                       <div class="provider-preview" role="status">
                         <strong>${escapeHtml(state.providerPreview.label)} dry run</strong>
                         <span>${escapeHtml(state.providerPreview.status.replaceAll("_", " "))}</span>
@@ -8667,6 +8786,15 @@ function bindEvents(): void {
     });
   });
 
+  root.querySelector<HTMLSelectElement>("[data-action='workspace-section-select']")?.addEventListener("change", (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement) || !isWorkspaceSection(select.value)) return;
+    state.ui.workspaceSection = select.value;
+    state.ui.toast = null;
+    persistUi();
+    render();
+  });
+
   root.querySelectorAll<HTMLElement>("[data-project-id]").forEach((element) => {
     element.addEventListener("click", () => {
       state.ui.selectedProjectId = element.dataset.projectId ?? state.ui.selectedProjectId;
@@ -8678,15 +8806,20 @@ function bindEvents(): void {
       state.ui.selectedProductionTalentId = null;
       state.ui.selectedProductionShotId = null;
       state.ui.productionShotSceneFilter = null;
+      state.ui.inspectorTab = "details";
+      state.ui.inspectorView = "overview";
       state.ui.toast = null;
       persistUi();
       render();
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
+  root.querySelectorAll<HTMLButtonElement>("[data-project-surface]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.ui.viewMode = button.dataset.view as ViewMode;
+      const surface = button.dataset.projectSurface;
+      if (surface !== "board" && surface !== "list") return;
+      state.ui.workspaceSection = "projects";
+      state.ui.viewMode = surface;
       persistUi();
       render();
     });
@@ -8708,6 +8841,39 @@ function bindEvents(): void {
     render();
   });
 
+  root.querySelectorAll<HTMLButtonElement>("[data-change-request-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const kind = button.dataset.changeRequestKind;
+      if (!isChangeRequestKind(kind)) return;
+      state.ui.changeRequestKind = kind;
+      persistUi();
+      render();
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-permission-scope]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const scope = button.dataset.permissionScope;
+      if (!isPermissionScope(scope)) return;
+      state.ui.permissionScope = scope;
+      persistUi();
+      render();
+    });
+  });
+
+  root.querySelector<HTMLSelectElement>("[data-action='permission-target']")?.addEventListener("change", (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    const form = select.closest<HTMLFormElement>("[data-permission-assignment-scope]");
+    const scope = form?.dataset.permissionAssignmentScope;
+    if (scope === "task") state.taskPermission.taskId = select.value;
+    if (scope === "document") state.ui.selectedDocId = select.value;
+    state.recordPermissionManifest = null;
+    state.recordPermissionHistory = null;
+    persistUi();
+    render();
+  });
+
   root.querySelector<HTMLInputElement>("[data-action='filter']")?.addEventListener("input", (event) => {
     const input = event.target as HTMLInputElement;
     const cursor = input.selectionStart ?? input.value.length;
@@ -8717,10 +8883,6 @@ function bindEvents(): void {
     const nextInput = root.querySelector<HTMLInputElement>("[data-action='filter']");
     nextInput?.focus();
     nextInput?.setSelectionRange(cursor, cursor);
-  });
-
-  root.querySelector<HTMLButtonElement>("[data-action='filter-focus']")?.addEventListener("click", () => {
-    root.querySelector<HTMLInputElement>("[data-action='filter']")?.focus();
   });
 
   root.querySelectorAll<HTMLButtonElement>("[data-action='backup']").forEach((button) => {
@@ -8863,12 +9025,12 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='production-report-csv-export']")?.addEventListener("click", () => {
     void exportSelectedProductionReportSceneCsv();
   });
-  root.querySelector<HTMLSelectElement>("[data-action='production-location-select']")?.addEventListener("change", (event) => {
-    const select = event.currentTarget;
-    if (!(select instanceof HTMLSelectElement)) return;
-    state.ui.selectedProductionLocationId = select.value;
-    persistUi();
-    render();
+  root.querySelectorAll<HTMLButtonElement>("[data-action='production-location-row-select']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedProductionLocationId = button.dataset.locationId ?? null;
+      persistUi();
+      render();
+    });
   });
   root.querySelector<HTMLFormElement>("form[data-action='production-location-create']")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -8883,13 +9045,6 @@ function bindEvents(): void {
   });
   root.querySelector<HTMLButtonElement>("[data-action='production-location-export']")?.addEventListener("click", () => {
     void exportSelectedProductionLocation();
-  });
-  root.querySelector<HTMLSelectElement>("[data-action='production-talent-select']")?.addEventListener("change", (event) => {
-    const select = event.currentTarget;
-    if (!(select instanceof HTMLSelectElement)) return;
-    state.ui.selectedProductionTalentId = select.value;
-    persistUi();
-    render();
   });
   root.querySelectorAll<HTMLButtonElement>("[data-action='production-talent-row-select']").forEach((button) => {
     button.addEventListener("click", () => {
@@ -9188,32 +9343,14 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='stripe-summary-fetch']")?.addEventListener("click", () => {
     void handleStripeSummaryFetch();
   });
-  root.querySelector<HTMLButtonElement>("[data-action='project-permission-manifest']")?.addEventListener("click", () => {
-    void previewRecordPermissionManifest("project");
+  root.querySelectorAll<HTMLButtonElement>("[data-action='permission-manifest']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.permissionMode === "expired" ? "expired" : "active";
+      void previewRecordPermissionManifest(state.ui.permissionScope, mode);
+    });
   });
-  root.querySelector<HTMLButtonElement>("[data-action='project-permission-expired-manifest']")?.addEventListener("click", () => {
-    void previewRecordPermissionManifest("project", "expired");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='project-permission-history']")?.addEventListener("click", () => {
-    void previewRecordPermissionHistory("project");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='document-permission-manifest']")?.addEventListener("click", () => {
-    void previewRecordPermissionManifest("document");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='document-permission-expired-manifest']")?.addEventListener("click", () => {
-    void previewRecordPermissionManifest("document", "expired");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='document-permission-history']")?.addEventListener("click", () => {
-    void previewRecordPermissionHistory("document");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='task-permission-manifest']")?.addEventListener("click", () => {
-    void previewTaskPermissionManifest();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='task-permission-expired-manifest']")?.addEventListener("click", () => {
-    void previewTaskPermissionManifest("expired");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='task-permission-history']")?.addEventListener("click", () => {
-    void previewRecordPermissionHistory("task");
+  root.querySelector<HTMLButtonElement>("[data-action='permission-history']")?.addEventListener("click", () => {
+    void previewRecordPermissionHistory(state.ui.permissionScope);
   });
   root.querySelector<HTMLButtonElement>("[data-action='notion-import-folder']")?.addEventListener("click", () => {
     void importNotionFolder();
@@ -9371,6 +9508,14 @@ function bindEvents(): void {
   root.querySelector<HTMLFormElement>("[data-action='auth-request']")?.addEventListener("submit", (event) => {
     void handleMagicLinkRequest(event);
   });
+  root.querySelectorAll<HTMLButtonElement>("[data-action='auth-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const disclosure = root.querySelector<HTMLDetailsElement>("details.auth-disclosure");
+      if (!disclosure) return;
+      disclosure.open = true;
+      disclosure.querySelector<HTMLInputElement>("input[name='email']")?.focus();
+    });
+  });
   root.querySelector<HTMLFormElement>("[data-action='invite-create']")?.addEventListener("submit", (event) => {
     void handleInviteCreate(event);
   });
@@ -9391,11 +9536,15 @@ function bindEvents(): void {
   root.querySelector<HTMLFormElement>("[data-action='invite-accept']")?.addEventListener("submit", (event) => {
     void handleInviteAccept(event);
   });
-  root.querySelector<HTMLFormElement>("[data-action='member-status-update']")?.addEventListener("submit", (event) => {
-    void handleMemberStatusUpdate(event);
+  root.querySelectorAll<HTMLFormElement>("[data-action='member-status-update']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      void handleMemberStatusUpdate(event);
+    });
   });
-  root.querySelector<HTMLFormElement>("[data-action='membership-assign']")?.addEventListener("submit", (event) => {
-    void handleProjectMembershipAssign(event);
+  root.querySelectorAll<HTMLFormElement>("[data-action='membership-assign']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      void handleProjectMembershipAssign(event);
+    });
   });
   root.querySelector<HTMLButtonElement>("[data-action='project-membership-manifest']")?.addEventListener("click", () => {
     void previewProjectMembershipManifest();
@@ -9414,85 +9563,14 @@ function bindEvents(): void {
   root.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
     if (select instanceof HTMLSelectElement && isOwnerTransferEntityType(select.value)) {
-      state.ownerTransfer = {
-        ...state.ownerTransfer,
-        entityType: select.value,
-        entityId: "",
-        status: "idle",
-        transferredEntityType: null,
-        transferredEntityId: null,
-        transferredTargetLabel: null,
-        ownerMemberId: null,
-        previousOwnerMemberId: null,
-      };
-      state.ownerManifest = null;
-      state.ownerHistory = null;
-      state.recordMutation = {
-        ...state.recordMutation,
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        mutationPolicy: null,
-        preflight: null,
-      };
-      state.recordMutationRequest = {
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        requestPolicy: null,
-        request: null,
-      };
-      state.recordMutationRequestManifest = null;
-      state.recordMutationResolution = emptyRecordMutationResolutionState();
-      state.recordMutationDiff = emptyRecordMutationDiffState();
-      state.recordMutationApply = emptyRecordMutationApplyState();
-      state.recordMutationAuditManifest = null;
-      state.recordMutationRollback = emptyRecordMutationRollbackState();
-      state.recordMutationDeleteRecovery = emptyRecordMutationDeleteRecoveryState();
+      resetOwnerTransferTarget({ entityType: select.value, entityId: "" });
       render();
     }
   });
   root.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
     if (select instanceof HTMLSelectElement) {
-      state.ownerTransfer = {
-        ...state.ownerTransfer,
-        entityId: select.value,
-        status: "idle",
-        transferredEntityType: null,
-        transferredEntityId: null,
-        transferredTargetLabel: null,
-        ownerMemberId: null,
-        previousOwnerMemberId: null,
-      };
-      state.ownerManifest = null;
-      state.ownerHistory = null;
-      state.recordMutation = {
-        ...state.recordMutation,
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        mutationPolicy: null,
-        preflight: null,
-      };
-      state.recordMutationRequest = {
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        requestPolicy: null,
-        request: null,
-      };
-      state.recordMutationRequestManifest = null;
-      state.recordMutationResolution = emptyRecordMutationResolutionState();
-      state.recordMutationDiff = emptyRecordMutationDiffState();
-      state.recordMutationApply = emptyRecordMutationApplyState();
-      state.recordMutationAuditManifest = null;
-      state.recordMutationRollback = emptyRecordMutationRollbackState();
-      state.recordMutationDeleteRecovery = emptyRecordMutationDeleteRecoveryState();
+      resetOwnerTransferTarget({ entityType: state.ownerTransfer.entityType, entityId: select.value });
       render();
     }
   });
@@ -9508,31 +9586,7 @@ function bindEvents(): void {
   root.querySelector<HTMLSelectElement>("[data-action='record-mutation-preflight'] select[name='mutation']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
     if (select instanceof HTMLSelectElement && isRecordMutationKind(select.value)) {
-      state.recordMutation = {
-        ...state.recordMutation,
-        mutation: select.value,
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        mutationPolicy: null,
-        preflight: null,
-      };
-      state.recordMutationRequest = {
-        status: "idle",
-        targetLabel: null,
-        persistence: null,
-        auditPersistence: null,
-        requestPolicy: null,
-        request: null,
-      };
-      state.recordMutationRequestManifest = null;
-      state.recordMutationResolution = emptyRecordMutationResolutionState();
-      state.recordMutationDiff = emptyRecordMutationDiffState();
-      state.recordMutationApply = emptyRecordMutationApplyState();
-      state.recordMutationAuditManifest = null;
-      state.recordMutationRollback = emptyRecordMutationRollbackState();
-      state.recordMutationDeleteRecovery = emptyRecordMutationDeleteRecoveryState();
+      resetRecordMutationWorkflow(select.value);
       render();
     }
   });
@@ -9621,14 +9675,10 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='record-comment-manifest']")?.addEventListener("click", () => {
     void previewRecordCommentManifest();
   });
-  root.querySelector<HTMLFormElement>("[data-action='record-permission-assign']")?.addEventListener("submit", (event) => {
-    void handleRecordPermissionAssign(event);
-  });
-  root.querySelector<HTMLFormElement>("[data-action='task-permission-assign']")?.addEventListener("submit", (event) => {
-    void handleTaskPermissionAssign(event);
-  });
-  root.querySelector<HTMLFormElement>("[data-action='document-permission-assign']")?.addEventListener("submit", (event) => {
-    void handleDocumentPermissionAssign(event);
+  root.querySelectorAll<HTMLFormElement>("[data-action='permission-assign']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      void handlePermissionAssign(event);
+    });
   });
   root.querySelectorAll<HTMLButtonElement>("[data-action='record-permission-revoke']").forEach((button) => {
     button.addEventListener("click", () => {
@@ -9645,11 +9695,6 @@ function bindEvents(): void {
   root.querySelectorAll<HTMLButtonElement>("[data-integration]").forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.integration;
-      if (key === "offline") {
-        state.ui.toast = "Offline local mirror is active for this browser.";
-        render();
-        return;
-      }
       if (isIntegrationKey(key)) {
         state.ui.inspectorTab = "details";
         state.ui.inspectorView = "integrations";
@@ -9659,11 +9704,11 @@ function bindEvents(): void {
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-action='edit-dry-run'], [data-action='view-dry-run']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.toast = "This path is scaffolded as a dry-run action for the first MVP slice.";
-      render();
-    });
+  root.querySelector<HTMLButtonElement>("[data-action='integrations-open']")?.addEventListener("click", () => {
+    state.ui.inspectorTab = "details";
+    state.ui.inspectorView = "integrations";
+    persistUi();
+    render();
   });
 
   root.querySelectorAll<HTMLButtonElement>(".doc-row-button[data-doc-id]").forEach((button) => {
@@ -9673,19 +9718,29 @@ function bindEvents(): void {
       render();
     });
   });
-  root.querySelector<HTMLButtonElement>("[data-action='doc-select-first']")?.addEventListener("click", () => {
-    const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-    state.ui.selectedDocId = project?.docs[0]?.id ?? null;
-    persistUi();
-    render();
+  root.querySelectorAll<HTMLButtonElement>("[data-open-doc]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedDocId = button.dataset.openDoc ?? null;
+      state.ui.workspaceSection = "docs";
+      persistUi();
+      render();
+    });
   });
 
   root.querySelector<HTMLFormElement>("[data-action='add-task']")?.addEventListener("submit", (event) => {
     void handleAddTask(event);
   });
-  root.querySelectorAll<HTMLSelectElement>("[data-action='task-status-update']").forEach((select) => {
-    select.addEventListener("change", () => {
-      void handleTaskStatusUpdate(select);
+  root.querySelectorAll<HTMLFormElement>("[data-action='contextual-record-update']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      void handleContextualRecordUpdate(event);
+    });
+  });
+  root.querySelector<HTMLFormElement>("[data-action='project-inline-update']")?.addEventListener("submit", (event) => {
+    void handleProjectInlineUpdate(event);
+  });
+  root.querySelectorAll<HTMLElement>("[data-contextual-autosave]").forEach((control) => {
+    control.addEventListener("change", () => {
+      control.closest<HTMLFormElement>("form")?.requestSubmit();
     });
   });
   root.querySelectorAll<HTMLButtonElement>("[data-action='task-complete']").forEach((button) => {
@@ -9737,30 +9792,122 @@ async function handleAddTask(event: SubmitEvent): Promise<void> {
   render();
 }
 
-async function handleTaskStatusUpdate(select: HTMLSelectElement): Promise<void> {
-  const taskId = select.dataset.taskId ?? "";
-  const nextStatus = select.value;
-  if (!isLocalTaskStatus(nextStatus)) return;
+async function handleContextualRecordUpdate(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!(form instanceof HTMLFormElement)) return;
 
-  const project = state.workspace.projects.find((candidate) => candidate.openTasks.some((task) => task.id === taskId));
-  const task = project?.openTasks.find((candidate) => candidate.id === taskId);
-  if (!project || !task) return;
+  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
+  const recordId = form.dataset.recordId ?? "";
+  const kind = form.dataset.recordKind;
+  if (!project || !recordId) return;
 
-  const previousStatus = task.status;
-  if (previousStatus === nextStatus) return;
+  const formData = new FormData(form);
+  let summary = "";
+  let tone: "teal" | "blue" | "amber" = "teal";
+  let operationPayload: Record<string, unknown> = { projectId: project.id };
 
-  task.status = nextStatus;
-  state.workspace.auditLog.unshift(createAuditEvent(`Task status updated: ${task.title} -> ${formatTaskStatus(task.status)}`, "Alonso", "teal"));
+  if (kind === "task") {
+    const task = project.openTasks.find((candidate) => candidate.id === recordId);
+    const title = String(formData.get("title") ?? "").trim().slice(0, 160);
+    const due = String(formData.get("due") ?? "").trim().slice(0, 80);
+    const status = String(formData.get("status") ?? "");
+    if (!task || !title || !isLocalTaskStatus(status)) return;
+    task.title = title;
+    task.due = due || "TBD";
+    task.status = status;
+    summary = `Task updated: ${task.title}`;
+    operationPayload = { ...operationPayload, title: task.title, dueAt: task.due, status: task.status };
+  } else if (kind === "person") {
+    const person = project.people.find((candidate) => candidate.id === recordId);
+    const name = String(formData.get("name") ?? "").trim().slice(0, 120);
+    const role = String(formData.get("role") ?? "").trim().slice(0, 80);
+    if (!person || !name) return;
+    person.name = name;
+    person.role = role || "Crew";
+    person.initials = initialsFor(name);
+    summary = `Person updated: ${person.name}`;
+    operationPayload = { ...operationPayload, name: person.name, role: person.role, initials: person.initials, sensitive: true };
+  } else if (kind === "equipment") {
+    const item = project.equipment.find((candidate) => candidate.id === recordId);
+    const name = String(formData.get("name") ?? "").trim().slice(0, 120);
+    const status = String(formData.get("status") ?? "").trim().slice(0, 80);
+    if (!item || !name) return;
+    item.name = name;
+    item.status = status || "Planned";
+    item.statusTone = equipmentToneFromType(item.status);
+    summary = `Equipment updated: ${item.name}`;
+    tone = "blue";
+    operationPayload = { ...operationPayload, name: item.name, status: item.status, statusTone: item.statusTone };
+  } else if (kind === "expense") {
+    const expense = project.expenses.find((candidate) => candidate.id === recordId);
+    const category = String(formData.get("category") ?? "").trim().slice(0, 80);
+    const spent = contextualMoneyValue(formData.get("spent"));
+    const budget = contextualMoneyValue(formData.get("budget"));
+    if (!expense || !category || spent === null || budget === null) return;
+    const spentDelta = spent - expense.spent;
+    const budgetDelta = budget - expense.budget;
+    expense.category = category;
+    expense.spent = spent;
+    expense.budget = budget;
+    expense.percent = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+    project.spentBudget = Math.max(0, project.spentBudget + spentDelta);
+    project.totalBudget = Math.max(0, project.totalBudget + budgetDelta);
+    summary = `Expense updated: ${expense.category}`;
+    tone = "amber";
+    operationPayload = { ...operationPayload, category: expense.category, spent, budget, percent: expense.percent, sensitive: true };
+  } else {
+    return;
+  }
+
+  state.workspace.auditLog.unshift(createAuditEvent(summary, "Alonso", tone));
   await persistWorkspace(
-    createOperation(state.workspace.id, "task.updated", "task", task.id, `Task status updated: ${task.title}`, {
-      projectId: project.id,
-      title: task.title,
-      status: task.status,
-      previousStatus,
+    createOperation(state.workspace.id, `${kind}.updated`, kind, recordId, summary, operationPayload),
+  );
+  state.ui.toast = `${summary} Saved locally.`;
+  render();
+}
+
+async function handleProjectInlineUpdate(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!(form instanceof HTMLFormElement)) return;
+
+  const project = getProjectById(state.workspace, form.dataset.projectId ?? "");
+  if (!project) return;
+  const formData = new FormData(form);
+  const phase = String(formData.get("phase") ?? "");
+  const shootDates = String(formData.get("shootDates") ?? "").trim().slice(0, 120);
+  const location = String(formData.get("location") ?? "").trim().slice(0, 120);
+  const description = String(formData.get("description") ?? "").trim().slice(0, 1000);
+  const totalBudget = contextualMoneyValue(formData.get("totalBudget"));
+  if (!isLocalProjectPhase(phase) || totalBudget === null) return;
+
+  project.phase = phase;
+  project.phaseTone = projectPhaseTone(phase);
+  project.shootDates = shootDates || "TBD";
+  project.totalBudget = totalBudget;
+  project.location = location || "TBD";
+  project.description = description;
+  const summary = `Project details updated: ${project.title}`;
+  state.workspace.auditLog.unshift(createAuditEvent(summary, "Alonso", "blue"));
+  await persistWorkspace(
+    createOperation(state.workspace.id, "project.updated", "project", project.id, summary, {
+      phase: project.phase,
+      shootDates: project.shootDates,
+      totalBudget: project.totalBudget,
+      location: project.location,
+      description: project.description,
+      sensitive: true,
     }),
   );
-  state.ui.toast = "Task status queued in the IndexedDB operation log.";
+  state.ui.toast = "Project details saved locally.";
   render();
+}
+
+function contextualMoneyValue(value: FormDataEntryValue | null): number | null {
+  const numeric = Number.parseFloat(String(value ?? "").replace(/[$,]/g, ""));
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric * 100) / 100 : null;
 }
 
 async function handleCompleteTask(taskId: string): Promise<void> {
@@ -10628,10 +10775,10 @@ async function handleMemberStatusUpdate(event: SubmitEvent): Promise<void> {
     return;
   }
 
-  const memberSelect = form.elements.namedItem("memberId") as HTMLSelectElement | null;
-  const statusSelect = form.elements.namedItem("status") as HTMLSelectElement | null;
-  const memberId = memberSelect?.value ?? "";
-  const targetStatus = statusSelect?.value ?? state.memberStatus.targetStatus;
+  const memberControl = form.elements.namedItem("memberId") as HTMLInputElement | HTMLSelectElement | null;
+  const statusControl = form.elements.namedItem("status") as HTMLInputElement | HTMLSelectElement | null;
+  const memberId = memberControl?.value ?? "";
+  const targetStatus = statusControl?.value ?? state.memberStatus.targetStatus;
   if (!memberId || !isWorkspaceMemberManagedStatus(targetStatus)) {
     state.ui.toast = "Member status update blocked: invalid member or status.";
     render();
@@ -10714,10 +10861,10 @@ async function handleProjectMembershipAssign(event: SubmitEvent): Promise<void> 
   }
 
   const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const memberSelect = form.elements.namedItem("memberId") as HTMLSelectElement | null;
+  const memberControl = form.elements.namedItem("memberId") as HTMLInputElement | HTMLSelectElement | null;
   const roleSelect = form.elements.namedItem("role") as HTMLSelectElement | null;
   const departmentInput = form.elements.namedItem("department") as HTMLInputElement | null;
-  const memberId = memberSelect?.value ?? "";
+  const memberId = memberControl?.value ?? "";
   const role = roleSelect?.value ?? state.assignment.role;
   const department = departmentInput?.value.trim().slice(0, 80) ?? "";
   if (!project || !memberId || !isWorkspaceRole(role)) {
@@ -11048,6 +11195,32 @@ async function handleRecordOwnerTransfer(event: SubmitEvent): Promise<void> {
   render();
 }
 
+type SelectedRecordTarget =
+  | {
+      ok: true;
+      entityType: OwnerTransferEntityType;
+      entityId: string;
+      target: NonNullable<ReturnType<typeof ownerTransferTargetFor>>;
+    }
+  | { ok: false; reason: "invalid_project_or_target" | "missing_record" };
+
+function selectedRecordTarget(): SelectedRecordTarget {
+  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
+  const root = document.getElementById("app");
+  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
+  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
+  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
+  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
+  if (!project || !isOwnerTransferEntityType(entityType)) {
+    return { ok: false, reason: "invalid_project_or_target" };
+  }
+
+  const target = ownerTransferTargetFor(project, entityType, entityId);
+  return target
+    ? { ok: true, entityType, entityId: target.entityId, target }
+    : { ok: false, reason: "missing_record" };
+}
+
 async function previewRecordOwnerManifest(): Promise<void> {
   const csrfToken = state.auth.session?.csrfToken;
   if (!csrfToken) {
@@ -11056,24 +11229,13 @@ async function previewRecordOwnerManifest(): Promise<void> {
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
-    state.ui.toast = "Owner review blocked: invalid project or target.";
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
+    state.ui.toast = selection.reason === "invalid_project_or_target" ? "Owner review blocked: invalid project or target." : "Owner review blocked: no selected record.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
-  if (!target) {
-    state.ui.toast = "Owner review blocked: no selected record.";
-    render();
-    return;
-  }
+  const { entityType, entityId, target } = selection;
 
   try {
     const manifest = await exportRecordOwnerManifest(
@@ -11117,24 +11279,13 @@ async function previewRecordOwnerHistory(): Promise<void> {
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
-    state.ui.toast = "Owner history blocked: invalid project or target.";
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
+    state.ui.toast = selection.reason === "invalid_project_or_target" ? "Owner history blocked: invalid project or target." : "Owner history blocked: no selected record.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
-  if (!target) {
-    state.ui.toast = "Owner history blocked: no selected record.";
-    render();
-    return;
-  }
+  const { entityType, entityId, target } = selection;
 
   try {
     const history = await exportRecordOwnerHistory(
@@ -11189,26 +11340,15 @@ async function previewRecordMutationPreflight(event: SubmitEvent): Promise<void>
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
   const mutationSelect = form.elements.namedItem("mutation") as HTMLSelectElement | null;
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
   const mutation = mutationSelect?.value || state.recordMutation.mutation;
-  if (!project || !isOwnerTransferEntityType(entityType) || !isRecordMutationKind(mutation)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok || !isRecordMutationKind(mutation)) {
     state.ui.toast = "Mutation preflight blocked: invalid project, target, or action.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
-  if (!target) {
-    state.ui.toast = "Mutation preflight blocked: no selected record.";
-    render();
-    return;
-  }
+  const { entityType, target } = selection;
 
   state.recordMutation = {
     ...state.recordMutation,
@@ -11281,26 +11421,16 @@ async function handleRecordMutationRequest(event: SubmitEvent): Promise<void> {
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
   const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
   const mutationSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-mutation-preflight'] select[name='mutation']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
   const mutation = mutationSelect?.value || state.recordMutation.mutation;
-  if (!project || !isOwnerTransferEntityType(entityType) || !isRecordMutationKind(mutation)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok || !isRecordMutationKind(mutation)) {
     state.ui.toast = "Mutation request blocked: invalid project, target, or action.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
-  if (!target) {
-    state.ui.toast = "Mutation request blocked: no selected record.";
-    render();
-    return;
-  }
+  const { entityType, target } = selection;
 
   const summaryInput = form.elements.namedItem("summary") as HTMLInputElement | null;
   const summary = (summaryInput?.value.trim() || `${mutation} ${target.label}`).slice(0, 500);
@@ -11379,24 +11509,13 @@ async function previewRecordMutationRequestManifest(): Promise<void> {
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
-    state.ui.toast = "Mutation request review blocked: invalid project or target.";
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
+    state.ui.toast = selection.reason === "invalid_project_or_target" ? "Mutation request review blocked: invalid project or target." : "Mutation request review blocked: no selected record.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
-  if (!target) {
-    state.ui.toast = "Mutation request review blocked: no selected record.";
-    render();
-    return;
-  }
+  const { entityType, entityId, target } = selection;
 
   try {
     const manifest = await exportRecordMutationRequestManifest(
@@ -11446,25 +11565,19 @@ async function handleRecordMutationResolution(event: SubmitEvent): Promise<void>
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Mutation resolution blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const decisionSelect = form.elements.namedItem("decision") as HTMLSelectElement | null;
   const noteInput = form.elements.namedItem("note") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
   const decision = decisionSelect?.value === "reject" ? "reject" : "approve";
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Mutation resolution blocked: no request selected.";
     render();
     return;
@@ -11530,19 +11643,13 @@ async function previewRecordMutationDiffForApply(event: SubmitEvent): Promise<vo
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Mutation diff blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
   const matchedRequest = state.recordMutationRequestManifest?.requests.find((request) => request.id === requestId)
@@ -11550,7 +11657,7 @@ async function previewRecordMutationDiffForApply(event: SubmitEvent): Promise<vo
   const updates = matchedRequest?.mutation === "delete"
     ? undefined
     : parseRecordMutationUpdateForm(form, matchedRequest);
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Mutation diff blocked: no approved request selected.";
     render();
     return;
@@ -11624,19 +11731,13 @@ async function handleRecordMutationApply(event: SubmitEvent): Promise<void> {
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Mutation apply blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
   const matchedRequest = state.recordMutationRequestManifest?.requests.find((request) => request.id === requestId)
@@ -11644,7 +11745,7 @@ async function handleRecordMutationApply(event: SubmitEvent): Promise<void> {
   const updates = matchedRequest?.mutation === "delete"
     ? undefined
     : parseRecordMutationUpdateForm(form, matchedRequest);
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Mutation apply blocked: no approved request selected.";
     render();
     return;
@@ -11713,22 +11814,16 @@ async function previewRecordMutationAuditManifest(event: SubmitEvent): Promise<v
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Mutation audit blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Mutation audit blocked: no request selected.";
     render();
     return;
@@ -11782,24 +11877,18 @@ async function handleRecordMutationRollbackRequest(event: SubmitEvent): Promise<
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Rollback request blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const summaryInput = form.elements.namedItem("summary") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
   const summary = summaryInput?.value.trim() ?? "";
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Rollback request blocked: no applied request selected.";
     render();
     return;
@@ -11863,22 +11952,16 @@ async function previewRecordMutationDeleteRecovery(event: SubmitEvent): Promise<
     return;
   }
 
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const entityTypeSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityType']");
-  const entityIdSelect = root?.querySelector<HTMLSelectElement>("[data-action='record-owner-transfer'] select[name='entityId']");
-  const entityType = entityTypeSelect?.value || state.ownerTransfer.entityType;
-  const entityId = entityIdSelect?.value || state.ownerTransfer.entityId;
-  if (!project || !isOwnerTransferEntityType(entityType)) {
+  const selection = selectedRecordTarget();
+  if (!selection.ok) {
     state.ui.toast = "Delete recovery blocked: invalid project or target.";
     render();
     return;
   }
-
-  const target = ownerTransferTargetFor(project, entityType, entityId);
+  const { target } = selection;
   const requestIdInput = form.elements.namedItem("requestId") as HTMLInputElement | null;
   const requestId = requestIdInput?.value.trim() ?? "";
-  if (!target || !requestId) {
+  if (!requestId) {
     state.ui.toast = "Delete recovery blocked: no applied delete request selected.";
     render();
     return;
@@ -12574,6 +12657,13 @@ function isLocalProjectPhase(value: string): value is FilmProject["phase"] {
   return value === "Development" || value === "Pre-Production" || value === "Production" || value === "Post-Production";
 }
 
+function projectPhaseTone(phase: FilmProject["phase"]): FilmProject["phaseTone"] {
+  if (phase === "Production") return "teal";
+  if (phase === "Pre-Production") return "amber";
+  if (phase === "Development") return "blue";
+  return "gray";
+}
+
 function equipmentToneFromType(value: string): EquipmentItem["statusTone"] {
   const normalized = value.trim().toLowerCase();
   if (normalized.includes("sound") || normalized.includes("audio")) return "blue";
@@ -12748,252 +12838,121 @@ async function previewRecordCommentManifest(): Promise<void> {
   render();
 }
 
-async function handleRecordPermissionAssign(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (!(form instanceof HTMLFormElement)) return;
+type PermissionAssignmentUpdate = {
+  targetId: string;
+  memberId: string;
+  permission: RecordPermissionLevel;
+  department: string;
+  expiresAt: string;
+  status: PermissionAssignmentState["status"];
+  persistence: string | null;
+  assignedProjectId: string | null;
+  assignedEntityId: string | null;
+  assignedMemberId: string | null;
+  assignedPermission: RecordPermissionLevel | null;
+};
 
-  const csrfToken = state.auth.session?.csrfToken;
-  if (!csrfToken) {
-    state.ui.toast = "Sign in before granting project permissions.";
-    render();
+function permissionAssignmentState(scope: PermissionScope): PermissionAssignmentState {
+  if (scope === "task") return state.taskPermission;
+  if (scope === "document") return state.documentPermission;
+  return state.projectPermission;
+}
+
+function updatePermissionAssignmentState(scope: PermissionScope, update: PermissionAssignmentUpdate): void {
+  const shared = {
+    memberId: update.memberId,
+    permission: update.permission,
+    department: update.department,
+    expiresAt: update.expiresAt,
+    status: update.status,
+    persistence: update.persistence,
+    assignedMemberId: update.assignedMemberId,
+    assignedPermission: update.assignedPermission,
+  };
+  if (scope === "task") {
+    state.taskPermission = {
+      ...state.taskPermission,
+      ...shared,
+      taskId: update.targetId,
+      assignedProjectId: update.assignedProjectId,
+      assignedTaskId: update.assignedEntityId,
+    };
     return;
   }
-
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const memberSelect = form.elements.namedItem("memberId") as HTMLSelectElement | null;
-  const permissionSelect = form.elements.namedItem("permission") as HTMLSelectElement | null;
-  const departmentInput = form.elements.namedItem("department") as HTMLInputElement | null;
-  const expiresAtInput = form.elements.namedItem("expiresAt") as HTMLInputElement | null;
-  const memberId = memberSelect?.value ?? "";
-  const permission = permissionSelect?.value ?? state.projectPermission.permission;
-  const department = departmentInput?.value.trim().slice(0, 80) ?? "";
-  const expiresAtDate = expiresAtInput?.value ?? "";
-  if (!project || !memberId || !isRecordPermissionLevel(permission)) {
-    state.ui.toast = "Project permission blocked: invalid project, member, or permission.";
-    render();
+  if (scope === "document") {
+    state.documentPermission = {
+      ...state.documentPermission,
+      ...shared,
+      assignedProjectId: update.assignedProjectId,
+      assignedDocumentId: update.assignedEntityId,
+    };
     return;
   }
-
-  const expiresAt = expiresAtDate ? `${expiresAtDate}T00:00:00.000Z` : null;
   state.projectPermission = {
     ...state.projectPermission,
-    memberId,
-    permission,
-    department,
-    expiresAt: expiresAtDate,
-    status: "assigning",
-    persistence: null,
-    assignedProjectId: null,
-    assignedMemberId: null,
-    assignedPermission: null,
+    ...shared,
+    assignedProjectId: update.assignedProjectId,
   };
-  state.ui.toast = null;
-  render();
-
-  try {
-    const result = await assignRecordPermission(
-      WORKER_URL,
-      {
-        workspaceId: state.workspace.id,
-        entityType: "project",
-        entityId: project.id,
-        memberId,
-        permission,
-        department: department || null,
-        expiresAt,
-      },
-      csrfToken,
-    );
-    const member = state.workspace.members.find((candidate) => candidate.id === result.permission.memberId);
-    const resultExpiresAt = result.permission.expiresAt?.slice(0, 10) ?? "";
-    state.projectPermission = {
-      ...state.projectPermission,
-      memberId,
-      permission: result.permission.permission,
-      department: result.permission.department ?? "",
-      expiresAt: resultExpiresAt,
-      status: "assigned",
-      persistence: result.persistence,
-      assignedProjectId: result.permission.entityId,
-      assignedMemberId: result.permission.memberId,
-      assignedPermission: result.permission.permission,
-    };
-    state.workspace.auditLog.unshift(
-      createAuditEvent(
-        `Project permission: ${member?.displayName ?? result.permission.memberId} -> ${project.title} (${formatRecordPermissionLevel(result.permission.permission)})`,
-        "System",
-        "blue",
-      ),
-    );
-    await persistWorkspace();
-    state.ui.toast = "Project permission granted by the Worker.";
-  } catch (error) {
-    state.projectPermission = {
-      ...state.projectPermission,
-      memberId,
-      permission,
-      department,
-      expiresAt: expiresAtDate,
-      status: "idle",
-      persistence: null,
-      assignedProjectId: null,
-      assignedMemberId: null,
-      assignedPermission: null,
-    };
-    state.ui.toast = `Project permission blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
-  }
-  render();
 }
 
-async function handleDocumentPermissionAssign(event: SubmitEvent): Promise<void> {
+async function handlePermissionAssign(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const form = event.currentTarget;
   if (!(form instanceof HTMLFormElement)) return;
 
+  const scope = form.dataset.permissionAssignmentScope;
+  if (!isPermissionScope(scope)) return;
+  state.ui.permissionScope = scope;
+
   const csrfToken = state.auth.session?.csrfToken;
   if (!csrfToken) {
-    state.ui.toast = "Sign in before granting document permissions.";
+    state.ui.toast = `Sign in before granting ${scope} permissions.`;
     render();
     return;
   }
 
   const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const document = project?.docs.find((doc) => doc.id === state.ui.selectedDocId) ?? project?.docs[0] ?? null;
-  const memberSelect = form.elements.namedItem("memberId") as HTMLSelectElement | null;
-  const permissionSelect = form.elements.namedItem("permission") as HTMLSelectElement | null;
-  const departmentInput = form.elements.namedItem("department") as HTMLInputElement | null;
-  const expiresAtInput = form.elements.namedItem("expiresAt") as HTMLInputElement | null;
-  const memberId = memberSelect?.value ?? "";
-  const permission = permissionSelect?.value ?? state.documentPermission.permission;
-  const department = departmentInput?.value.trim().slice(0, 80) ?? "";
-  const expiresAtDate = expiresAtInput?.value ?? "";
-  if (!project || !document || !memberId || !isRecordPermissionLevel(permission)) {
-    state.ui.toast = "Document permission blocked: invalid project, document, member, or permission.";
-    render();
-    return;
-  }
-
-  const expiresAt = expiresAtDate ? `${expiresAtDate}T00:00:00.000Z` : null;
-  state.documentPermission = {
-    ...state.documentPermission,
-    memberId,
-    permission,
-    department,
-    expiresAt: expiresAtDate,
-    status: "assigning",
-    persistence: null,
-    assignedProjectId: null,
-    assignedDocumentId: null,
-    assignedMemberId: null,
-    assignedPermission: null,
-  };
-  state.ui.toast = null;
-  render();
-
-  try {
-    const result = await assignRecordPermission(
-      WORKER_URL,
-      {
-        workspaceId: state.workspace.id,
-        entityType: "document",
-        entityId: document.id,
-        memberId,
-        permission,
-        department: department || null,
-        expiresAt,
-      },
-      csrfToken,
-    );
-    const member = state.workspace.members.find((candidate) => candidate.id === result.permission.memberId);
-    const resultExpiresAt = result.permission.expiresAt?.slice(0, 10) ?? "";
-    state.documentPermission = {
-      ...state.documentPermission,
-      memberId,
-      permission: result.permission.permission,
-      department: result.permission.department ?? "",
-      expiresAt: resultExpiresAt,
-      status: "assigned",
-      persistence: result.persistence,
-      assignedProjectId: project.id,
-      assignedDocumentId: result.permission.entityId,
-      assignedMemberId: result.permission.memberId,
-      assignedPermission: result.permission.permission,
-    };
-    state.workspace.auditLog.unshift(
-      createAuditEvent(
-        `Document permission: ${member?.displayName ?? result.permission.memberId} -> ${document.name} (${formatRecordPermissionLevel(result.permission.permission)})`,
-        "System",
-        "blue",
-      ),
-    );
-    await persistWorkspace();
-    state.ui.toast = "Document permission granted by the Worker.";
-  } catch (error) {
-    state.documentPermission = {
-      ...state.documentPermission,
-      memberId,
-      permission,
-      department,
-      expiresAt: expiresAtDate,
-      status: "idle",
-      persistence: null,
-      assignedProjectId: null,
-      assignedDocumentId: null,
-      assignedMemberId: null,
-      assignedPermission: null,
-    };
-    state.ui.toast = `Document permission blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
-  }
-  render();
-}
-
-async function handleTaskPermissionAssign(event: SubmitEvent): Promise<void> {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (!(form instanceof HTMLFormElement)) return;
-
-  const csrfToken = state.auth.session?.csrfToken;
-  if (!csrfToken) {
-    state.ui.toast = "Sign in before granting task permissions.";
-    render();
-    return;
-  }
-
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const taskSelect = form.elements.namedItem("taskId") as HTMLSelectElement | null;
-  const memberSelect = form.elements.namedItem("memberId") as HTMLSelectElement | null;
-  const permissionSelect = form.elements.namedItem("permission") as HTMLSelectElement | null;
-  const departmentInput = form.elements.namedItem("department") as HTMLInputElement | null;
-  const expiresAtInput = form.elements.namedItem("expiresAt") as HTMLInputElement | null;
-  const taskId = taskSelect?.value ?? state.taskPermission.taskId;
+  const targetSelect = form.elements.namedItem("targetId") as HTMLSelectElement | null;
+  const selectedTargetId = targetSelect?.value ?? "";
+  const taskId = scope === "task" ? selectedTargetId || state.taskPermission.taskId : state.taskPermission.taskId;
   const task = project?.openTasks.find((candidate) => candidate.id === taskId) ?? project?.openTasks[0] ?? null;
-  const memberId = memberSelect?.value ?? "";
-  const permission = permissionSelect?.value ?? state.taskPermission.permission;
-  const department = departmentInput?.value.trim().slice(0, 80) ?? "";
-  const expiresAtDate = expiresAtInput?.value ?? "";
-  if (!project || !task || !memberId || !isRecordPermissionLevel(permission)) {
-    state.ui.toast = "Task permission blocked: invalid project, task, member, or permission.";
+  const documentId = scope === "document" ? selectedTargetId || state.ui.selectedDocId : state.ui.selectedDocId;
+  const document = project?.docs.find((doc) => doc.id === documentId) ?? project?.docs[0] ?? null;
+  const target = scope === "project"
+    ? project ? { id: project.id, label: project.title } : null
+    : scope === "task"
+      ? task ? { id: task.id, label: task.title } : null
+      : document ? { id: document.id, label: document.name } : null;
+  const current = permissionAssignmentState(scope);
+  const memberId = (form.elements.namedItem("memberId") as HTMLSelectElement | null)?.value ?? "";
+  const permission = (form.elements.namedItem("permission") as HTMLSelectElement | null)?.value ?? current.permission;
+  const department = (form.elements.namedItem("department") as HTMLInputElement | null)?.value.trim().slice(0, 80) ?? "";
+  const expiresAtDate = (form.elements.namedItem("expiresAt") as HTMLInputElement | null)?.value ?? "";
+
+  if (!project || !target || !memberId || !isRecordPermissionLevel(permission)) {
+    state.ui.toast = `${scope[0]?.toUpperCase() ?? ""}${scope.slice(1)} permission blocked: invalid target, member, or access level.`;
     render();
     return;
   }
 
-  const expiresAt = expiresAtDate ? `${expiresAtDate}T00:00:00.000Z` : null;
-  state.taskPermission = {
-    ...state.taskPermission,
-    taskId: task.id,
+  const assignmentBase = {
+    targetId: target.id,
     memberId,
     permission,
     department,
     expiresAt: expiresAtDate,
+  };
+  updatePermissionAssignmentState(scope, {
+    ...assignmentBase,
     status: "assigning",
     persistence: null,
     assignedProjectId: null,
-    assignedTaskId: null,
+    assignedEntityId: null,
     assignedMemberId: null,
     assignedPermission: null,
-  };
+  });
   state.ui.toast = null;
+  persistUi();
   render();
 
   try {
@@ -13001,69 +12960,50 @@ async function handleTaskPermissionAssign(event: SubmitEvent): Promise<void> {
       WORKER_URL,
       {
         workspaceId: state.workspace.id,
-        entityType: "task",
-        entityId: task.id,
+        entityType: scope,
+        entityId: target.id,
         memberId,
         permission,
         department: department || null,
-        expiresAt,
+        expiresAt: expiresAtDate ? `${expiresAtDate}T00:00:00.000Z` : null,
       },
       csrfToken,
     );
     const member = state.workspace.members.find((candidate) => candidate.id === result.permission.memberId);
-    const resultExpiresAt = result.permission.expiresAt?.slice(0, 10) ?? "";
-    state.taskPermission = {
-      ...state.taskPermission,
-      taskId: result.permission.entityId,
-      memberId,
+    updatePermissionAssignmentState(scope, {
+      ...assignmentBase,
       permission: result.permission.permission,
       department: result.permission.department ?? "",
-      expiresAt: resultExpiresAt,
+      expiresAt: result.permission.expiresAt?.slice(0, 10) ?? "",
       status: "assigned",
       persistence: result.persistence,
-      assignedProjectId: project.id,
-      assignedTaskId: result.permission.entityId,
+      assignedProjectId: scope === "project" ? result.permission.entityId : project.id,
+      assignedEntityId: result.permission.entityId,
       assignedMemberId: result.permission.memberId,
       assignedPermission: result.permission.permission,
-    };
+    });
     state.workspace.auditLog.unshift(
       createAuditEvent(
-        `Task permission: ${member?.displayName ?? result.permission.memberId} -> ${task.title} (${formatRecordPermissionLevel(result.permission.permission)})`,
+        `${scope[0]?.toUpperCase() ?? ""}${scope.slice(1)} permission: ${member?.displayName ?? result.permission.memberId} -> ${target.label} (${formatRecordPermissionLevel(result.permission.permission)})`,
         "System",
         "blue",
       ),
     );
     await persistWorkspace();
-    state.ui.toast = "Task permission granted by the Worker.";
+    state.ui.toast = `${target.label} access granted by the Worker.`;
   } catch (error) {
-    state.taskPermission = {
-      ...state.taskPermission,
-      taskId: task.id,
-      memberId,
-      permission,
-      department,
-      expiresAt: expiresAtDate,
+    updatePermissionAssignmentState(scope, {
+      ...assignmentBase,
       status: "idle",
       persistence: null,
       assignedProjectId: null,
-      assignedTaskId: null,
+      assignedEntityId: null,
       assignedMemberId: null,
       assignedPermission: null,
-    };
-    state.ui.toast = `Task permission blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
+    });
+    state.ui.toast = `${target.label} access blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
-}
-
-async function previewTaskPermissionManifest(mode: "active" | "expired" = "active"): Promise<void> {
-  const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  const root = document.getElementById("app");
-  const taskSelect = root?.querySelector<HTMLSelectElement>("[data-action='task-permission-assign'] select[name='taskId']");
-  const taskId = taskSelect?.value || state.taskPermission.taskId || project?.openTasks[0]?.id || "";
-  if (taskId) {
-    state.taskPermission.taskId = taskId;
-  }
-  await previewRecordPermissionManifest("task", mode);
 }
 
 async function previewRecordPermissionManifest(entityType: "project" | "task" | "document", mode: "active" | "expired" = "active"): Promise<void> {
@@ -13133,17 +13073,7 @@ async function previewRecordPermissionHistory(entityType: RecordPermissionHistor
     render();
     return;
   }
-
   const project = getProjectById(state.workspace, state.ui.selectedProjectId);
-  if (entityType === "task") {
-    const root = document.getElementById("app");
-    const taskSelect = root?.querySelector<HTMLSelectElement>("[data-action='task-permission-assign'] select[name='taskId']");
-    const taskId = taskSelect?.value || state.taskPermission.taskId || project?.openTasks[0]?.id || "";
-    if (taskId) {
-      state.taskPermission.taskId = taskId;
-    }
-  }
-
   const task = project?.openTasks.find((candidate) => candidate.id === state.taskPermission.taskId) ?? project?.openTasks[0] ?? null;
   const document = project?.docs.find((doc) => doc.id === state.ui.selectedDocId) ?? project?.docs[0] ?? null;
   const entityId = entityType === "project" ? project?.id : entityType === "task" ? task?.id : document?.id;
@@ -13318,8 +13248,6 @@ async function handleSmsConsentManifest(): Promise<void> {
   render();
 }
 
-const SMS_DISCLOSURE_VERSION = "crew-sms-v1-2026-07-13";
-
 function canManageSmsConsent(): boolean {
   const role = state.auth.session?.role;
   return role === "owner" || role === "producer";
@@ -13334,22 +13262,16 @@ function renderSmsConsentEnrollmentForm(): string {
       </label>
       <fieldset class="sms-recipient-fieldset">
         <legend>Production messages</legend>
-        <label class="sms-recipient-option">
-          <input type="checkbox" name="category" value="call_sheet" checked>
-          <span>Call sheets</span>
-        </label>
-        <label class="sms-recipient-option">
-          <input type="checkbox" name="category" value="schedule_change" checked>
-          <span>Schedule changes</span>
-        </label>
-        <label class="sms-recipient-option">
-          <input type="checkbox" name="category" value="safety_location_alert" checked>
-          <span>Safety and location updates</span>
-        </label>
+        ${TELNYX_SMS_CATEGORIES.map((category) => `
+          <label class="sms-recipient-option">
+            <input type="checkbox" name="category" value="${category}" checked>
+            <span>${TELNYX_SMS_CATEGORY_LABELS[category]}</span>
+          </label>
+        `).join("")}
       </fieldset>
       <label class="sms-consent-disclosure">
         <input type="checkbox" name="disclosureAcknowledged" required>
-        <span>I agree to receive recurring production operations text messages from Film by Dust Wave for the categories selected above. Message frequency varies. Msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of employment or participation.</span>
+        <span>${escapeHtml(TELNYX_SMS_CONSENT_DISCLOSURE)}</span>
       </label>
       <small class="sms-consent-links"><a href="/sms.html" target="_blank" rel="noreferrer">SMS terms</a> · <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a> · <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a></small>
       <button type="submit">${icon("provider")} Enable crew texts</button>
@@ -13367,7 +13289,7 @@ async function handleSmsConsentEnrollment(form: HTMLFormElement): Promise<void> 
   const formData = new FormData(form);
   const recipientE164 = String(formData.get("recipientE164") ?? "").trim();
   const categories = formData.getAll("category").map(String).filter(
-    (value): value is SmsConsentCategory => ["call_sheet", "schedule_change", "safety_location_alert"].includes(value),
+    (value): value is SmsConsentCategory => isTelnyxSmsCategory(value),
   );
   if (!/^\+[1-9][0-9]{7,14}$/.test(recipientE164) || categories.length < 1 || formData.get("disclosureAcknowledged") !== "on") {
     state.ui.toast = "Crew text enrollment needs a +country-code mobile number, at least one category, and consent acknowledgment.";
@@ -13379,7 +13301,7 @@ async function handleSmsConsentEnrollment(form: HTMLFormElement): Promise<void> 
       workspaceId: state.workspace.id,
       recipientE164,
       categories,
-      disclosureVersion: SMS_DISCLOSURE_VERSION,
+      disclosureVersion: TELNYX_SMS_DISCLOSURE_VERSION,
     });
     form.reset();
     state.ui.toast = result.idempotent ? "Crew text consent was already recorded." : "Crew text consent recorded.";
@@ -13411,7 +13333,7 @@ async function handleSmsSend(form: HTMLFormElement): Promise<void> {
   if (
     recipientIds.length < 1
     || recipientIds.length > 10
-    || !["call_sheet", "schedule_change", "safety_location_alert"].includes(category)
+    || !isTelnyxSmsCategory(category)
     || !messageBody.trim()
     || messageBody.length > 1_200
   ) {
@@ -13424,7 +13346,7 @@ async function handleSmsSend(form: HTMLFormElement): Promise<void> {
       workspaceId: state.workspace.id,
       projectId: project.id,
       recipientIds,
-      category: category as "call_sheet" | "schedule_change" | "safety_location_alert",
+      category,
       messageBody,
       requestKey: crypto.randomUUID(),
       emergencyOverride,
@@ -14229,7 +14151,7 @@ function ownerTransferTargetsFor(
   if (entityType === "equipment") {
     return project.equipment.map((item) => ({ entityType, entityId: item.id, label: item.name }));
   }
-  return project.expenses.map((expense) => ({ entityType, entityId: expense.id, label: expense.category }));
+  return project.expenses.map((expense) => ({ entityType, entityId: expense.id, label: expenseCategoryLabel(expense) }));
 }
 
 function ownerTransferEntityLabel(entityType: OwnerTransferEntityType): string {
@@ -15697,7 +15619,7 @@ function createProjectPacketMarkdown(project: FilmProject, exportedAt: string): 
     ...project.equipment.map((item) => `- ${packetText(item.name)} - ${packetText(item.status)}`),
     "",
     "## Expenses",
-    ...project.expenses.map((expense) => `- ${packetText(expense.category)} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`),
+    ...project.expenses.map((expense) => `- ${packetText(expenseCategoryLabel(expense))} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`),
     "",
   ];
 
@@ -15937,7 +15859,7 @@ function createBudgetTopSheetMarkdown(project: FilmProject, exportedAt: string):
     "## Budget Lines",
     ...(
       project.expenses.length
-        ? project.expenses.map((expense) => `- ${packetText(expense.category)} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`)
+        ? project.expenses.map((expense) => `- ${packetText(expenseCategoryLabel(expense))} - ${formatCurrency(expense.spent)} spent of ${formatCurrency(expense.budget)} (${expense.percent}%)`)
         : ["No expense rows recorded."]
     ),
     "",

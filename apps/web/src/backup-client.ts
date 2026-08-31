@@ -1,4 +1,5 @@
 import type { BackupPlanningExport } from "@film/schema";
+import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
 export type BackupDryRunRestorePoint = {
   id: string;
@@ -91,8 +92,6 @@ type PlanningExportDryRunResponse = {
   planningExport?: BackupPlanningExport;
   error?: string;
 };
-
-type Fetcher = typeof fetch;
 
 export async function runBackupDryRun(
   workerUrl: string,
@@ -272,14 +271,6 @@ export async function runPlanningExportDryRun(
     throw new Error(body.error ?? `Planning export dry run failed with ${response.status}`);
   }
   return body.planningExport;
-}
-
-async function parseJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const body = (await response.json()) as T & BackupExportResponseError;
-  if (!response.ok) {
-    throw new Error(body.error ?? fallbackMessage);
-  }
-  return body;
 }
 
 function filenameFromContentDisposition(value: string | null): string | null {

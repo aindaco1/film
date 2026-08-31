@@ -1926,6 +1926,22 @@ type RestoreApplicationPreflightRow = {
   destructive_write: number;
   created_at: string;
 };
+type RestoreProofIdentity = {
+  workspaceId: string;
+  snapshotWorkspaceId: string;
+  backupCreatedAt: string;
+  preRestoreBackupId: string;
+  preview: RestoreCommitPreview;
+};
+type RestoreApprovalProof =
+  | { ok: true; preRestoreBackup: PreRestoreBackupProof; approval: RestoreApprovalRow }
+  | { ok: false; response: Response };
+type RestoreCommitAttemptProof =
+  | { ok: true; commitAttempt: RestoreCommitAttemptRow }
+  | { ok: false; response: Response };
+type RestoreApplicationPreflightProof =
+  | { ok: true; applicationPreflight: RestoreApplicationPreflightRow }
+  | { ok: false; response: Response };
 type RestorePlanningPreviewPersistence =
   | "dry_run_memoryless"
   | "d1_restore_planning_previews"
@@ -2594,6 +2610,13 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
           return json({ ok: true, snapshot: seedCanonicalWorkspaceSnapshot(auth.role, auth.memberId) });
         }
         return json({ error: "workspace_snapshot_unavailable", persistence: "d1_canonical_workspace_snapshot" }, 503);
+      }
+      if (
+        !isLiveMagicLinkDelivery(env)
+        && !auth.workspaceId
+        && snapshot.members.length === 0
+      ) {
+        return json({ ok: true, snapshot: seedCanonicalWorkspaceSnapshot(auth.role, auth.memberId) });
       }
       return json({ ok: true, snapshot });
     }
@@ -5261,7 +5284,14 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         return workspaceAccessError(auth);
       }
 
-      const result = await updateWorkspaceMemberStatus(env.DB, workspaceId, memberId, status, auth.role, auth.memberId);
+      const result = await updateWorkspaceMemberStatus(
+        sessionMutationDatabase(env, auth.workspaceId),
+        workspaceId,
+        memberId,
+        status,
+        auth.role,
+        auth.memberId,
+      );
       if (!result.ok) {
         return json({ error: result.error, persistence: result.persistence }, result.status);
       }
@@ -5298,7 +5328,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       }
 
       const result = await assignProjectMembership(
-        env.DB,
+        sessionMutationDatabase(env, auth.workspaceId),
         workspaceId,
         projectId,
         projectTitle,
@@ -7050,28 +7080,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreCommitDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreCommitDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
 
       const preview = normalizeRestoreCommitPreview(body.preview);
       if (!preview) {
@@ -7141,28 +7152,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreApprovalDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreApprovalDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
 
       const preview = normalizeRestoreCommitPreview(body.preview);
       if (!preview) {
@@ -7227,28 +7219,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreCommitStorageDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreCommitStorageDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
       const approvalId = body.approvalId?.trim() ?? "";
       if (!isValidRecordId(approvalId)) {
         return json({ error: "invalid_restore_approval" }, 400);
@@ -7275,44 +7248,15 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         }, 503);
       }
 
-      const preRestoreBackup = await verifyPreRestoreBackupProof(env.DB, workspaceId, preRestoreBackupId);
-      if (!preRestoreBackup.verified) {
-        return json({
-          error: "restore_pre_restore_backup_required",
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-          preRestoreBackupVerified: false,
-          preRestoreBackupPersistence: preRestoreBackup.persistence,
-          preRestoreBackupBlocker: preRestoreBackup.blocker,
-        }, 422);
-      }
-
-      const approval = await findRestoreApproval(env.DB, workspaceId, approvalId);
-      if (!approval) {
-        return json({ error: "restore_approval_not_found" }, 404);
-      }
-      if (approval.status !== "approved_pending_commit" || approval.destructive_write !== 0) {
-        return json({
-          error: "restore_approval_not_ready",
-          approvalStatus: approval.status,
-          destructiveWrite: approval.destructive_write === 1,
-        }, 422);
-      }
-      if (approval.snapshot_workspace_id !== snapshotWorkspaceId) {
-        return json({ error: "restore_approval_snapshot_mismatch" }, 422);
-      }
-      if ((approval.backup_created_at ?? "") !== backupCreatedAt) {
-        return json({ error: "restore_approval_backup_mismatch" }, 422);
-      }
-      if (approval.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_approval_pre_restore_backup_mismatch",
-          approvalPreRestoreBackupId: approval.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      if (!restoreApprovalPreviewMatches(approval, preview)) {
-        return json({ error: "restore_approval_preview_mismatch" }, 422);
-      }
+      const approvalProof = await loadRestoreApprovalProof(env.DB, {
+        workspaceId,
+        snapshotWorkspaceId,
+        backupCreatedAt,
+        preRestoreBackupId,
+        preview,
+      }, approvalId);
+      if (!approvalProof.ok) return approvalProof.response;
+      const { approval, preRestoreBackup } = approvalProof;
 
       const attempt = await recordRestoreCommitAttempt(
         env.DB,
@@ -7362,28 +7306,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreApplicationDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreApplicationDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
       const approvalId = body.approvalId?.trim() ?? "";
       if (!isValidRecordId(approvalId)) {
         return json({ error: "invalid_restore_approval" }, 400);
@@ -7419,70 +7344,26 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         }, 503);
       }
 
-      const preRestoreBackup = await verifyPreRestoreBackupProof(env.DB, workspaceId, preRestoreBackupId);
-      if (!preRestoreBackup.verified) {
-        return json({
-          error: "restore_pre_restore_backup_required",
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-          preRestoreBackupVerified: false,
-          preRestoreBackupPersistence: preRestoreBackup.persistence,
-          preRestoreBackupBlocker: preRestoreBackup.blocker,
-        }, 422);
-      }
+      const proofIdentity: RestoreProofIdentity = {
+        workspaceId,
+        snapshotWorkspaceId,
+        backupCreatedAt,
+        preRestoreBackupId,
+        preview,
+      };
+      const approvalProof = await loadRestoreApprovalProof(env.DB, proofIdentity, approvalId);
+      if (!approvalProof.ok) return approvalProof.response;
+      const { approval, preRestoreBackup } = approvalProof;
 
-      const approval = await findRestoreApproval(env.DB, workspaceId, approvalId);
-      if (!approval) {
-        return json({ error: "restore_approval_not_found" }, 404);
-      }
-      if (approval.status !== "approved_pending_commit" || approval.destructive_write !== 0) {
-        return json({
-          error: "restore_approval_not_ready",
-          approvalStatus: approval.status,
-          destructiveWrite: approval.destructive_write === 1,
-        }, 422);
-      }
-      if (approval.snapshot_workspace_id !== snapshotWorkspaceId) {
-        return json({ error: "restore_approval_snapshot_mismatch" }, 422);
-      }
-      if ((approval.backup_created_at ?? "") !== backupCreatedAt) {
-        return json({ error: "restore_approval_backup_mismatch" }, 422);
-      }
-      if (approval.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_approval_pre_restore_backup_mismatch",
-          approvalPreRestoreBackupId: approval.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      if (!restoreApprovalPreviewMatches(approval, preview)) {
-        return json({ error: "restore_approval_preview_mismatch" }, 422);
-      }
-
-      const commitAttempt = await findRestoreCommitAttempt(env.DB, workspaceId, commitAttemptId);
-      if (!commitAttempt) {
-        return json({ error: "restore_commit_attempt_not_found" }, 404);
-      }
-      if (commitAttempt.status !== "blocked_until_restore_apply" || commitAttempt.destructive_write !== 0) {
-        return json({
-          error: "restore_commit_attempt_not_ready",
-          commitAttemptStatus: commitAttempt.status,
-          destructiveWrite: commitAttempt.destructive_write === 1,
-        }, 422);
-      }
-      if (commitAttempt.approval_id !== approval.id) {
-        return json({ error: "restore_commit_attempt_approval_mismatch" }, 422);
-      }
-      if (commitAttempt.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_commit_attempt_pre_restore_backup_mismatch",
-          commitAttemptPreRestoreBackupId: commitAttempt.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      const commitAttemptPreview = restorePreviewFromJson(commitAttempt.preview_json);
-      if (!commitAttemptPreview || !restorePreviewsEqual(commitAttemptPreview, preview)) {
-        return json({ error: "restore_commit_attempt_preview_mismatch" }, 422);
-      }
+      const commitAttemptProof = await loadRestoreCommitAttemptProof(
+        env.DB,
+        proofIdentity,
+        approval,
+        preRestoreBackup,
+        commitAttemptId,
+      );
+      if (!commitAttemptProof.ok) return commitAttemptProof.response;
+      const { commitAttempt } = commitAttemptProof;
 
       const applicationPreflight = await recordRestoreApplicationPreflight(
         env.DB,
@@ -7538,28 +7419,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreApplicationCommitRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreApplicationCommitRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
       const approvalId = body.approvalId?.trim() ?? "";
       if (!isValidRecordId(approvalId)) {
         return json({ error: "invalid_restore_approval" }, 400);
@@ -7614,115 +7476,38 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         }, 503);
       }
 
-      const preRestoreBackup = await verifyPreRestoreBackupProof(env.DB, workspaceId, preRestoreBackupId);
-      if (!preRestoreBackup.verified) {
-        return json({
-          error: "restore_pre_restore_backup_required",
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-          preRestoreBackupVerified: false,
-          preRestoreBackupPersistence: preRestoreBackup.persistence,
-          preRestoreBackupBlocker: preRestoreBackup.blocker,
-        }, 422);
-      }
+      const proofIdentity: RestoreProofIdentity = {
+        workspaceId,
+        snapshotWorkspaceId,
+        backupCreatedAt,
+        preRestoreBackupId,
+        preview,
+      };
+      const approvalProof = await loadRestoreApprovalProof(env.DB, proofIdentity, approvalId);
+      if (!approvalProof.ok) return approvalProof.response;
+      const { approval, preRestoreBackup } = approvalProof;
 
-      const approval = await findRestoreApproval(env.DB, workspaceId, approvalId);
-      if (!approval) {
-        return json({ error: "restore_approval_not_found" }, 404);
-      }
-      if (approval.status !== "approved_pending_commit" || approval.destructive_write !== 0) {
-        return json({
-          error: "restore_approval_not_ready",
-          approvalStatus: approval.status,
-          destructiveWrite: approval.destructive_write === 1,
-        }, 422);
-      }
-      if (approval.snapshot_workspace_id !== snapshotWorkspaceId) {
-        return json({ error: "restore_approval_snapshot_mismatch" }, 422);
-      }
-      if ((approval.backup_created_at ?? "") !== backupCreatedAt) {
-        return json({ error: "restore_approval_backup_mismatch" }, 422);
-      }
-      if (approval.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_approval_pre_restore_backup_mismatch",
-          approvalPreRestoreBackupId: approval.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      if (!restoreApprovalPreviewMatches(approval, preview)) {
-        return json({ error: "restore_approval_preview_mismatch" }, 422);
-      }
+      const commitAttemptProof = await loadRestoreCommitAttemptProof(
+        env.DB,
+        proofIdentity,
+        approval,
+        preRestoreBackup,
+        commitAttemptId,
+      );
+      if (!commitAttemptProof.ok) return commitAttemptProof.response;
+      const { commitAttempt } = commitAttemptProof;
 
-      const commitAttempt = await findRestoreCommitAttempt(env.DB, workspaceId, commitAttemptId);
-      if (!commitAttempt) {
-        return json({ error: "restore_commit_attempt_not_found" }, 404);
-      }
-      if (commitAttempt.status !== "blocked_until_restore_apply" || commitAttempt.destructive_write !== 0) {
-        return json({
-          error: "restore_commit_attempt_not_ready",
-          commitAttemptStatus: commitAttempt.status,
-          destructiveWrite: commitAttempt.destructive_write === 1,
-        }, 422);
-      }
-      if (commitAttempt.approval_id !== approval.id) {
-        return json({ error: "restore_commit_attempt_approval_mismatch" }, 422);
-      }
-      if (commitAttempt.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_commit_attempt_pre_restore_backup_mismatch",
-          commitAttemptPreRestoreBackupId: commitAttempt.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      const commitAttemptPreview = restorePreviewFromJson(commitAttempt.preview_json);
-      if (!commitAttemptPreview || !restorePreviewsEqual(commitAttemptPreview, preview)) {
-        return json({ error: "restore_commit_attempt_preview_mismatch" }, 422);
-      }
-
-      const applicationPreflight = await findRestoreApplicationPreflight(env.DB, workspaceId, applicationPreflightId);
-      if (!applicationPreflight) {
-        return json({ error: "restore_application_preflight_not_found" }, 404);
-      }
-      if (
-        applicationPreflight.status !== "blocked_until_restore_apply_implementation"
-        || applicationPreflight.destructive_write !== 0
-      ) {
-        return json({
-          error: "restore_application_preflight_not_ready",
-          applicationPreflightStatus: applicationPreflight.status,
-          destructiveWrite: applicationPreflight.destructive_write === 1,
-        }, 422);
-      }
-      if (applicationPreflight.approval_id !== approval.id) {
-        return json({ error: "restore_application_preflight_approval_mismatch" }, 422);
-      }
-      if (applicationPreflight.commit_attempt_id !== commitAttempt.id) {
-        return json({ error: "restore_application_preflight_commit_attempt_mismatch" }, 422);
-      }
-      if (applicationPreflight.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_application_preflight_pre_restore_backup_mismatch",
-          applicationPreflightPreRestoreBackupId: applicationPreflight.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      const preflightPreview = restorePreviewFromJson(applicationPreflight.preview_json);
-      if (!preflightPreview || !restorePreviewsEqual(preflightPreview, preview)) {
-        return json({ error: "restore_application_preflight_preview_mismatch" }, 422);
-      }
-      const preflightApplicationTablePlan = restoreApplicationTablePlanFromRollbackGuidance(applicationPreflight.rollback_guidance_json);
-      if (preflightApplicationTablePlan === null) {
-        return json({ error: "restore_application_preflight_table_plan_invalid" }, 422);
-      }
-      if (
-        preflightApplicationTablePlan.length > 0
-        && !restoreApplicationTablePlansEqual(preflightApplicationTablePlan, applicationTablePlan)
-      ) {
-        return json({
-          error: "restore_application_preflight_table_plan_mismatch",
-          destructiveWrite: false,
-        }, 422);
-      }
+      const applicationPreflightProof = await loadRestoreApplicationPreflightProof(
+        env.DB,
+        proofIdentity,
+        approval,
+        commitAttempt,
+        preRestoreBackup,
+        applicationPreflightId,
+        applicationTablePlan,
+      );
+      if (!applicationPreflightProof.ok) return applicationPreflightProof.response;
+      const { applicationPreflight } = applicationPreflightProof;
 
       const conflictRejections = await restoreCoreRecordConflictRejections(env.DB, workspaceId, records);
       if (conflictRejections.length > 0) {
@@ -7797,24 +7582,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestorePlanningDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestorePlanningDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt } = identity;
 
       const records = body.records ?? [];
       if (!Array.isArray(records) || records.length > 1000) {
@@ -7860,28 +7630,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestorePlanningCommitRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
-      const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
-      if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
-        return json({ error: "invalid_pre_restore_backup" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestorePlanningCommitRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt, preRestoreBackupId } = identity;
       const approvalId = body.approvalId?.trim() ?? "";
       if (!isValidRecordId(approvalId)) {
         return json({ error: "invalid_restore_approval" }, 400);
@@ -7935,102 +7686,37 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         }, 503);
       }
 
-      const preRestoreBackup = await verifyPreRestoreBackupProof(env.DB, workspaceId, preRestoreBackupId);
-      if (!preRestoreBackup.verified) {
-        return json({
-          error: "restore_pre_restore_backup_required",
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-          preRestoreBackupVerified: false,
-          preRestoreBackupPersistence: preRestoreBackup.persistence,
-          preRestoreBackupBlocker: preRestoreBackup.blocker,
-        }, 422);
-      }
+      const proofIdentity: RestoreProofIdentity = {
+        workspaceId,
+        snapshotWorkspaceId,
+        backupCreatedAt,
+        preRestoreBackupId,
+        preview,
+      };
+      const approvalProof = await loadRestoreApprovalProof(env.DB, proofIdentity, approvalId);
+      if (!approvalProof.ok) return approvalProof.response;
+      const { approval, preRestoreBackup } = approvalProof;
 
-      const approval = await findRestoreApproval(env.DB, workspaceId, approvalId);
-      if (!approval) {
-        return json({ error: "restore_approval_not_found" }, 404);
-      }
-      if (approval.status !== "approved_pending_commit" || approval.destructive_write !== 0) {
-        return json({
-          error: "restore_approval_not_ready",
-          approvalStatus: approval.status,
-          destructiveWrite: approval.destructive_write === 1,
-        }, 422);
-      }
-      if (approval.snapshot_workspace_id !== snapshotWorkspaceId) {
-        return json({ error: "restore_approval_snapshot_mismatch" }, 422);
-      }
-      if ((approval.backup_created_at ?? "") !== backupCreatedAt) {
-        return json({ error: "restore_approval_backup_mismatch" }, 422);
-      }
-      if (approval.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_approval_pre_restore_backup_mismatch",
-          approvalPreRestoreBackupId: approval.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      if (!restoreApprovalPreviewMatches(approval, preview)) {
-        return json({ error: "restore_approval_preview_mismatch" }, 422);
-      }
+      const commitAttemptProof = await loadRestoreCommitAttemptProof(
+        env.DB,
+        proofIdentity,
+        approval,
+        preRestoreBackup,
+        commitAttemptId,
+      );
+      if (!commitAttemptProof.ok) return commitAttemptProof.response;
+      const { commitAttempt } = commitAttemptProof;
 
-      const commitAttempt = await findRestoreCommitAttempt(env.DB, workspaceId, commitAttemptId);
-      if (!commitAttempt) {
-        return json({ error: "restore_commit_attempt_not_found" }, 404);
-      }
-      if (commitAttempt.status !== "blocked_until_restore_apply" || commitAttempt.destructive_write !== 0) {
-        return json({
-          error: "restore_commit_attempt_not_ready",
-          commitAttemptStatus: commitAttempt.status,
-          destructiveWrite: commitAttempt.destructive_write === 1,
-        }, 422);
-      }
-      if (commitAttempt.approval_id !== approval.id) {
-        return json({ error: "restore_commit_attempt_approval_mismatch" }, 422);
-      }
-      if (commitAttempt.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_commit_attempt_pre_restore_backup_mismatch",
-          commitAttemptPreRestoreBackupId: commitAttempt.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      const commitAttemptPreview = restorePreviewFromJson(commitAttempt.preview_json);
-      if (!commitAttemptPreview || !restorePreviewsEqual(commitAttemptPreview, preview)) {
-        return json({ error: "restore_commit_attempt_preview_mismatch" }, 422);
-      }
-
-      const applicationPreflight = await findRestoreApplicationPreflight(env.DB, workspaceId, applicationPreflightId);
-      if (!applicationPreflight) {
-        return json({ error: "restore_application_preflight_not_found" }, 404);
-      }
-      if (
-        applicationPreflight.status !== "blocked_until_restore_apply_implementation"
-        || applicationPreflight.destructive_write !== 0
-      ) {
-        return json({
-          error: "restore_application_preflight_not_ready",
-          applicationPreflightStatus: applicationPreflight.status,
-          destructiveWrite: applicationPreflight.destructive_write === 1,
-        }, 422);
-      }
-      if (applicationPreflight.approval_id !== approval.id) {
-        return json({ error: "restore_application_preflight_approval_mismatch" }, 422);
-      }
-      if (applicationPreflight.commit_attempt_id !== commitAttempt.id) {
-        return json({ error: "restore_application_preflight_commit_attempt_mismatch" }, 422);
-      }
-      if (applicationPreflight.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
-        return json({
-          error: "restore_application_preflight_pre_restore_backup_mismatch",
-          applicationPreflightPreRestoreBackupId: applicationPreflight.pre_restore_backup_id,
-          preRestoreBackupId: preRestoreBackup.restorePointId,
-        }, 422);
-      }
-      const preflightPreview = restorePreviewFromJson(applicationPreflight.preview_json);
-      if (!preflightPreview || !restorePreviewsEqual(preflightPreview, preview)) {
-        return json({ error: "restore_application_preflight_preview_mismatch" }, 422);
-      }
+      const applicationPreflightProof = await loadRestoreApplicationPreflightProof(
+        env.DB,
+        proofIdentity,
+        approval,
+        commitAttempt,
+        preRestoreBackup,
+        applicationPreflightId,
+      );
+      if (!applicationPreflightProof.ok) return applicationPreflightProof.response;
+      const { applicationPreflight } = applicationPreflightProof;
 
       const planningPreview = await findRestorePlanningPreview(env.DB, workspaceId, planningPreviewId);
       if (!planningPreview) {
@@ -8134,24 +7820,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
       if (!auth.ok) return mutationAuthError(auth);
 
-      const body = await readJson<RestoreAttachmentPackageDryRunRequest>(request);
-      const workspaceId = body.workspaceId?.trim() ?? "";
-      if (!isValidWorkspaceId(workspaceId)) {
-        return json({ error: "invalid_workspace" }, 400);
-      }
-      if (!hasWorkspaceAccess(auth, workspaceId)) {
-        return workspaceAccessError(auth);
-      }
-
-      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-      if (snapshotWorkspaceId !== workspaceId) {
-        return json({ error: "snapshot_workspace_mismatch" }, 422);
-      }
-
-      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-        return json({ error: "invalid_backup_created_at" }, 400);
-      }
+      const identity = await readRestoreRequestIdentity<RestoreAttachmentPackageDryRunRequest>(request, auth);
+      if (!identity.ok) return identity.response;
+      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt } = identity;
 
       const attachmentPackagePlan = normalizeRestoreAttachmentPackagePlan(body.attachmentPackagePlan);
       if (!attachmentPackagePlan) {
@@ -8202,24 +7873,9 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
 	      const auth = await requireMutationAuth(request, env, OWNER_PRODUCER_ROLES);
 	      if (!auth.ok) return mutationAuthError(auth);
 
-	      const body = await readJson<RestoreAttachmentPackageVerificationDryRunRequest>(request);
-	      const workspaceId = body.workspaceId?.trim() ?? "";
-	      if (!isValidWorkspaceId(workspaceId)) {
-	        return json({ error: "invalid_workspace" }, 400);
-	      }
-	      if (!hasWorkspaceAccess(auth, workspaceId)) {
-	        return workspaceAccessError(auth);
-	      }
-
-	      const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
-	      if (snapshotWorkspaceId !== workspaceId) {
-	        return json({ error: "snapshot_workspace_mismatch" }, 422);
-	      }
-
-	      const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
-	      if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
-	        return json({ error: "invalid_backup_created_at" }, 400);
-	      }
+	      const identity = await readRestoreRequestIdentity<RestoreAttachmentPackageVerificationDryRunRequest>(request, auth);
+	      if (!identity.ok) return identity.response;
+	      const { body, workspaceId, snapshotWorkspaceId, backupCreatedAt } = identity;
 
 	      const attachmentPackagePreflightId = body.attachmentPackagePreflightId?.trim() ?? "";
 	      const packageSha256 = body.packageSha256?.trim().toLowerCase() ?? "";
@@ -9593,6 +9249,61 @@ async function readJson<T>(request: Request): Promise<T> {
   } catch {
     return {} as T;
   }
+}
+
+type RestoreRequestIdentityBody = {
+  workspaceId?: string;
+  snapshotWorkspaceId?: string;
+  backupCreatedAt?: string;
+  preRestoreBackupId?: string;
+};
+
+type RestoreRequestIdentity<T extends RestoreRequestIdentityBody> =
+  | {
+      ok: true;
+      body: T;
+      workspaceId: string;
+      snapshotWorkspaceId: string;
+      backupCreatedAt: string;
+      preRestoreBackupId: string;
+    }
+  | { ok: false; response: Response };
+
+async function readRestoreRequestIdentity<T extends RestoreRequestIdentityBody>(
+  request: Request,
+  auth: Extract<MutationAuthResult, { ok: true }>,
+): Promise<RestoreRequestIdentity<T>> {
+  const body = await readJson<T>(request);
+  const workspaceId = body.workspaceId?.trim() ?? "";
+  if (!isValidWorkspaceId(workspaceId)) {
+    return { ok: false, response: json({ error: "invalid_workspace" }, 400) };
+  }
+  if (!hasWorkspaceAccess(auth, workspaceId)) {
+    return { ok: false, response: workspaceAccessError(auth) };
+  }
+
+  const snapshotWorkspaceId = body.snapshotWorkspaceId?.trim() || workspaceId;
+  if (snapshotWorkspaceId !== workspaceId) {
+    return { ok: false, response: json({ error: "snapshot_workspace_mismatch" }, 422) };
+  }
+
+  const backupCreatedAt = body.backupCreatedAt?.trim() ?? "";
+  if (backupCreatedAt && Number.isNaN(Date.parse(backupCreatedAt))) {
+    return { ok: false, response: json({ error: "invalid_backup_created_at" }, 400) };
+  }
+  const preRestoreBackupId = body.preRestoreBackupId?.trim() ?? "";
+  if (preRestoreBackupId && !isValidRecordId(preRestoreBackupId)) {
+    return { ok: false, response: json({ error: "invalid_pre_restore_backup" }, 400) };
+  }
+
+  return {
+    ok: true,
+    body,
+    workspaceId,
+    snapshotWorkspaceId,
+    backupCreatedAt,
+    preRestoreBackupId,
+  };
 }
 
 function parseJsonObject<T>(value: string): T | null {
@@ -12411,7 +12122,7 @@ async function updateWorkspaceMemberStatus(
   const dryRunMember: WorkspaceMemberStatusUpdateSummary = {
     workspaceId,
     memberId,
-    role: "contributor",
+    role: seedWorkspace.members.find((member) => member.id === memberId)?.role ?? "contributor",
     status,
   };
 
@@ -14330,6 +14041,39 @@ async function resolveFilmProfileMutationRequest(
   }
 }
 
+async function prepareFilmProfileMutationChanges(
+  db: D1Database,
+  workspaceId: string,
+  request: FilmProfileMutationRequestSummary,
+  value: unknown,
+): Promise<
+  | {
+      ok: true;
+      updates: RecordMutationFieldUpdate[];
+      fieldDiffs: RecordMutationFieldDiff[];
+      expectedUpdatedAt: string | null;
+    }
+  | { ok: false; error: string; status: number }
+> {
+  const normalized = normalizeFilmProfileMutationUpdates(request.fieldKeys, value);
+  if (!normalized.ok) return { ok: false, error: normalized.error, status: 422 };
+
+  const valueSnapshot = await readFilmProfileMutationValueSnapshot(
+    db,
+    workspaceId,
+    request.projectId,
+    normalized.updates,
+  );
+  if (!valueSnapshot.ok) return valueSnapshot;
+
+  return {
+    ok: true,
+    updates: normalized.updates,
+    fieldDiffs: createRecordMutationFieldDiffs(normalized.updates, valueSnapshot.values),
+    expectedUpdatedAt: valueSnapshot.expectedUpdatedAt,
+  };
+}
+
 async function previewFilmProfileMutationRequestDiff(
   db: D1Database | undefined,
   workspaceId: string,
@@ -14369,38 +14113,30 @@ async function previewFilmProfileMutationRequestDiff(
       };
     }
 
-    const fieldUpdates = normalizeFilmProfileMutationUpdates(request.fieldKeys, updates);
-    if (!fieldUpdates.ok) {
+    const preparedChanges = await prepareFilmProfileMutationChanges(db, workspaceId, request, updates);
+    if (!preparedChanges.ok) {
       return {
         ok: false,
         persistence: "d1_film_profile_mutation_requests",
-        error: fieldUpdates.error,
-        status: 422,
-        request,
-      };
-    }
-    const valueSnapshot = await readFilmProfileMutationValueSnapshot(db, workspaceId, request.projectId, fieldUpdates.updates);
-    if (!valueSnapshot.ok) {
-      return {
-        ok: false,
-        persistence: "d1_film_profile_mutation_requests",
-        error: valueSnapshot.error,
-        status: valueSnapshot.status,
+        error: preparedChanges.error,
+        status: preparedChanges.status,
         request,
       };
     }
 
-    const fieldDiffs = createRecordMutationFieldDiffs(fieldUpdates.updates, valueSnapshot.values);
     return {
       ok: true,
       persistence: "d1_film_profile_mutation_requests",
       preview: {
         request,
-        stale: valueSnapshot.expectedUpdatedAt !== request.expectedUpdatedAt,
-        currentUpdatedAt: valueSnapshot.expectedUpdatedAt,
+        stale: preparedChanges.expectedUpdatedAt !== request.expectedUpdatedAt,
+        currentUpdatedAt: preparedChanges.expectedUpdatedAt,
         expectedUpdatedAt: request.expectedUpdatedAt,
-        fieldDiffs,
-        rollbackGuidance: recordMutationRollbackGuidance("update", fieldDiffs.map((diff) => diff.key)),
+        fieldDiffs: preparedChanges.fieldDiffs,
+        rollbackGuidance: recordMutationRollbackGuidance(
+          "update",
+          preparedChanges.fieldDiffs.map((diff) => diff.key),
+        ),
       },
     };
   } catch {
@@ -14489,29 +14225,25 @@ async function applyFilmProfileMutationRequest(
       };
     }
 
-    const fieldUpdates = normalizeFilmProfileMutationUpdates(request.fieldKeys, updates);
-    if (!fieldUpdates.ok) {
+    const preparedChanges = await prepareFilmProfileMutationChanges(db, workspaceId, request, updates);
+    if (!preparedChanges.ok) {
       return {
         ok: false,
         persistence: "d1_film_profile_mutation_requests",
-        error: fieldUpdates.error,
-        status: 422,
-        request,
-      };
-    }
-    const valueSnapshot = await readFilmProfileMutationValueSnapshot(db, workspaceId, request.projectId, fieldUpdates.updates);
-    if (!valueSnapshot.ok) {
-      return {
-        ok: false,
-        persistence: "d1_film_profile_mutation_requests",
-        error: valueSnapshot.error,
-        status: valueSnapshot.status,
+        error: preparedChanges.error,
+        status: preparedChanges.status,
         request,
       };
     }
 
-    if (valueSnapshot.expectedUpdatedAt !== request.expectedUpdatedAt) {
-      const staleRequest = await markFilmProfileMutationRequestStale(db, workspaceId, requestId, actorMemberId, valueSnapshot.expectedUpdatedAt);
+    if (preparedChanges.expectedUpdatedAt !== request.expectedUpdatedAt) {
+      const staleRequest = await markFilmProfileMutationRequestStale(
+        db,
+        workspaceId,
+        requestId,
+        actorMemberId,
+        preparedChanges.expectedUpdatedAt,
+      );
       return {
         ok: false,
         persistence: "d1_film_profile_mutation_requests",
@@ -14522,17 +14254,19 @@ async function applyFilmProfileMutationRequest(
     }
 
     const appliedAt = new Date().toISOString();
-    const fieldDiffs = createRecordMutationFieldDiffs(fieldUpdates.updates, valueSnapshot.values);
     const application: RecordMutationApplicationSummary = {
       action: "update",
       applied: true,
       idempotent: false,
-      fieldKeys: fieldUpdates.updates.map((update) => update.key),
-      previousUpdatedAt: valueSnapshot.expectedUpdatedAt,
+      fieldKeys: preparedChanges.updates.map((update) => update.key),
+      previousUpdatedAt: preparedChanges.expectedUpdatedAt,
       updatedAt: appliedAt,
       deletedAt: null,
-      fieldDiffs,
-      rollbackGuidance: recordMutationRollbackGuidance("update", fieldDiffs.map((diff) => diff.key)),
+      fieldDiffs: preparedChanges.fieldDiffs,
+      rollbackGuidance: recordMutationRollbackGuidance(
+        "update",
+        preparedChanges.fieldDiffs.map((diff) => diff.key),
+      ),
     };
 
     const writeApplied = await commitFilmProfileMutationApplication(
@@ -14540,15 +14274,20 @@ async function applyFilmProfileMutationRequest(
       workspaceId,
       requestId,
       request.projectId,
-      fieldUpdates.updates,
-      valueSnapshot.expectedUpdatedAt,
+      preparedChanges.updates,
+      preparedChanges.expectedUpdatedAt,
       actorMemberId,
       application,
       appliedAt,
     );
     if (!writeApplied) {
-      const currentSnapshot = await readFilmProfileMutationValueSnapshot(db, workspaceId, request.projectId, fieldUpdates.updates);
-      if (currentSnapshot.ok && currentSnapshot.expectedUpdatedAt !== valueSnapshot.expectedUpdatedAt) {
+      const currentSnapshot = await readFilmProfileMutationValueSnapshot(
+        db,
+        workspaceId,
+        request.projectId,
+        preparedChanges.updates,
+      );
+      if (currentSnapshot.ok && currentSnapshot.expectedUpdatedAt !== preparedChanges.expectedUpdatedAt) {
         const staleRequest = await markFilmProfileMutationRequestStale(
           db,
           workspaceId,
@@ -14790,6 +14529,49 @@ async function resolveRecordMutationRequest(
   }
 }
 
+async function prepareRecordMutationChanges(
+  db: D1Database,
+  workspaceId: string,
+  request: RecordMutationRequestSummary,
+  value: unknown,
+): Promise<
+  | { ok: true; updates: RecordMutationFieldUpdate[]; fieldDiffs: RecordMutationFieldDiff[] }
+  | { ok: false; error: string; status: number }
+> {
+  const normalized = request.mutation === "update"
+    ? normalizeRecordMutationUpdates(request.entityType, request.fieldKeys, value)
+    : { ok: true as const, updates: [] as RecordMutationFieldUpdate[] };
+  if (!normalized.ok) return { ok: false, error: normalized.error, status: 422 };
+
+  if (request.mutation === "delete") {
+    return { ok: true, updates: normalized.updates, fieldDiffs: createRecordMutationDeleteDiff() };
+  }
+
+  const relationshipValidation = await validateRecordMutationRelationships(
+    db,
+    workspaceId,
+    request.entityType,
+    request.entityId,
+    normalized.updates,
+  );
+  if (!relationshipValidation.ok) return relationshipValidation;
+
+  const valueSnapshot = await readCoreRecordMutationValueSnapshot(
+    db,
+    workspaceId,
+    request.entityType,
+    request.entityId,
+    normalized.updates,
+  );
+  if (!valueSnapshot.ok) return valueSnapshot;
+
+  return {
+    ok: true,
+    updates: normalized.updates,
+    fieldDiffs: createRecordMutationFieldDiffs(normalized.updates, valueSnapshot.record.values),
+  };
+}
+
 async function previewRecordMutationRequestDiff(
   db: D1Database | undefined,
   workspaceId: string,
@@ -14840,46 +14622,16 @@ async function previewRecordMutationRequestDiff(
       };
     }
 
-    const fieldUpdates: { ok: true; updates: RecordMutationFieldUpdate[] } | { ok: false; error: string } = request.mutation === "update"
-      ? normalizeRecordMutationUpdates(request.entityType, request.fieldKeys, updates)
-      : { ok: true, updates: [] as RecordMutationFieldUpdate[] };
-    if (!fieldUpdates.ok) {
+    const preparedChanges = await prepareRecordMutationChanges(db, workspaceId, request, updates);
+    if (!preparedChanges.ok) {
       return {
         ok: false,
         persistence: "d1_record_mutation_requests",
-        error: fieldUpdates.error,
-        status: 422,
+        error: preparedChanges.error,
+        status: preparedChanges.status,
         request,
       };
     }
-    const relationshipValidation = request.mutation === "update"
-      ? await validateRecordMutationRelationships(db, workspaceId, request.entityType, request.entityId, fieldUpdates.updates)
-      : { ok: true as const };
-    if (!relationshipValidation.ok) {
-      return {
-        ok: false,
-        persistence: "d1_record_mutation_requests",
-        error: relationshipValidation.error,
-        status: relationshipValidation.status,
-        request,
-      };
-    }
-
-    const valueSnapshot = request.mutation === "update"
-      ? await readCoreRecordMutationValueSnapshot(db, workspaceId, request.entityType, request.entityId, fieldUpdates.updates)
-      : null;
-    if (valueSnapshot && !valueSnapshot.ok) {
-      return {
-        ok: false,
-        persistence: "d1_record_mutation_requests",
-        error: valueSnapshot.error,
-        status: valueSnapshot.status,
-        request,
-      };
-    }
-    const fieldDiffs = request.mutation === "update" && valueSnapshot?.ok
-      ? createRecordMutationFieldDiffs(fieldUpdates.updates, valueSnapshot.record.values)
-      : createRecordMutationDeleteDiff();
 
     return {
       ok: true,
@@ -14889,8 +14641,11 @@ async function previewRecordMutationRequestDiff(
         stale: snapshot.record.updatedAt !== request.expectedUpdatedAt,
         currentUpdatedAt: snapshot.record.updatedAt,
         expectedUpdatedAt: request.expectedUpdatedAt,
-        fieldDiffs,
-        rollbackGuidance: recordMutationRollbackGuidance(request.mutation, fieldDiffs.map((diff) => diff.key)),
+        fieldDiffs: preparedChanges.fieldDiffs,
+        rollbackGuidance: recordMutationRollbackGuidance(
+          request.mutation,
+          preparedChanges.fieldDiffs.map((diff) => diff.key),
+        ),
       },
     };
   } catch {
@@ -15243,56 +14998,30 @@ async function applyRecordMutationRequest(
     }
 
     const appliedAt = new Date().toISOString();
-    const fieldUpdates: { ok: true; updates: RecordMutationFieldUpdate[] } | { ok: false; error: string } = request.mutation === "update"
-      ? normalizeRecordMutationUpdates(request.entityType, request.fieldKeys, updates)
-      : { ok: true, updates: [] as RecordMutationFieldUpdate[] };
-    if (!fieldUpdates.ok) {
+    const preparedChanges = await prepareRecordMutationChanges(db, workspaceId, request, updates);
+    if (!preparedChanges.ok) {
       return {
         ok: false,
         persistence: "d1_record_mutation_requests",
-        error: fieldUpdates.error,
-        status: 422,
+        error: preparedChanges.error,
+        status: preparedChanges.status,
         request,
       };
     }
-    const relationshipValidation = request.mutation === "update"
-      ? await validateRecordMutationRelationships(db, workspaceId, request.entityType, request.entityId, fieldUpdates.updates)
-      : { ok: true as const };
-    if (!relationshipValidation.ok) {
-      return {
-        ok: false,
-        persistence: "d1_record_mutation_requests",
-        error: relationshipValidation.error,
-        status: relationshipValidation.status,
-        request,
-      };
-    }
-    const valueSnapshot = request.mutation === "update"
-      ? await readCoreRecordMutationValueSnapshot(db, workspaceId, request.entityType, request.entityId, fieldUpdates.updates)
-      : null;
-    if (valueSnapshot && !valueSnapshot.ok) {
-      return {
-        ok: false,
-        persistence: "d1_record_mutation_requests",
-        error: valueSnapshot.error,
-        status: valueSnapshot.status,
-        request,
-      };
-    }
-    const fieldDiffs = request.mutation === "update" && valueSnapshot?.ok
-      ? createRecordMutationFieldDiffs(fieldUpdates.updates, valueSnapshot.record.values)
-      : createRecordMutationDeleteDiff();
 
     const application: RecordMutationApplicationSummary = {
       action: request.mutation,
       applied: true,
       idempotent: false,
-      fieldKeys: fieldUpdates.updates.map((update) => update.key),
+      fieldKeys: preparedChanges.updates.map((update) => update.key),
       previousUpdatedAt: snapshot.record.updatedAt,
       updatedAt: request.mutation === "update" ? appliedAt : null,
       deletedAt: request.mutation === "delete" ? appliedAt : null,
-      fieldDiffs,
-      rollbackGuidance: recordMutationRollbackGuidance(request.mutation, fieldDiffs.map((diff) => diff.key)),
+      fieldDiffs: preparedChanges.fieldDiffs,
+      rollbackGuidance: recordMutationRollbackGuidance(
+        request.mutation,
+        preparedChanges.fieldDiffs.map((diff) => diff.key),
+      ),
     };
 
     const writeApplied = await commitCoreRecordMutationApplication(
@@ -15302,7 +15031,7 @@ async function applyRecordMutationRequest(
       request.entityType,
       request.entityId,
       request.mutation,
-      fieldUpdates.updates,
+      preparedChanges.updates,
       snapshot.record.updatedAt,
       actorMemberId,
       application,
@@ -17128,6 +16857,10 @@ function isValidMagicLinkToken(token: string | undefined): token is string {
 
 function isLiveMagicLinkDelivery(env: Env): boolean {
   return env.AUTH_MAGIC_LINK_MODE?.trim().toLowerCase() === "live";
+}
+
+function sessionMutationDatabase(env: Env, authenticatedWorkspaceId: string | null): D1Database | undefined {
+  return !isLiveMagicLinkDelivery(env) && !authenticatedWorkspaceId ? undefined : env.DB;
 }
 
 async function deliverLiveMagicLink(
@@ -23296,6 +23029,174 @@ function restoreRollbackGuidance(
 function restoreApprovalPreviewMatches(approval: RestoreApprovalRow, preview: RestoreCommitPreview): boolean {
   const approvedPreview = restorePreviewFromJson(approval.preview_json);
   return Boolean(approvedPreview && restorePreviewsEqual(approvedPreview, preview));
+}
+
+async function loadRestoreApprovalProof(
+  db: D1Database,
+  identity: RestoreProofIdentity,
+  approvalId: string,
+): Promise<RestoreApprovalProof> {
+  const preRestoreBackup = await verifyPreRestoreBackupProof(
+    db,
+    identity.workspaceId,
+    identity.preRestoreBackupId,
+  );
+  if (!preRestoreBackup.verified) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_pre_restore_backup_required",
+        preRestoreBackupId: preRestoreBackup.restorePointId,
+        preRestoreBackupVerified: false,
+        preRestoreBackupPersistence: preRestoreBackup.persistence,
+        preRestoreBackupBlocker: preRestoreBackup.blocker,
+      }, 422),
+    };
+  }
+
+  const approval = await findRestoreApproval(db, identity.workspaceId, approvalId);
+  if (!approval) {
+    return { ok: false, response: json({ error: "restore_approval_not_found" }, 404) };
+  }
+  if (approval.status !== "approved_pending_commit" || approval.destructive_write !== 0) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_approval_not_ready",
+        approvalStatus: approval.status,
+        destructiveWrite: approval.destructive_write === 1,
+      }, 422),
+    };
+  }
+  if (approval.snapshot_workspace_id !== identity.snapshotWorkspaceId) {
+    return { ok: false, response: json({ error: "restore_approval_snapshot_mismatch" }, 422) };
+  }
+  if ((approval.backup_created_at ?? "") !== identity.backupCreatedAt) {
+    return { ok: false, response: json({ error: "restore_approval_backup_mismatch" }, 422) };
+  }
+  if (approval.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_approval_pre_restore_backup_mismatch",
+        approvalPreRestoreBackupId: approval.pre_restore_backup_id,
+        preRestoreBackupId: preRestoreBackup.restorePointId,
+      }, 422),
+    };
+  }
+  if (!restoreApprovalPreviewMatches(approval, identity.preview)) {
+    return { ok: false, response: json({ error: "restore_approval_preview_mismatch" }, 422) };
+  }
+  return { ok: true, preRestoreBackup, approval };
+}
+
+async function loadRestoreCommitAttemptProof(
+  db: D1Database,
+  identity: RestoreProofIdentity,
+  approval: RestoreApprovalRow,
+  preRestoreBackup: PreRestoreBackupProof,
+  commitAttemptId: string,
+): Promise<RestoreCommitAttemptProof> {
+  const commitAttempt = await findRestoreCommitAttempt(db, identity.workspaceId, commitAttemptId);
+  if (!commitAttempt) {
+    return { ok: false, response: json({ error: "restore_commit_attempt_not_found" }, 404) };
+  }
+  if (commitAttempt.status !== "blocked_until_restore_apply" || commitAttempt.destructive_write !== 0) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_commit_attempt_not_ready",
+        commitAttemptStatus: commitAttempt.status,
+        destructiveWrite: commitAttempt.destructive_write === 1,
+      }, 422),
+    };
+  }
+  if (commitAttempt.approval_id !== approval.id) {
+    return { ok: false, response: json({ error: "restore_commit_attempt_approval_mismatch" }, 422) };
+  }
+  if (commitAttempt.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_commit_attempt_pre_restore_backup_mismatch",
+        commitAttemptPreRestoreBackupId: commitAttempt.pre_restore_backup_id,
+        preRestoreBackupId: preRestoreBackup.restorePointId,
+      }, 422),
+    };
+  }
+  const commitAttemptPreview = restorePreviewFromJson(commitAttempt.preview_json);
+  if (!commitAttemptPreview || !restorePreviewsEqual(commitAttemptPreview, identity.preview)) {
+    return { ok: false, response: json({ error: "restore_commit_attempt_preview_mismatch" }, 422) };
+  }
+  return { ok: true, commitAttempt };
+}
+
+async function loadRestoreApplicationPreflightProof(
+  db: D1Database,
+  identity: RestoreProofIdentity,
+  approval: RestoreApprovalRow,
+  commitAttempt: RestoreCommitAttemptRow,
+  preRestoreBackup: PreRestoreBackupProof,
+  applicationPreflightId: string,
+  applicationTablePlan?: RestoreApplicationTablePlan[],
+): Promise<RestoreApplicationPreflightProof> {
+  const applicationPreflight = await findRestoreApplicationPreflight(
+    db,
+    identity.workspaceId,
+    applicationPreflightId,
+  );
+  if (!applicationPreflight) {
+    return { ok: false, response: json({ error: "restore_application_preflight_not_found" }, 404) };
+  }
+  if (
+    applicationPreflight.status !== "blocked_until_restore_apply_implementation"
+    || applicationPreflight.destructive_write !== 0
+  ) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_application_preflight_not_ready",
+        applicationPreflightStatus: applicationPreflight.status,
+        destructiveWrite: applicationPreflight.destructive_write === 1,
+      }, 422),
+    };
+  }
+  if (applicationPreflight.approval_id !== approval.id) {
+    return { ok: false, response: json({ error: "restore_application_preflight_approval_mismatch" }, 422) };
+  }
+  if (applicationPreflight.commit_attempt_id !== commitAttempt.id) {
+    return { ok: false, response: json({ error: "restore_application_preflight_commit_attempt_mismatch" }, 422) };
+  }
+  if (applicationPreflight.pre_restore_backup_id !== preRestoreBackup.restorePointId) {
+    return {
+      ok: false,
+      response: json({
+        error: "restore_application_preflight_pre_restore_backup_mismatch",
+        applicationPreflightPreRestoreBackupId: applicationPreflight.pre_restore_backup_id,
+        preRestoreBackupId: preRestoreBackup.restorePointId,
+      }, 422),
+    };
+  }
+  const preflightPreview = restorePreviewFromJson(applicationPreflight.preview_json);
+  if (!preflightPreview || !restorePreviewsEqual(preflightPreview, identity.preview)) {
+    return { ok: false, response: json({ error: "restore_application_preflight_preview_mismatch" }, 422) };
+  }
+  if (applicationTablePlan) {
+    const storedPlan = restoreApplicationTablePlanFromRollbackGuidance(applicationPreflight.rollback_guidance_json);
+    if (storedPlan === null) {
+      return { ok: false, response: json({ error: "restore_application_preflight_table_plan_invalid" }, 422) };
+    }
+    if (storedPlan.length > 0 && !restoreApplicationTablePlansEqual(storedPlan, applicationTablePlan)) {
+      return {
+        ok: false,
+        response: json({
+          error: "restore_application_preflight_table_plan_mismatch",
+          destructiveWrite: false,
+        }, 422),
+      };
+    }
+  }
+  return { ok: true, applicationPreflight };
 }
 
 function restoreRollbackGuidanceFromJson(value: string): Record<string, unknown> {

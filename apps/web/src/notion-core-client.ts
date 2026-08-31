@@ -1,4 +1,5 @@
 import type { NotionCoreRecord } from "@film/importers";
+import { postWorkerJsonResponse, type Fetcher } from "./worker-client";
 
 export type NotionCoreCommitRequest = {
   workspaceId: string;
@@ -32,7 +33,7 @@ export async function commitNotionCoreRecords(
   workerUrl: string,
   csrfToken: string,
   request: NotionCoreCommitRequest,
-  fetcher: typeof fetch = fetch,
+  fetcher: Fetcher = fetch,
 ): Promise<NotionCoreCommitSummary> {
   const records = request.records.slice(0, 200);
   if (records.length === 0) {
@@ -48,20 +49,17 @@ export async function commitNotionCoreRecords(
     };
   }
 
-  const response = await fetcher(`${workerUrl}/api/imports/notion/core/commit`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({
+  const { response, body } = await postWorkerJsonResponse<NotionCoreCommitResponse>(
+    workerUrl,
+    "/api/imports/notion/core/commit",
+    {
       workspaceId: request.workspaceId,
       projectId: request.projectId,
       records,
-    }),
-  });
-  const body = await response.json() as NotionCoreCommitResponse;
+    },
+    csrfToken,
+    fetcher,
+  );
   if (!response.ok && response.status !== 422) {
     throw new Error(body.error ?? `Notion core import commit failed with ${response.status}`);
   }

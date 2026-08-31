@@ -55,7 +55,20 @@ export type GoogleDriveSyncDryRunStatus = {
 export const TELNYX_SMS_DRY_RUN_RECIPIENT_CAP = 50;
 export const TELNYX_SMS_DRY_RUN_SEGMENT_CAP = 150;
 
-export type TelnyxSmsCategory = "call_sheet" | "schedule_change" | "safety_location_alert";
+export const TELNYX_SMS_PROGRAM_NAME = "Film by Dust Wave";
+export const TELNYX_SMS_SENDER_PREFIX = `${TELNYX_SMS_PROGRAM_NAME}:`;
+export const TELNYX_SMS_DISCLOSURE_VERSION = "crew-sms-v1-2026-07-13";
+export const TELNYX_SMS_CATEGORIES = ["call_sheet", "schedule_change", "safety_location_alert"] as const;
+
+export type TelnyxSmsCategory = typeof TELNYX_SMS_CATEGORIES[number];
+
+export const TELNYX_SMS_CATEGORY_LABELS: Record<TelnyxSmsCategory, string> = {
+  call_sheet: "Call sheets",
+  schedule_change: "Schedule changes",
+  safety_location_alert: "Safety and location updates",
+};
+
+export const TELNYX_SMS_CONSENT_DISCLOSURE = `I agree to receive recurring production operations text messages from ${TELNYX_SMS_PROGRAM_NAME} for the categories selected above. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of employment or participation.`;
 
 export type TelnyxSmsSendDryRunInput = {
   workspaceId: string;
@@ -333,9 +346,7 @@ export function createTelnyxSmsSendDryRunPlan(input: TelnyxSmsSendDryRunInput): 
 }
 
 export function isTelnyxSmsCategory(value: string): value is TelnyxSmsCategory {
-  return value === "call_sheet"
-    || value === "schedule_change"
-    || value === "safety_location_alert";
+  return TELNYX_SMS_CATEGORIES.includes(value as TelnyxSmsCategory);
 }
 
 function isIntegrationKey(value: string): value is IntegrationKey {

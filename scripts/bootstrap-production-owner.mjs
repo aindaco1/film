@@ -4,9 +4,13 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCliArgs, parseEnvFile } from "./script-input.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const args = parseArgs(process.argv.slice(2));
+const args = parseCliArgs(process.argv.slice(2), {
+  booleans: ["--apply"],
+  values: ["--source-dev-vars", "--source-key", "--workspace", "--workspace-name", "--member", "--member-name", "--database", "--config"],
+});
 const sourcePath = path.resolve(args["source-dev-vars"] ?? path.join(root, "..", "pool", "worker", ".dev.vars"));
 const sourceKey = args["source-key"] ?? "ADMIN_BOOTSTRAP_EMAILS";
 const workspaceId = safeIdentifier(args.workspace ?? "workspace_acme", "workspace");
@@ -16,7 +20,7 @@ const memberName = safeLabel(args["member-name"] ?? "Workspace Owner", "member n
 const databaseName = safeIdentifier(args.database ?? "film", "database");
 const configPath = path.resolve(args.config ?? path.join(root, "apps", "worker", "wrangler.toml"));
 
-const sourceVars = readDevVars(readFileSync(sourcePath, "utf8"));
+const sourceVars = parseEnvFile(readFileSync(sourcePath, "utf8"));
 const ownerEmail = firstEmail(sourceVars.get(sourceKey) ?? "");
 if (!ownerEmail) {
   throw new Error(`No valid owner email was available in ${path.basename(sourcePath)} under ${sourceKey}.`);
@@ -86,26 +90,6 @@ if (result.status !== 0) {
 
 console.log(`Production owner bootstrap applied to ${databaseName}: workspace and active owner membership are present; prior owner links and sessions were invalidated; an audit event was recorded.`);
 
-function readDevVars(value) {
-  const vars = new Map();
-  for (const line of value.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-    const index = trimmed.indexOf("=");
-    const name = trimmed.slice(0, index).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
-    vars.set(name, unquote(trimmed.slice(index + 1).trim()));
-  }
-  return vars;
-}
-
-function unquote(value) {
-  if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
 function firstEmail(value) {
   const email = value.split(",")[0]?.trim().toLowerCase() ?? "";
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
@@ -135,24 +119,4 @@ function firstOutputLine(value) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean) ?? "unknown error";
-}
-
-function parseArgs(argv) {
-  const result = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--apply") {
-      result.apply = true;
-      continue;
-    }
-    if (["--source-dev-vars", "--source-key", "--workspace", "--workspace-name", "--member", "--member-name", "--database", "--config"].includes(arg)) {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
-      result[arg.slice(2)] = value;
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return result;
 }

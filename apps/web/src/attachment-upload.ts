@@ -1,4 +1,5 @@
 import type { WorkspaceData } from "@film/schema";
+import type { Fetcher } from "./worker-client";
 
 export type AttachmentUploadCandidate = {
   docId: string;
@@ -50,8 +51,6 @@ export type AttachmentObjectUploadResult = {
   persistence: string;
   attachment: AttachmentStoreResult;
 };
-
-type Fetcher = typeof fetch;
 
 export function collectStagedAttachmentMetadata(workspace: WorkspaceData): AttachmentUploadCandidate[] {
   return collectAttachmentMetadataByStatus(workspace, ["staged_local"]);

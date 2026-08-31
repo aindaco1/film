@@ -1,5 +1,10 @@
 import type { IntegrationKey } from "@film/schema";
-import type { GoogleDriveSyncDryRunStatus, ProviderDryRunStatus } from "@film/providers";
+import type {
+  GoogleDriveSyncDryRunStatus,
+  ProviderDryRunStatus,
+  TelnyxSmsCategory,
+} from "@film/providers";
+import { postWorkerJsonRequest, type Fetcher } from "./worker-client";
 
 type ProviderDryRunResponse = {
   dryRun: boolean;
@@ -129,7 +134,7 @@ export type SmsConsentManifestRecipient = {
   memberId: string | null;
   status: "active" | "revoked";
   disclosureVersion: string | null;
-  categories: Array<"call_sheet" | "schedule_change" | "safety_location_alert">;
+  categories: TelnyxSmsCategory[];
   consentedAt: string | null;
   revokedAt: string | null;
   updatedAt: string;
@@ -143,7 +148,7 @@ export type SmsConsentManifest = {
   secretValuesExposed: false;
 };
 
-export type SmsConsentCategory = "call_sheet" | "schedule_change" | "safety_location_alert";
+export type SmsConsentCategory = TelnyxSmsCategory;
 
 export type SmsSelfConsentRequest = {
   workspaceId: string;
@@ -175,7 +180,7 @@ export type SmsSendRequest = {
   workspaceId: string;
   projectId: string;
   recipientIds: string[];
-  category: "call_sheet" | "schedule_change" | "safety_location_alert";
+  category: TelnyxSmsCategory;
   messageBody: string;
   requestKey: string;
   emergencyOverride: boolean;
@@ -478,22 +483,13 @@ type GoogleDriveSyncDryRunResponse = {
   error?: string;
 };
 
-type Fetcher = typeof fetch;
-
 export async function runProviderDryRun(
   workerUrl: string,
   key: IntegrationKey,
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProviderDryRunStatus & { auditPersistence: string | null }> {
-  const response = await fetcher(`${workerUrl}/api/providers/${key}/dry-run`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-  });
+  const response = await providerPost(fetcher, workerUrl, `/api/providers/${key}/dry-run`, csrfToken);
   const body = (await response.json()) as ProviderDryRunResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Provider dry run failed with ${response.status}`);
@@ -510,15 +506,7 @@ export async function checkProviderRuntimeReadiness(
   workspaceId: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProviderRuntimeReadiness & { persistence: string; auditPersistence: string | null }> {
-  const response = await fetcher(`${workerUrl}/api/providers/runtime-readiness`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/runtime-readiness", csrfToken, { workspaceId });
   const body = (await response.json()) as ProviderRuntimeReadinessResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Provider runtime readiness failed with ${response.status}`);
@@ -561,15 +549,7 @@ export async function fetchSmsConsentManifest(
   limit = 100,
   fetcher: Fetcher = fetch,
 ): Promise<SmsConsentManifest> {
-  const response = await fetcher(`${workerUrl}/api/providers/sms/consent/manifest`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId, limit }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/consent/manifest", csrfToken, { workspaceId, limit });
   const body = (await response.json()) as SmsConsentManifestResponse;
   if (
     !response.ok
@@ -590,19 +570,11 @@ export async function commitSmsSelfConsent(
   request: SmsSelfConsentRequest,
   fetcher: Fetcher = fetch,
 ): Promise<SmsConsentMutationResult> {
-  const response = await fetcher(`${workerUrl}/api/providers/sms/consent/commit`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/consent/commit", csrfToken, {
       ...request,
       evidenceId: `workspace-form:${crypto.randomUUID()}`,
       source: "workspace_form",
       disclosureAcknowledged: true,
-    }),
   });
   const body = (await response.json()) as SmsConsentMutationResponse;
   if (
@@ -625,15 +597,7 @@ export async function sendSmsBatch(
   request: SmsSendRequest,
   fetcher: Fetcher = fetch,
 ): Promise<SmsSendResult> {
-  const response = await fetcher(`${workerUrl}/api/providers/sms/send`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify(request),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/send", csrfToken, request);
   const body = (await response.json()) as SmsSendResponse;
   if (!response.ok || !body.provider || body.provider.secretValuesExposed !== false) {
     throw new Error(body.error ?? `SMS send failed with ${response.status}`);
@@ -647,15 +611,7 @@ export async function checkStripeSummaryReadiness(
   workspaceId: string,
   fetcher: Fetcher = fetch,
 ): Promise<StripeSummaryReadiness & { persistence: string; auditPersistence: string | null }> {
-  const response = await fetcher(`${workerUrl}/api/providers/stripe/summary-readiness`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/stripe/summary-readiness", csrfToken, { workspaceId });
   const body = (await response.json()) as StripeSummaryReadinessResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Stripe summary readiness failed with ${response.status}`);
@@ -674,15 +630,7 @@ export async function fetchStripeSummary(
   projectId: string,
   fetcher: Fetcher = fetch,
 ): Promise<StripeSummaryResult & { persistence: string; auditPersistence: string | null }> {
-  const response = await fetcher(`${workerUrl}/api/providers/stripe/summary`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId, projectId }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/stripe/summary", csrfToken, { workspaceId, projectId });
   const body = (await response.json()) as StripeSummaryResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Stripe summary failed with ${response.status}`);
@@ -700,15 +648,7 @@ export async function runGoogleDriveSyncDryRun(
   request: GoogleDriveSyncDryRunRequest,
   fetcher: Fetcher = fetch,
 ): Promise<GoogleDriveSyncDryRunStatus & { auditPersistence: string | null }> {
-  const response = await fetcher(`${workerUrl}/api/providers/google/drive-sync-dry-run`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify(request),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/google/drive-sync-dry-run", csrfToken, request);
   const body = (await response.json()) as GoogleDriveSyncDryRunResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Google Drive sync dry run failed with ${response.status}`);
@@ -725,15 +665,7 @@ export async function checkGoogleConnection(
   workspaceId: string,
   fetcher: Fetcher = fetch,
 ): Promise<GoogleConnectionStatus> {
-  const response = await fetcher(`${workerUrl}/api/providers/google/connection`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/google/connection", csrfToken, { workspaceId });
   const body = (await response.json()) as GoogleConnectionStatusResponse;
   if (!response.ok) {
     throw new Error(body.error ?? `Google connection status failed with ${response.status}`);
@@ -759,15 +691,7 @@ export async function startGoogleOAuth(
   persistence: string;
   auditPersistence: string | null;
 }> {
-  const response = await fetcher(`${workerUrl}/api/providers/google/oauth/start`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId, ...options }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/google/oauth/start", csrfToken, { workspaceId, ...options });
   const body = (await response.json()) as GoogleOAuthStartResponse;
   if (!response.ok || !body.authorizationUrl || !body.scopes || !body.expiresAt || !body.persistence) {
     throw new Error(body.error ?? `Google connection start failed with ${response.status}`);
@@ -792,15 +716,7 @@ export async function disconnectGoogle(
   persistence: string;
   auditPersistence: string | null;
 }> {
-  const response = await fetcher(`${workerUrl}/api/providers/google/disconnect`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify({ workspaceId }),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/google/disconnect", csrfToken, { workspaceId });
   const body = (await response.json()) as GoogleDisconnectResponse;
   if (!response.ok || !body.connection || !body.persistence) {
     throw new Error(body.error ?? `Google disconnect failed with ${response.status}`);
@@ -819,15 +735,7 @@ export async function fetchGoogleDriveManifest(
   request: { workspaceId: string; rootFolderId?: string; pageToken?: string },
   fetcher: Fetcher = fetch,
 ): Promise<GoogleDriveManifestResult> {
-  const response = await fetcher(`${workerUrl}/api/providers/google/drive-manifest`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      "x-film-csrf": csrfToken,
-    },
-    body: JSON.stringify(request),
-  });
+  const response = await providerPost(fetcher, workerUrl, "/api/providers/google/drive-manifest", csrfToken, request);
   const body = (await response.json()) as GoogleDriveManifestResponse;
   if (
     !response.ok
@@ -958,12 +866,7 @@ function providerPost(
   workerUrl: string,
   path: string,
   csrfToken: string,
-  body: Record<string, unknown>,
+  body?: unknown,
 ): Promise<Response> {
-  return fetcher(`${workerUrl}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json", "x-film-csrf": csrfToken },
-    body: JSON.stringify(body),
-  });
+  return postWorkerJsonRequest(workerUrl, path, body, csrfToken, fetcher);
 }

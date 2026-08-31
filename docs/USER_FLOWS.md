@@ -64,7 +64,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Persona: Any member
 - Primary workspace: projects
 - Steps:
-  1. Select a project from the sidebar or project directory.
+  1. Open Projects and select a project from the board or list.
   2. Search across allowed project metadata and clear the query.
 - Successful outcome: Only matching projects appear and selecting one updates every project-scoped workspace.
 - UX checks:
@@ -658,6 +658,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - automated: `apps/web/test/import-preview.test.ts` contains `Notion`
+  - browser: `scripts/browser-smoke.mjs` contains `runNotionImportSmoke`
 
 ### IMPORT-02: Commit reviewed Notion records canonically
 
@@ -743,7 +744,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `exportBackupForPreview`
+  - browser: `scripts/browser-smoke.mjs` contains `exportEncryptedBackup`
 
 ### BACKUP-02: Store and retrieve an encrypted backup
 

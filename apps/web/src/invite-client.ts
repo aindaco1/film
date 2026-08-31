@@ -1,10 +1,5 @@
 import type { WorkspaceRole } from "@film/schema";
-
-type Fetcher = typeof fetch;
-
-type InviteResponseError = {
-  error?: string;
-};
+import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
 export type WorkspaceInviteCreateResult = {
   dryRun: boolean;
@@ -250,12 +245,4 @@ export async function acceptWorkspaceInvite(
     }),
     "Invite acceptance failed",
   );
-}
-
-async function parseJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const body = (await response.json()) as T & InviteResponseError;
-  if (!response.ok) {
-    throw new Error(body.error ?? fallbackMessage);
-  }
-  return body;
 }

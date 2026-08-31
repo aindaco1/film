@@ -1,3 +1,5 @@
+import type { Fetcher } from "./worker-client";
+
 export type WorkerAuditEventManifestEntry = {
   id: string;
   action: string;
@@ -32,8 +34,6 @@ export type WorkerAuditEventManifestOptions = {
 type WorkerAuditEventManifestError = {
   error?: string;
 };
-
-type Fetcher = typeof fetch;
 
 export async function exportWorkerAuditEventManifest(
   workerUrl: string,

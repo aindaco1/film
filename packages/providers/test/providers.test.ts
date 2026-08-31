@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  TELNYX_SMS_CATEGORIES,
+  TELNYX_SMS_CATEGORY_LABELS,
+  TELNYX_SMS_CONSENT_DISCLOSURE,
+  TELNYX_SMS_PROGRAM_NAME,
+  TELNYX_SMS_SENDER_PREFIX,
   createGoogleDriveSyncDryRunStatus,
   createTelnyxSmsSendDryRunPlan,
   getProviderDryRunStatus,
@@ -63,6 +68,19 @@ describe("provider dry-run statuses", () => {
     ]);
     expect(status?.capabilities).not.toContain("investor_updates");
     expect(status?.nextStep).toContain("Telnyx");
+  });
+
+  it("owns one sender identity, consent disclosure, and category catalog", () => {
+    expect(TELNYX_SMS_PROGRAM_NAME).toBe("Film by Dust Wave");
+    expect(TELNYX_SMS_SENDER_PREFIX).toBe(`${TELNYX_SMS_PROGRAM_NAME}:`);
+    expect(TELNYX_SMS_CATEGORIES).toEqual(["call_sheet", "schedule_change", "safety_location_alert"]);
+    expect(TELNYX_SMS_CATEGORIES.map((category) => TELNYX_SMS_CATEGORY_LABELS[category])).toEqual([
+      "Call sheets",
+      "Schedule changes",
+      "Safety and location updates",
+    ]);
+    expect(TELNYX_SMS_CONSENT_DISCLOSURE).toContain(`messages from ${TELNYX_SMS_PROGRAM_NAME}`);
+    expect(TELNYX_SMS_CONSENT_DISCLOSURE).toContain("Reply STOP to opt out or HELP for help");
   });
 
   it("plans only aggregate, consented Telnyx crew sends and keeps live delivery disabled", () => {

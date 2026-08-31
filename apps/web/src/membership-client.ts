@@ -1,10 +1,5 @@
 import type { WorkspaceRole } from "@film/schema";
-
-type Fetcher = typeof fetch;
-
-type MembershipResponseError = {
-  error?: string;
-};
+import { postWorkerJson, type Fetcher } from "./worker-client";
 
 export type ProjectMembershipAssignResult = {
   dryRun: boolean;
@@ -526,20 +521,15 @@ export async function assignProjectMembership(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProjectMembershipAssignResult> {
-  return parseJsonResponse<ProjectMembershipAssignResult>(
-    await fetcher(`${workerUrl}/api/projects/memberships/assign-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<ProjectMembershipAssignResult>(
+    workerUrl,
+    "/api/projects/memberships/assign-dry-run",
+    request,
+    csrfToken,
     "Project assignment failed",
+    fetcher,
   );
 }
-
 export async function assignRecordPermission(
   workerUrl: string,
   request: {
@@ -554,17 +544,13 @@ export async function assignRecordPermission(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordPermissionAssignResult> {
-  return parseJsonResponse<RecordPermissionAssignResult>(
-    await fetcher(`${workerUrl}/api/records/permissions/assign-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordPermissionAssignResult>(
+    workerUrl,
+    "/api/records/permissions/assign-dry-run",
+    request,
+    csrfToken,
     "Record permission assignment failed",
+    fetcher,
   );
 }
 
@@ -579,17 +565,13 @@ export async function createRecordCommentIntent(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordCommentIntentResult> {
-  return parseJsonResponse<RecordCommentIntentResult>(
-    await fetcher(`${workerUrl}/api/records/comments/dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordCommentIntentResult>(
+    workerUrl,
+    "/api/records/comments/dry-run",
+    request,
+    csrfToken,
     "Record comment intent failed",
+    fetcher,
   );
 }
 
@@ -604,17 +586,13 @@ export async function exportRecordCommentManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordCommentManifestResult> {
-  return parseJsonResponse<RecordCommentManifestResult>(
-    await fetcher(`${workerUrl}/api/records/comments/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordCommentManifestResult>(
+    workerUrl,
+    "/api/records/comments/manifest",
+    request,
+    csrfToken,
     "Record comment manifest failed",
+    fetcher,
   );
 }
 
@@ -629,17 +607,13 @@ export async function preflightRecordMutation(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationPreflightResult> {
-  return parseJsonResponse<RecordMutationPreflightResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/preflight`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationPreflightResult>(
+    workerUrl,
+    "/api/records/mutations/preflight",
+    request,
+    csrfToken,
     "Record mutation preflight failed",
+    fetcher,
   );
 }
 
@@ -656,17 +630,13 @@ export async function createRecordMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationRequestResult> {
-  return parseJsonResponse<RecordMutationRequestResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/request-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationRequestResult>(
+    workerUrl,
+    "/api/records/mutations/request-dry-run",
+    request,
+    csrfToken,
     "Record mutation request failed",
+    fetcher,
   );
 }
 
@@ -681,17 +651,13 @@ export async function exportRecordMutationRequestManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationRequestManifestResult> {
-  return parseJsonResponse<RecordMutationRequestManifestResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/requests/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationRequestManifestResult>(
+    workerUrl,
+    "/api/records/mutations/requests/manifest",
+    request,
+    csrfToken,
     "Record mutation request manifest failed",
+    fetcher,
   );
 }
 
@@ -706,17 +672,13 @@ export async function resolveRecordMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationResolutionResult> {
-  return parseJsonResponse<RecordMutationResolutionResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/requests/resolve-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationResolutionResult>(
+    workerUrl,
+    "/api/records/mutations/requests/resolve-dry-run",
+    request,
+    csrfToken,
     "Record mutation resolution failed",
+    fetcher,
   );
 }
 
@@ -730,17 +692,13 @@ export async function previewRecordMutationDiff(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationDiffPreviewResult> {
-  return parseJsonResponse<RecordMutationDiffPreviewResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/diff-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationDiffPreviewResult>(
+    workerUrl,
+    "/api/records/mutations/diff-dry-run",
+    request,
+    csrfToken,
     "Record mutation diff preview failed",
+    fetcher,
   );
 }
 
@@ -754,17 +712,13 @@ export async function createRecordMutationRollbackRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationRollbackRequestResult> {
-  return parseJsonResponse<RecordMutationRollbackRequestResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/requests/rollback-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationRollbackRequestResult>(
+    workerUrl,
+    "/api/records/mutations/requests/rollback-dry-run",
+    request,
+    csrfToken,
     "Record mutation rollback request failed",
+    fetcher,
   );
 }
 
@@ -777,17 +731,13 @@ export async function previewRecordMutationDeleteRecoveryPlan(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationDeleteRecoveryPlanResult> {
-  return parseJsonResponse<RecordMutationDeleteRecoveryPlanResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/requests/delete-recovery-plan`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationDeleteRecoveryPlanResult>(
+    workerUrl,
+    "/api/records/mutations/requests/delete-recovery-plan",
+    request,
+    csrfToken,
     "Record mutation delete recovery plan failed",
+    fetcher,
   );
 }
 
@@ -802,17 +752,13 @@ export async function applyRecordMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationApplyResult> {
-  return parseJsonResponse<RecordMutationApplyResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/apply`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationApplyResult>(
+    workerUrl,
+    "/api/records/mutations/apply",
+    request,
+    csrfToken,
     "Record mutation apply failed",
+    fetcher,
   );
 }
 
@@ -827,17 +773,13 @@ export async function createFilmProfileMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<FilmProfileMutationRequestResult> {
-  return parseJsonResponse<FilmProfileMutationRequestResult>(
-    await fetcher(`${workerUrl}/api/projects/film-profile/mutations/request-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<FilmProfileMutationRequestResult>(
+    workerUrl,
+    "/api/projects/film-profile/mutations/request-dry-run",
+    request,
+    csrfToken,
     "Film profile mutation request failed",
+    fetcher,
   );
 }
 
@@ -851,17 +793,13 @@ export async function exportFilmProfileMutationRequestManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<FilmProfileMutationRequestManifestResult> {
-  return parseJsonResponse<FilmProfileMutationRequestManifestResult>(
-    await fetcher(`${workerUrl}/api/projects/film-profile/mutations/requests/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<FilmProfileMutationRequestManifestResult>(
+    workerUrl,
+    "/api/projects/film-profile/mutations/requests/manifest",
+    request,
+    csrfToken,
     "Film profile mutation request manifest failed",
+    fetcher,
   );
 }
 
@@ -876,17 +814,13 @@ export async function resolveFilmProfileMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<FilmProfileMutationResolutionResult> {
-  return parseJsonResponse<FilmProfileMutationResolutionResult>(
-    await fetcher(`${workerUrl}/api/projects/film-profile/mutations/requests/resolve-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<FilmProfileMutationResolutionResult>(
+    workerUrl,
+    "/api/projects/film-profile/mutations/requests/resolve-dry-run",
+    request,
+    csrfToken,
     "Film profile mutation resolution failed",
+    fetcher,
   );
 }
 
@@ -900,17 +834,13 @@ export async function previewFilmProfileMutationDiff(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<FilmProfileMutationDiffPreviewResult> {
-  return parseJsonResponse<FilmProfileMutationDiffPreviewResult>(
-    await fetcher(`${workerUrl}/api/projects/film-profile/mutations/diff-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<FilmProfileMutationDiffPreviewResult>(
+    workerUrl,
+    "/api/projects/film-profile/mutations/diff-dry-run",
+    request,
+    csrfToken,
     "Film profile mutation diff preview failed",
+    fetcher,
   );
 }
 
@@ -925,17 +855,13 @@ export async function applyFilmProfileMutationRequest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<FilmProfileMutationApplyResult> {
-  return parseJsonResponse<FilmProfileMutationApplyResult>(
-    await fetcher(`${workerUrl}/api/projects/film-profile/mutations/apply`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<FilmProfileMutationApplyResult>(
+    workerUrl,
+    "/api/projects/film-profile/mutations/apply",
+    request,
+    csrfToken,
     "Film profile mutation apply failed",
+    fetcher,
   );
 }
 
@@ -949,17 +875,13 @@ export async function exportRecordMutationAuditManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordMutationAuditManifestResult> {
-  return parseJsonResponse<RecordMutationAuditManifestResult>(
-    await fetcher(`${workerUrl}/api/records/mutations/requests/audit-manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordMutationAuditManifestResult>(
+    workerUrl,
+    "/api/records/mutations/requests/audit-manifest",
+    request,
+    csrfToken,
     "Record mutation audit manifest failed",
+    fetcher,
   );
 }
 
@@ -973,17 +895,13 @@ export async function exportProjectMembershipManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProjectMembershipManifestResult> {
-  return parseJsonResponse<ProjectMembershipManifestResult>(
-    await fetcher(`${workerUrl}/api/projects/memberships/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<ProjectMembershipManifestResult>(
+    workerUrl,
+    "/api/projects/memberships/manifest",
+    request,
+    csrfToken,
     "Project membership manifest failed",
+    fetcher,
   );
 }
 
@@ -997,17 +915,13 @@ export async function exportProjectMembershipHistory(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProjectMembershipHistoryResult> {
-  return parseJsonResponse<ProjectMembershipHistoryResult>(
-    await fetcher(`${workerUrl}/api/projects/memberships/history`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<ProjectMembershipHistoryResult>(
+    workerUrl,
+    "/api/projects/memberships/history",
+    request,
+    csrfToken,
     "Project membership history failed",
+    fetcher,
   );
 }
 
@@ -1022,17 +936,13 @@ export async function revokeProjectMembership(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<ProjectMembershipRevokeResult> {
-  return parseJsonResponse<ProjectMembershipRevokeResult>(
-    await fetcher(`${workerUrl}/api/projects/memberships/revoke-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<ProjectMembershipRevokeResult>(
+    workerUrl,
+    "/api/projects/memberships/revoke-dry-run",
+    request,
+    csrfToken,
     "Project membership revoke failed",
+    fetcher,
   );
 }
 
@@ -1046,17 +956,13 @@ export async function updateWorkspaceMemberStatus(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<WorkspaceMemberStatusUpdateResult> {
-  return parseJsonResponse<WorkspaceMemberStatusUpdateResult>(
-    await fetcher(`${workerUrl}/api/members/status/dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<WorkspaceMemberStatusUpdateResult>(
+    workerUrl,
+    "/api/members/status/dry-run",
+    request,
+    csrfToken,
     "Member status update failed",
+    fetcher,
   );
 }
 
@@ -1073,17 +979,13 @@ export async function revokeRecordPermission(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordPermissionRevokeResult> {
-  return parseJsonResponse<RecordPermissionRevokeResult>(
-    await fetcher(`${workerUrl}/api/records/permissions/revoke-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordPermissionRevokeResult>(
+    workerUrl,
+    "/api/records/permissions/revoke-dry-run",
+    request,
+    csrfToken,
     "Record permission revoke failed",
+    fetcher,
   );
 }
 
@@ -1098,17 +1000,13 @@ export async function transferRecordOwner(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordOwnerTransferResult> {
-  return parseJsonResponse<RecordOwnerTransferResult>(
-    await fetcher(`${workerUrl}/api/records/owners/transfer-dry-run`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordOwnerTransferResult>(
+    workerUrl,
+    "/api/records/owners/transfer-dry-run",
+    request,
+    csrfToken,
     "Record owner transfer failed",
+    fetcher,
   );
 }
 
@@ -1122,17 +1020,13 @@ export async function exportRecordOwnerManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordOwnerManifestResult> {
-  return parseJsonResponse<RecordOwnerManifestResult>(
-    await fetcher(`${workerUrl}/api/records/owners/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordOwnerManifestResult>(
+    workerUrl,
+    "/api/records/owners/manifest",
+    request,
+    csrfToken,
     "Record owner manifest failed",
+    fetcher,
   );
 }
 
@@ -1147,17 +1041,13 @@ export async function exportRecordOwnerHistory(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordOwnerHistoryResult> {
-  return parseJsonResponse<RecordOwnerHistoryResult>(
-    await fetcher(`${workerUrl}/api/records/owners/history`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordOwnerHistoryResult>(
+    workerUrl,
+    "/api/records/owners/history",
+    request,
+    csrfToken,
     "Record owner history failed",
+    fetcher,
   );
 }
 
@@ -1172,17 +1062,13 @@ export async function exportRecordPermissionManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordPermissionManifestResult> {
-  return parseJsonResponse<RecordPermissionManifestResult>(
-    await fetcher(`${workerUrl}/api/records/permissions/manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordPermissionManifestResult>(
+    workerUrl,
+    "/api/records/permissions/manifest",
+    request,
+    csrfToken,
     "Record permission manifest failed",
+    fetcher,
   );
 }
 
@@ -1197,17 +1083,13 @@ export async function exportRecordPermissionHistory(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordPermissionHistoryResult> {
-  return parseJsonResponse<RecordPermissionHistoryResult>(
-    await fetcher(`${workerUrl}/api/records/permissions/history`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordPermissionHistoryResult>(
+    workerUrl,
+    "/api/records/permissions/history",
+    request,
+    csrfToken,
     "Record permission history failed",
+    fetcher,
   );
 }
 
@@ -1222,24 +1104,12 @@ export async function exportExpiredRecordPermissionManifest(
   csrfToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<RecordPermissionManifestResult> {
-  return parseJsonResponse<RecordPermissionManifestResult>(
-    await fetcher(`${workerUrl}/api/records/permissions/expired-manifest`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify(request),
-    }),
+  return postWorkerJson<RecordPermissionManifestResult>(
+    workerUrl,
+    "/api/records/permissions/expired-manifest",
+    request,
+    csrfToken,
     "Expired record permission manifest failed",
+    fetcher,
   );
-}
-
-async function parseJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const body = (await response.json()) as T & MembershipResponseError;
-  if (!response.ok) {
-    throw new Error(body.error ?? fallbackMessage);
-  }
-  return body;
 }

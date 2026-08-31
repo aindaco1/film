@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TELNYX_SMS_SENDER_PREFIX } from "@film/providers";
 import { commitSmsConsent, revokeSmsConsent } from "../src/sms-consent";
 import {
   estimateSmsSegments,
-  FILM_SMS_SENDER_PREFIX,
   formatFilmSmsMessage,
   isWithinQuietHours,
   parseTelnyxOutboundNumber,
@@ -108,7 +108,7 @@ describe("Telnyx outbound SMS", () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe("https://api.telnyx.com/v2/messages");
     expect(String(fetcher.mock.calls[0]?.[1]?.headers)).not.toContain("15555550110");
     const providerRequest = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as { text: string };
-    expect(providerRequest.text).toBe(`${FILM_SMS_SENDER_PREFIX} ${input.messageBody}`);
+    expect(providerRequest.text).toBe(`${TELNYX_SMS_SENDER_PREFIX} ${input.messageBody}`);
     expect(attempt).toMatchObject({
       status: "queued",
       provider_message_id: "40385f64-5717-4562-b3fc-2c963f66afa6",

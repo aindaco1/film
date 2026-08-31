@@ -33,7 +33,7 @@ Opt-in workflow description:
 
 > Invited crew members sign in to Film at https://film.dustwave.xyz, open the SMS enrollment form, enter their own mobile number, choose one or more categories (Call sheets, Schedule changes, or Safety and locations), and check an unchecked consent box. The box states: "I agree to receive recurring production operations text messages from Film by Dust Wave for the categories selected above. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of employment or participation." The crew member then submits Enable crew texts. Workspace membership alone does not enroll a number. The public terms and enrollment screenshot are available at https://film.dustwave.xyz/sms.html and https://film.dustwave.xyz/sms-consent-review.png.
 
-Opt-in keywords: `START,YES`
+Opt-in keywords: `START`
 
 Opt-out keywords: `STOP,UNSUBSCRIBE`
 
@@ -41,7 +41,7 @@ Help keywords: `HELP`
 
 Opt-in message:
 
-> Film by Dust Wave: You are enrolled for production operations texts. Frequency varies. Msg & data rates may apply. Reply STOP to opt out or HELP for help.
+> Film by Dust Wave: START received. To enroll or re-enroll for crew texts, sign in at https://film.dustwave.xyz and enable crew texts. Frequency varies. Msg & data rates may apply. Reply STOP to opt out or HELP for help.
 
 Opt-out message:
 
@@ -49,7 +49,7 @@ Opt-out message:
 
 Help message:
 
-> Film by Dust Wave support: Visit https://film.dustwave.xyz/sms.html for help. Msg & data rates may apply. Reply STOP to opt out.
+> Film by Dust Wave support: Visit https://film.dustwave.xyz/sms.html for help. Frequency varies. Msg & data rates may apply. Reply STOP to opt out.
 
 Sample 1:
 

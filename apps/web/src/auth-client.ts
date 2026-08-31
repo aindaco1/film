@@ -1,3 +1,5 @@
+import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
+
 export type MagicLinkRequestResult = {
   dryRun: boolean;
   delivery: "not_sent" | "email_if_eligible";
@@ -17,10 +19,6 @@ export type FilmSession = {
 
 export type FilmSessionMetadata = Omit<FilmSession, "csrfToken">;
 
-type AuthResponseError = {
-  error?: string;
-};
-
 type MagicLinkVerifyResult = {
   dryRun: boolean;
   persistence?: string;
@@ -32,8 +30,6 @@ type SessionMetadataResult = {
   persistence?: string;
   session: FilmSessionMetadata | null;
 };
-
-type Fetcher = typeof fetch;
 
 export async function requestMagicLink(
   workerUrl: string,
@@ -99,12 +95,4 @@ export async function logoutSession(
     }),
     "Sign out failed",
   );
-}
-
-async function parseJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const body = (await response.json()) as T & AuthResponseError;
-  if (!response.ok) {
-    throw new Error(body.error ?? fallbackMessage);
-  }
-  return body;
 }

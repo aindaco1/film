@@ -2,7 +2,7 @@ const browser = (marker) => ({ kind: "browser", file: "scripts/browser-smoke.mjs
 const test = (file, marker) => ({ kind: "automated", file, marker });
 
 export const WORKSPACE_FLOW_SECTIONS = [
-  ["slate", "Slate"],
+  ["slate", "Overview"],
   ["projects", "Projects"],
   ["breakdown", "Breakdown"],
   ["schedule", "Schedule"],
@@ -27,7 +27,7 @@ export const FILM_USER_FLOWS = [
     "Move through every operational section without losing the selected project.",
   ], "Each destination has a clear active state, recognizable heading, and no inert navigation controls.", [browser("auditWorkspaceNavigation")]),
   flow("NAV-02", "Navigation", "Select and search projects", "Any member", "projects", [
-    "Select a project from the sidebar or project directory.",
+    "Open Projects and select a project from the board or list.",
     "Search across allowed project metadata and clear the query.",
   ], "Only matching projects appear and selecting one updates every project-scoped workspace.", [browser("desktop nested metadata search")]),
   flow("NAV-03", "Navigation", "Use Film on a narrow mobile viewport", "Any member", "slate", [
@@ -167,7 +167,10 @@ export const FILM_USER_FLOWS = [
   flow("IMPORT-01", "Import", "Preview and apply a Notion export", "Owner or producer", "planning", [
     "Choose an extracted Notion folder or ZIP.",
     "Review safe files, normalized core/planning rows, skipped rows, and attachments before applying locally.",
-  ], "Unsafe paths and active HTML are blocked; deterministic local replays do not duplicate records.", [test("apps/web/test/import-preview.test.ts", "Notion")]),
+  ], "Unsafe paths and active HTML are blocked; deterministic local replays do not duplicate records.", [
+    test("apps/web/test/import-preview.test.ts", "Notion"),
+    browser("runNotionImportSmoke"),
+  ]),
   flow("IMPORT-02", "Import", "Commit reviewed Notion records canonically", "Owner or producer", "planning", [
     "Submit reviewed core records and planning rows through their separate protected routes.",
     "Review create/idempotent/update/rejected summaries.",
@@ -187,7 +190,7 @@ export const FILM_USER_FLOWS = [
   flow("BACKUP-01", "Backups", "Create and preview an encrypted local backup", "Owner or producer", "backups", [
     "Export an encrypted ZIP with a passphrase.",
     "Choose the file, decrypt locally, and review the restore preview before writes.",
-  ], "The default artifact is encrypted, excludes secrets, and previewing does not mutate workspace state.", [browser("exportBackupForPreview")]),
+  ], "The default artifact is encrypted, excludes secrets, and previewing does not mutate workspace state.", [browser("exportEncryptedBackup")]),
   flow("BACKUP-02", "Backups", "Store and retrieve an encrypted backup", "Owner or producer", "backups", [
     "Explicitly upload already-encrypted backup bytes to R2.",
     "Review stored metadata or create a bounded download plan.",

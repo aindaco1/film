@@ -174,6 +174,80 @@ describe("film worker", () => {
     expect(body.snapshot.expenses[0]?.budgetCents).toBe(50_000);
   });
 
+  it("keeps the seeded local workspace when a dry-run session finds an empty D1 shell", async () => {
+    const fakeAuth = createAuthD1();
+    const fakeSessions = createSessionKV();
+    const env = { DB: fakeAuth.db, SESSIONS: fakeSessions.kv };
+    fakeAuth.workspaces.set("workspace_acme", { id: "workspace_acme", name: "Empty local shell" });
+
+    const requestResponse = await worker.fetch(
+      new Request("https://worker.test/api/auth/magic-link/request", {
+        method: "POST",
+        body: JSON.stringify({ email: "local-preview@example.com" }),
+      }),
+      env,
+    );
+    const requestBody = (await requestResponse.json()) as { devOnlyToken: string };
+    const verifyResponse = await worker.fetch(
+      new Request("https://worker.test/api/auth/magic-link/verify", {
+        method: "POST",
+        body: JSON.stringify({ token: requestBody.devOnlyToken }),
+      }),
+      env,
+    );
+    const verifyBody = (await verifyResponse.json()) as { session: { csrfToken: string } };
+    const cookie = verifyResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const response = await worker.fetch(
+      new Request("https://worker.test/api/workspaces/current/snapshot", {
+        method: "POST",
+        headers: { cookie, "x-film-csrf": verifyBody.session.csrfToken },
+        body: JSON.stringify({ workspaceId: "workspace_acme" }),
+      }),
+      env,
+    );
+    const body = (await response.json()) as {
+      snapshot: { persistence: string; members: unknown[]; projects: unknown[] };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.snapshot.persistence).toBe("dry_run_seed_snapshot");
+    expect(body.snapshot.members.length).toBeGreaterThan(0);
+    expect(body.snapshot.projects.length).toBeGreaterThan(0);
+
+    const assignmentResponse = await worker.fetch(
+      new Request("https://worker.test/api/projects/memberships/assign-dry-run", {
+        method: "POST",
+        headers: { cookie, "x-film-csrf": verifyBody.session.csrfToken },
+        body: JSON.stringify({
+          workspaceId: "workspace_acme",
+          projectId: "proj_echoes",
+          projectTitle: "Echoes in the Static",
+          memberId: "member_producer",
+          role: "reviewer",
+          department: "Production",
+        }),
+      }),
+      env,
+    );
+    const assignmentBody = (await assignmentResponse.json()) as { persistence: string };
+    expect(assignmentResponse.status).toBe(200);
+    expect(assignmentBody.persistence).toBe("dry_run_memoryless");
+
+    const statusResponse = await worker.fetch(
+      new Request("https://worker.test/api/members/status/dry-run", {
+        method: "POST",
+        headers: { cookie, "x-film-csrf": verifyBody.session.csrfToken },
+        body: JSON.stringify({ workspaceId: "workspace_acme", memberId: "member_producer", status: "disabled" }),
+      }),
+      env,
+    );
+    const statusBody = (await statusResponse.json()) as { persistence: string; member: { role: string; status: string } };
+    expect(statusResponse.status).toBe(200);
+    expect(statusBody.persistence).toBe("dry_run_memoryless");
+    expect(statusBody.member).toMatchObject({ role: "producer", status: "disabled" });
+  });
+
   it("requires csrf for canonical workspace snapshots", async () => {
     const response = await worker.fetch(
       new Request("https://worker.test/api/workspaces/current/snapshot", { method: "POST" }),

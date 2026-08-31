@@ -1,4 +1,5 @@
 import type { BackupPlanningRecord } from "@film/schema";
+import type { Fetcher } from "./worker-client";
 
 export type RestoreCommitPreviewRequest = {
   incomingRecordCount: number;
@@ -516,8 +517,6 @@ type RestoreAttachmentObjectCommitPreflightResponse = Partial<RestoreAttachmentO
   error?: string;
   expectedConfirmation?: string;
 };
-
-type Fetcher = typeof fetch;
 
 export async function runRestoreCommitDryRun(
   workerUrl: string,

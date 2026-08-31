@@ -39,8 +39,11 @@ describe("web app shell", () => {
 
   it("exposes workspace sections for project navigation", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const styles = await readFile("src/styles.css", "utf8");
 
-    expect(source).toContain("section: \"projects\"");
+    expect(source).toContain("case \"projects\"");
+    expect(source).toContain('data-project-surface="board"');
+    expect(source).toContain('data-project-surface="list"');
     expect(source).toContain("section: \"schedule\"");
     expect(source).toContain("section: \"shots\"");
     expect(source).toContain("section: \"call-sheets\"");
@@ -54,12 +57,10 @@ describe("web app shell", () => {
     expect(source).toContain("Project directory exported");
     expect(source).toContain("Markdown document bodies are excluded");
     expect(source).toContain("renderScheduleWorkspace");
-    expect(source).toContain("Schedule workspace");
-    expect(source).toContain("Production Clock");
-    expect(source).toContain("Phase Lanes");
-    expect(source).toContain("Date-Driven Tasks");
-    expect(source).toContain("schedule-workspace-grid");
-    expect(source).toContain("renderScheduleTimelinePanel");
+    expect(source).toContain("Stripboard");
+    expect(source).toContain("Availability &amp; conflicts");
+    expect(source).toContain("Budget from schedule");
+    expect(source).not.toContain("renderScheduleTimelinePanel");
     expect(source).toContain("data-action=\"export-project-packet\"");
     expect(source).toContain("createProjectPacketMarkdown");
     expect(source).toContain("## Planning Rows");
@@ -124,7 +125,7 @@ describe("web app shell", () => {
     expect(source).toContain("safeCsvCell");
     expect(source).toContain("renderLocationsWorkspace");
     expect(source).toContain("Locations workspace");
-    expect(source).toContain("Add Scouting Record");
+    expect(source).toContain("Add scouting record");
     expect(source).toContain("Scouting Details");
     expect(source).toContain("Production Usage");
     expect(source).toContain("Imported Locations");
@@ -136,7 +137,7 @@ describe("web app shell", () => {
     expect(source).toContain("createProductionLocationMarkdown");
     expect(source).toContain("renderTalentWorkspace");
     expect(source).toContain("Talent workspace");
-    expect(source).toContain("Add Character Record");
+    expect(source).toContain("Add character record");
     expect(source).toContain("Casting Details");
     expect(source).toContain("Casting Roster");
     expect(source).toContain("createProductionTalent");
@@ -152,21 +153,26 @@ describe("web app shell", () => {
     expect(source).toContain("mobile-workspace-nav");
     expect(source).toContain("applyAccessibleControlNames");
     expect(source).toContain("tabindex=\"0\"");
-    expect(source).toContain("Project view controls");
+    expect(source).toContain('aria-label="Project view"');
+    expect(source).toContain("projects-workspace-head");
+    expect(styles).toContain(".projects-workspace-head .view-controls");
+    expect(styles).toContain(".tasks-table-row:not(.tasks-table-head)");
+    expect(styles).toContain('grid-template-areas:\n      "status title actions"');
     expect(source).toContain("data-workspace-section");
     expect(source).toContain("filterProjectsBySearch");
-    expect(source).toContain("Search projects, tasks, docs, people, gear, budgets");
+    expect(source).toContain("Search project metadata");
   });
 
-  it("exposes every MVP provider dry-run chip", async () => {
+  it("keeps every MVP provider behind one consolidated integration status", async () => {
     const source = await readFile("src/main.ts", "utf8");
 
-    expect(source).toContain("Pool dry run");
-    expect(source).toContain("Store dry run");
-    expect(source).toContain("Stripe dry run");
-    expect(source).toContain("Meta insights dry run");
-    expect(source).toContain("Google dry run");
-    expect(source).toContain("Telnyx SMS dry run");
+    expect(source).toContain("const INTEGRATION_DEFINITIONS");
+    for (const label of ["Pool", "Store", "Stripe", "Meta insights", "Google", "Resend", "Telnyx SMS"]) {
+      expect(source).toContain(`label: "${label}"`);
+    }
+    expect(source).toContain('data-action="integrations-open"');
+    expect(source).toContain('aria-label="Integration providers"');
+    expect(source).toContain('data-integration="${definition.key}"');
   });
 
   it("links public privacy, terms, SMS, and data deletion pages from the app shell", async () => {
@@ -194,7 +200,7 @@ describe("web app shell", () => {
     expect(source).toContain("SMS_DISCLOSURE_VERSION");
     expect(source).toContain("disclosureAcknowledged");
     expect(source).toContain("Enable crew texts");
-    expect(source).toContain("Film by Dust Wave");
+    expect(source).toContain("TELNYX_SMS_CONSENT_DISCLOSURE");
     expect(smsTerms).toContain("Dust Wave operates Film");
     expect(smsTerms).toContain("https://dustwave.xyz/contact.html");
   });
@@ -249,7 +255,7 @@ describe("web app shell", () => {
   it("keeps inspector workflows in one persistent, grouped view system", async () => {
     const source = await readFile("src/main.ts", "utf8");
     const styles = await readFile("src/styles.css", "utf8");
-    const viewIds = ["overview", "team", "ownership", "changes", "permissions", "backups", "integrations", "imports"];
+    const viewIds = ["overview", "team", "ownership", "changes", "permissions", "integrations", "imports"];
 
     expect(source).toContain("const INSPECTOR_VIEW_GROUPS");
     expect(source).toContain('data-action="inspector-view"');
@@ -259,7 +265,119 @@ describe("web app shell", () => {
       expect(source).toContain(`id: "${viewId}"`);
       expect(source).toContain(`inspectorViewPanelAttributes("${viewId}")`);
     }
+    expect(source).not.toContain('inspectorViewPanelAttributes("backups")');
     expect(styles).toContain(".inspector-view-panel[hidden]");
+  });
+
+  it("groups production navigation without duplicating the project destination", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+
+    expect(source).toContain("const WORKSPACE_NAV_GROUPS");
+    for (const group of ["Development", "Pre-production", "Production", "Operations"]) {
+      expect(source).toContain(`label: "${group}"`);
+    }
+    expect(source).toContain("renderProjectWorkspaceHeader");
+    expect(source).toContain("const OVERVIEW_NAV_ITEM");
+    expect(source).toContain("const PROJECTS_NAV_ITEM");
+    expect(source).not.toContain('data-project-surface="overview"');
+    expect(source).toContain(">Board</button>");
+    expect(source).toContain(">List</button>");
+    expect(source).not.toContain(">Directory</button>");
+    expect(source).not.toContain("<h1>Slate</h1>");
+  });
+
+  it("uses progressive disclosure for account and governance utilities", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+    const styles = await readFile("src/styles.css", "utf8");
+
+    expect(source).toContain("auth-disclosure");
+    expect(source).toContain("Sign in or join");
+    expect(source).toContain("Audit and recovery");
+    expect(source).toContain("Review existing access");
+    expect(styles).toContain(".workflow-stage.is-current");
+    expect(styles).toContain(".advanced-disclosure");
+  });
+
+  it("resets project context to Overview and removes scaffold-only commands", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+
+    expect(source).toContain('state.ui.inspectorView = "overview"');
+    expect(source).not.toContain("view-dry-run");
+    expect(source).not.toContain("edit-dry-run");
+    expect(source).not.toContain("This path is scaffolded as a dry-run action");
+  });
+
+  it("keeps scoped access assignment DRY", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+
+    expect(source.match(/data-action="permission-assign"/g)).toHaveLength(1);
+    expect(source.match(/async function handlePermissionAssign/g)).toHaveLength(1);
+    expect(source).not.toContain("handleTaskPermissionAssign");
+    expect(source).not.toContain("handleDocumentPermissionAssign");
+    expect(source).not.toContain("handleRecordPermissionAssign");
+  });
+
+  it("edits routine records in context through one shared handler", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+    const styles = await readFile("src/styles.css", "utf8");
+
+    expect(source.match(/async function handleContextualRecordUpdate/g)).toHaveLength(1);
+    for (const kind of ["task", "person", "equipment", "expense"]) {
+      expect(source).toContain(`data-record-kind="${kind}"`);
+    }
+    expect(source).toContain('data-action="project-inline-update"');
+    expect(source).toContain('data-action="membership-assign"');
+    expect(source).toContain("renderTeamMemberRow");
+    expect(source).toContain("teamAssignmentFor");
+    expect(source).toContain('data-action="auth-open"');
+    expect(source).toContain("Sign in to edit the team");
+    expect(source).toContain("Owner or producer access required");
+    expect(source).toContain("renderInlineSaveButton");
+    expect(source).toContain('>${icon("save")}</button>`');
+    expect(source).toContain("function expenseCategoryLabel");
+    expect(source).toContain("function normalizeContextualWorkspaceData");
+    expect(source).toContain("normalizeContextualWorkspaceData(localMirror.workspace)");
+    for (const collection of ["openTasks", "people", "equipment", "expenses"]) {
+      expect(source).toContain(`const ${collection} = project.${collection}.map`);
+    }
+    expect(source).toContain('"Uncategorized"');
+    expect(source).toContain("renderCreateDisclosure");
+    expect(styles).toContain(".contextual-field");
+    expect(styles).toContain(".create-disclosure");
+    expect(source).not.toContain("member-status-form");
+    expect(source).not.toContain('class="invite-form assignment-form"');
+    expect(source).not.toContain("if (member) member.role = result.membership.role");
+  });
+
+  it("selects production records from the visible roster instead of detached dropdowns", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+    const styles = await readFile("src/styles.css", "utf8");
+
+    expect(source).toContain('data-action="production-location-row-select"');
+    expect(source).toContain('data-action="production-talent-row-select"');
+    expect(source).not.toContain('data-action="production-location-select"');
+    expect(source).not.toContain('data-action="production-talent-select"');
+    expect(source).toContain('aria-label="Scouting records"');
+    expect(source).toContain('aria-label="Talent casting roster"');
+    expect(source).toContain('locations-workspace-grid ${location ? "" : "is-empty"}');
+    expect(styles).toContain(".production-record-row.is-selected");
+    expect(source.match(/class="production-record-row/g)).toHaveLength(2);
+    expect(source).not.toContain("talent-roster-row");
+    expect(styles).toContain(".locations-workspace-grid.is-empty .location-planning-panel");
+  });
+
+  it("keeps dashboard cards summary-only and routes editing to workspaces", async () => {
+    const source = await readFile("src/main.ts", "utf8");
+    const dashboardStart = source.indexOf("function renderTaskPanel");
+    const dashboardEnd = source.indexOf("function renderDocumentEditor");
+    const dashboardPanels = source.slice(dashboardStart, dashboardEnd);
+
+    expect(dashboardPanels).not.toContain('data-action="add-task"');
+    expect(dashboardPanels).not.toContain('data-action="add-person"');
+    expect(dashboardPanels).not.toContain('data-action="add-equipment"');
+    expect(dashboardPanels).not.toContain('data-action="add-doc"');
+    expect(dashboardPanels).toContain('data-open-doc=');
+    expect(dashboardPanels).toContain('data-workspace-section="docs"');
   });
 
   it("exposes stored backup manifest and preview controls", async () => {
@@ -507,9 +625,10 @@ describe("web app shell", () => {
     expect(source).toContain("renderTasksWorkspace");
     expect(source).toContain("tasks-workspace-panel");
     expect(source).toContain("Project tasks");
-    expect(source).toContain("data-action=\"task-status-update\"");
-    expect(source).toContain("Task status queued in the IndexedDB operation log.");
-    expect(source).toContain("task.updated");
+    expect(source).toContain("data-action=\"contextual-record-update\"");
+    expect(source).toContain("data-record-kind=\"task\"");
+    expect(source).toContain("data-contextual-autosave");
+    expect(source).toContain("`${kind}.updated`");
     expect(source).toContain("data-action=\"task-complete\"");
     expect(source).toContain("Task completed and queued in the IndexedDB operation log.");
     expect(source).toContain("task.completed");
@@ -555,7 +674,7 @@ describe("web app shell", () => {
 
     expect(source).toContain("renderProjectCreateDialog");
     expect(source).toContain("data-action=\"project-create-form\"");
-    expect(source).toContain("mobile-project-create");
+    expect(source).not.toContain("mobile-project-create");
     expect(source).toContain("name=\"projectType\"");
     expect(source).toContain("projectType: project.type");
     expect(source).not.toContain("createFilmProjectFromTemplate(`Untitled Film");
@@ -589,7 +708,8 @@ describe("web app shell", () => {
     expect(source).toContain("renderPlanningPanel");
     expect(source).toContain("planningPanelRowsForWorkspace");
     expect(source).toContain("planning-panel");
-    expect(source).toContain("Imported planning rows");
+    expect(source).toContain("Planning Rows");
+    expect(source).toContain("Review planning");
     expect(source).toContain("Workspace planning rows");
     expect(source).toContain("collectLocalPlanningRows");
     expect(source).toContain("planningRowsForProject");
@@ -612,21 +732,28 @@ describe("web app shell", () => {
     expect(source).toContain("state.planningExportView = null");
   });
 
-  it("exposes explicit project record permission controls", async () => {
+  it("exposes one scoped record permission workflow", async () => {
     const source = await readFile("src/main.ts", "utf8");
 
-    expect(source).toContain("data-action=\"record-permission-assign\"");
-    expect(source).toContain("Grant project permission");
-    expect(source).toContain("Review project permissions");
-    expect(source).toContain("Review expired project permissions");
-    expect(source).toContain("Project permission saved");
+    expect(source).toContain("const PERMISSION_SCOPES");
+    expect(source).toContain('data-action="permission-assign"');
+    expect(source).toContain('data-permission-assignment-scope="${scope}"');
+    expect(source).toContain("Grant access");
+    expect(source).toContain("Review existing access");
+    expect(source).toContain('data-action="permission-manifest"');
+    expect(source).toContain('data-permission-mode="active"');
+    expect(source).toContain('data-permission-mode="expired"');
+    expect(source).toContain('data-action="permission-history"');
+    expect(source).toContain("Access saved");
+    expect(source).toContain("handlePermissionAssign");
+    expect(source).toContain("updatePermissionAssignmentState");
     expect(source).toContain("assignRecordPermission");
     expect(source).toContain("exportRecordPermissionManifest");
     expect(source).toContain("exportExpiredRecordPermissionManifest");
     expect(source).toContain("revokeRecordPermission");
     expect(source).toContain("record-permission-revoke");
     expect(source).toContain("Revoke");
-    expect(source).toContain("entityType: \"project\"");
+    expect(source).toContain("entityType: scope");
   });
 
   it("exposes protected workspace member status controls", async () => {
@@ -638,18 +765,21 @@ describe("web app shell", () => {
     expect(source).toContain("raw email addresses");
     expect(source).toContain("Email references are short hashes only");
     expect(source).toContain("data-action=\"member-status-update\"");
-    expect(source).toContain("Update member status");
+    expect(source).toContain("team-status-form");
+    expect(source).toContain("inline-status-button");
+    expect(source).toContain("canManageTeam");
+    expect(source).toContain("member.status !== \"invited\"");
     expect(source).toContain("Disable");
     expect(source).toContain("Reactivate");
     expect(source).toContain("updateWorkspaceMemberStatus");
-    expect(source).toContain("Member status saved");
+    expect(source).toContain("Member status updated");
   });
 
   it("exposes protected project team manifest and removal controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
 
-    expect(source).toContain("Review project team");
-    expect(source).toContain("Review project team history");
+    expect(source).toContain("Current assignments");
+    expect(source).toContain("Assignment history");
     expect(source).toContain("data-action=\"project-membership-manifest\"");
     expect(source).toContain("data-action=\"project-membership-history\"");
     expect(source).toContain("data-action=\"project-membership-revoke\"");
@@ -666,9 +796,7 @@ describe("web app shell", () => {
     expect(source).toContain("Transfer owner");
     expect(source).toContain("Review owner");
     expect(source).toContain("Review owner history");
-    expect(source).toContain("Review project permission history");
-    expect(source).toContain("Review task permission history");
-    expect(source).toContain("Review document permission history");
+    expect(source).toContain("Access history");
     expect(source).toContain("Owner transferred");
     expect(source).toContain("Current owner");
     expect(source).toContain("transferRecordOwner");
@@ -677,6 +805,14 @@ describe("web app shell", () => {
     expect(source).toContain("Owner transfer:");
     expect(source).toContain("owner history");
     expect(source).toContain("data-action=\"record-mutation-preflight\"");
+    expect(source).toContain('data-change-request-kind="record"');
+    expect(source).toContain('data-change-request-kind="profile"');
+    expect(source).toContain("workflowStageClass");
+    expect(source).toContain('"Draft", "Choose the change and request review"');
+    expect(source).toContain('"Review", "Approve or reject the pending request"');
+    expect(source).toContain('"Preview", "Confirm exactly what will change"');
+    expect(source).toContain('"Apply", "Commit the approved change"');
+    expect(source).toContain("Audit and recovery");
     expect(source).toContain("Check mutation access");
     expect(source).toContain("data-action=\"record-mutation-request\"");
     expect(source).toContain("Request mutation review");
@@ -749,25 +885,19 @@ describe("web app shell", () => {
   it("exposes explicit document record permission controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
 
-    expect(source).toContain("data-action=\"document-permission-assign\"");
-    expect(source).toContain("Selected document");
-    expect(source).toContain("Grant document permission");
-    expect(source).toContain("Review document permissions");
-    expect(source).toContain("Review expired document permissions");
-    expect(source).toContain("Document permission saved");
-    expect(source).toContain("entityType: \"document\"");
+    expect(source).toContain('{ id: "document", label: "Specific document" }');
+    expect(source).toContain('if (scope === "document") return project.docs.map');
+    expect(source).toContain('scope === "document" ? selectedTargetId');
+    expect(source).toContain('assignedDocumentId: update.assignedEntityId');
   });
 
   it("exposes explicit task record permission controls", async () => {
     const source = await readFile("src/main.ts", "utf8");
 
-    expect(source).toContain("data-action=\"task-permission-assign\"");
-    expect(source).toContain("Selected task");
-    expect(source).toContain("Grant task permission");
-    expect(source).toContain("Review task permissions");
-    expect(source).toContain("Review expired task permissions");
-    expect(source).toContain("Task permission saved");
-    expect(source).toContain("entityType: \"task\"");
+    expect(source).toContain('{ id: "task", label: "Specific task" }');
+    expect(source).toContain('if (scope === "task") return project.openTasks.map');
+    expect(source).toContain('scope === "task" ? selectedTargetId');
+    expect(source).toContain('assignedTaskId: update.assignedEntityId');
   });
 
   it("exposes invite delivery readiness checks", async () => {

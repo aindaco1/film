@@ -3,8 +3,7 @@ import type {
   RestoreAttachmentPackageManifestObjectRequest,
   RestoreAttachmentPackageManifestRequest,
 } from "./restore-client";
-
-type Fetcher = typeof fetch;
+import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
 type AttachmentExportResponseError = {
   error?: string;
@@ -247,14 +246,6 @@ export async function readStoredAttachmentPackageObjects(
   }
 
   return verified;
-}
-
-async function parseJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
-  const body = (await response.json()) as T & AttachmentExportResponseError;
-  if (!response.ok) {
-    throw new Error(body.error ?? fallbackMessage);
-  }
-  return body;
 }
 
 function filenameFromContentDisposition(value: string | null): string | null {
