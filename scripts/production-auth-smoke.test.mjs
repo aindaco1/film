@@ -164,7 +164,17 @@ test("production auth smoke consumes a delivered message without printing sensit
             liveMode: true,
           },
         },
-        connection: null,
+        connection: {
+          provider: "google",
+          status: "active",
+          scopes: ["https://www.googleapis.com/auth/drive.metadata.readonly"],
+          hasRefreshToken: true,
+          rootFolderId: null,
+          connectedAt: new Date().toISOString(),
+          disconnectedAt: null,
+          tokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
       });
       return;
     }

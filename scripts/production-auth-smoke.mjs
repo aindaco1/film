@@ -196,7 +196,8 @@ try {
     for (const key of ["clientId", "clientSecret", "redirectUri", "tokenEncryptionKey", "appOrigin", "d1", "kv", "liveMode"]) {
       assert.equal(google.body.readiness?.configured?.[key], true, `Google OAuth configuration is unavailable: ${key}`);
     }
-    assert.equal(google.body.connection, null, "production smoke workspace unexpectedly has a Google connection");
+    const expectedGoogleScope = "https://www.googleapis.com/auth/drive.metadata.readonly";
+    assertSafeGoogleConnection(google.body.connection, expectedGoogleScope);
     const googleResponse = JSON.stringify(google.body);
     for (const forbidden of ["access_token", "refresh_token", "accessTokenCiphertext", "refreshTokenCiphertext"]) {
       assert.equal(googleResponse.includes(forbidden), false, `Google connection response exposed ${forbidden}`);
@@ -211,7 +212,6 @@ try {
       },
       body: JSON.stringify({ workspaceId, includeDocsExport: false, includeCalendarSync: false }),
     }, [200]);
-    const expectedGoogleScope = "https://www.googleapis.com/auth/drive.metadata.readonly";
     assert.equal(googleStart.body.dryRun, false, "Google OAuth start incorrectly reported dry-run mode");
     assert.equal(googleStart.body.provider, "google", "Google OAuth start returned the wrong provider");
     assert.deepEqual(googleStart.body.scopes, [expectedGoogleScope], "Google OAuth start requested broader scopes");
@@ -251,6 +251,15 @@ try {
 } catch (error) {
   await bestEffortLogout(activeSession);
   fail(error instanceof Error ? error.message : "unknown failure");
+}
+
+function assertSafeGoogleConnection(connection, expectedScope) {
+  if (connection === null) return;
+  assert(connection && typeof connection === "object", "Google connection returned an invalid shape");
+  assert.equal(connection.provider, "google", "Google connection returned the wrong provider");
+  assert(["active", "disconnected", "error"].includes(connection.status), "Google connection returned an unknown status");
+  assert.equal(typeof connection.hasRefreshToken, "boolean", "Google connection omitted redacted refresh-token state");
+  assert.deepEqual(connection.scopes, [expectedScope], "Google connection has broader scopes than the metadata-only contract");
 }
 
 async function createOrVerifyProject({ snapshot, cookie, csrfToken }) {
