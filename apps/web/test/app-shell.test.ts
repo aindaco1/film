@@ -40,6 +40,7 @@ describe("web app shell", () => {
   it("exposes workspace sections for project navigation", async () => {
     const source = await readFile("src/main.ts", "utf8");
     const productionExports = await readFile("src/production-document-export.ts", "utf8");
+    const productionResourceExports = await readFile("src/production-resource-export.ts", "utf8");
     const styles = await readFile("src/styles.css", "utf8");
 
     expect(source).toContain("case \"projects\"");
@@ -123,7 +124,7 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"production-report-csv-export\"");
     expect(source).toContain("createProductionReportMarkdown");
     expect(source).toContain("createProductionReportSceneCsv");
-    expect(source).toContain("safeCsvCell");
+    expect(productionResourceExports).toContain("safeCsvCell");
     expect(source).toContain("renderLocationsWorkspace");
     expect(source).toContain("Locations workspace");
     expect(source).toContain("Add scouting record");
@@ -135,7 +136,7 @@ describe("web app shell", () => {
     expect(source).toContain("applyProductionLocationToCallSheet");
     expect(source).toContain("data-action=\"production-location-update\"");
     expect(source).toContain("data-action=\"production-location-export\"");
-    expect(source).toContain("createProductionLocationMarkdown");
+    expect(productionResourceExports).toContain("createProductionLocationMarkdown");
     expect(source).toContain("renderTalentWorkspace");
     expect(source).toContain("Talent workspace");
     expect(source).toContain("Add character record");
@@ -146,7 +147,7 @@ describe("web app shell", () => {
     expect(source).toContain("applyProductionTalentToCallSheet");
     expect(source).toContain("data-action=\"production-talent-update\"");
     expect(source).toContain("data-action=\"production-talent-export\"");
-    expect(source).toContain("createProductionTalentMarkdown");
+    expect(productionResourceExports).toContain("createProductionTalentMarkdown");
     expect(source).toContain("planningFieldKeySummary");
     expect(source).toContain("locations-workspace-grid");
     expect(source).toContain("renderWorkspaceSection");
@@ -506,6 +507,7 @@ describe("web app shell", () => {
 
   it("reviews screenplay revisions and explicitly carries matched planning forward", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const screenplayExports = await readFile("src/screenplay-review-export.ts", "utf8");
 
     expect(source).toContain("renderScreenplayRevisionReview");
     expect(source).toContain("compareScreenplayRevisions");
@@ -514,12 +516,13 @@ describe("web app shell", () => {
     expect(source).toContain("data-action=\"screenplay-revision-carry-forward\"");
     expect(source).toContain("data-action=\"screenplay-revision-export\"");
     expect(source).toContain("createScreenplayRevisionMarkdown");
-    expect(source).toContain("Final call sheets, sides, and production reports remain pinned");
-    expect(source).toContain("metadata-only local export");
+    expect(screenplayExports).toContain("Final call sheets, sides, and production reports remain pinned");
+    expect(screenplayExports).toContain("metadata-only local export");
   });
 
   it("searches the local screenplay graph and adds missed scene elements through shared helpers", async () => {
     const source = await readFile("src/main.ts", "utf8");
+    const screenplayExports = await readFile("src/screenplay-review-export.ts", "utf8");
 
     expect(source).toContain("searchScreenplayScenes");
     expect(source).toContain("addManualScreenplayElementOccurrence");
@@ -547,10 +550,10 @@ describe("web app shell", () => {
     expect(source).toContain("orderScreenplayScenesByProductionSchedule");
     expect(source).toContain("data-action=\"screenplay-scene-order\"");
     expect(source).toContain("data-screenplay-scene-order=\"schedule\"");
-    expect(source).toContain("Occurrence positions");
+    expect(screenplayExports).toContain("Occurrence positions");
     expect(source).toContain("createScreenplayElementReportMarkdown");
     expect(source).toContain("createScreenplayElementReportCsv");
-    expect(source).toContain("metadata-only local export");
+    expect(screenplayExports).toContain("metadata-only local export");
   });
 
   it("exposes a local versioned stripboard backed by shared schedule helpers", async () => {

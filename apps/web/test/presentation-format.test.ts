@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { seedWorkspace, type ProjectDoc } from "@film/schema";
-import { escapeHtml, formatDocStatus, packetText, productionUnitLabel } from "../src/presentation-format";
+import {
+  escapeHtml,
+  formatDocStatus,
+  formatProductionMinutes,
+  markdownTableCell,
+  packetText,
+  productionUnitLabel,
+  productionValueLabel,
+  safeCsvCell,
+} from "../src/presentation-format";
 
 describe("shared presentation formatting", () => {
   it("normalizes display text and escapes active HTML characters", () => {
@@ -17,5 +26,14 @@ describe("shared presentation formatting", () => {
     const document = structuredClone(seedWorkspace.projects[0]!.docs[0]!) as ProjectDoc;
     expect(formatDocStatus({ ...document, attachmentStatus: "stored_r2" })).toBe("Stored");
     expect(formatDocStatus({ ...document, attachmentStatus: undefined })).toBe(document.date);
+  });
+
+  it("shares export-safe value formatting without duplicating serializer rules", () => {
+    expect(formatProductionMinutes(0)).toBe("--");
+    expect(formatProductionMinutes(90)).toBe("1h 30m");
+    expect(productionValueLabel("not_started")).toBe("Not Started");
+    expect(markdownTableCell("Signal | Noise")).toBe("Signal \\| Noise");
+    expect(safeCsvCell("=CMD()")).toBe("\"'=CMD()\"");
+    expect(safeCsvCell('A "quoted" value')).toBe('"A ""quoted"" value"');
   });
 });
