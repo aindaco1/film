@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { WorkspaceRole } from "@film/schema";
 import { postWorkerJson, type Fetcher } from "./worker-client";
 
@@ -519,7 +520,7 @@ export async function assignProjectMembership(
     department: string | null;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProjectMembershipAssignResult> {
   return postWorkerJson<ProjectMembershipAssignResult>(
     workerUrl,
@@ -542,7 +543,7 @@ export async function assignRecordPermission(
     expiresAt: string | null;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordPermissionAssignResult> {
   return postWorkerJson<RecordPermissionAssignResult>(
     workerUrl,
@@ -563,7 +564,7 @@ export async function createRecordCommentIntent(
     body: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordCommentIntentResult> {
   return postWorkerJson<RecordCommentIntentResult>(
     workerUrl,
@@ -584,7 +585,7 @@ export async function exportRecordCommentManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordCommentManifestResult> {
   return postWorkerJson<RecordCommentManifestResult>(
     workerUrl,
@@ -605,7 +606,7 @@ export async function preflightRecordMutation(
     mutation: RecordMutationKind;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationPreflightResult> {
   return postWorkerJson<RecordMutationPreflightResult>(
     workerUrl,
@@ -628,7 +629,7 @@ export async function createRecordMutationRequest(
     fieldKeys?: string[];
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationRequestResult> {
   return postWorkerJson<RecordMutationRequestResult>(
     workerUrl,
@@ -649,7 +650,7 @@ export async function exportRecordMutationRequestManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationRequestManifestResult> {
   return postWorkerJson<RecordMutationRequestManifestResult>(
     workerUrl,
@@ -670,7 +671,7 @@ export async function resolveRecordMutationRequest(
     note?: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationResolutionResult> {
   return postWorkerJson<RecordMutationResolutionResult>(
     workerUrl,
@@ -690,7 +691,7 @@ export async function previewRecordMutationDiff(
     updates?: Record<string, string | number | boolean | null | string[]>;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationDiffPreviewResult> {
   return postWorkerJson<RecordMutationDiffPreviewResult>(
     workerUrl,
@@ -710,7 +711,7 @@ export async function createRecordMutationRollbackRequest(
     summary?: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationRollbackRequestResult> {
   return postWorkerJson<RecordMutationRollbackRequestResult>(
     workerUrl,
@@ -729,7 +730,7 @@ export async function previewRecordMutationDeleteRecoveryPlan(
     requestId: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationDeleteRecoveryPlanResult> {
   return postWorkerJson<RecordMutationDeleteRecoveryPlanResult>(
     workerUrl,
@@ -750,7 +751,7 @@ export async function applyRecordMutationRequest(
     updates?: Record<string, string | number | boolean | null | string[]>;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationApplyResult> {
   return postWorkerJson<RecordMutationApplyResult>(
     workerUrl,
@@ -771,7 +772,7 @@ export async function createFilmProfileMutationRequest(
     fieldKeys: FilmProfileMutationFieldKey[];
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmProfileMutationRequestResult> {
   return postWorkerJson<FilmProfileMutationRequestResult>(
     workerUrl,
@@ -791,7 +792,7 @@ export async function exportFilmProfileMutationRequestManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmProfileMutationRequestManifestResult> {
   return postWorkerJson<FilmProfileMutationRequestManifestResult>(
     workerUrl,
@@ -812,7 +813,7 @@ export async function resolveFilmProfileMutationRequest(
     note?: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmProfileMutationResolutionResult> {
   return postWorkerJson<FilmProfileMutationResolutionResult>(
     workerUrl,
@@ -832,7 +833,7 @@ export async function previewFilmProfileMutationDiff(
     updates?: Record<string, string | number | null>;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmProfileMutationDiffPreviewResult> {
   return postWorkerJson<FilmProfileMutationDiffPreviewResult>(
     workerUrl,
@@ -853,7 +854,7 @@ export async function applyFilmProfileMutationRequest(
     updates?: Record<string, string | number | null>;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmProfileMutationApplyResult> {
   return postWorkerJson<FilmProfileMutationApplyResult>(
     workerUrl,
@@ -873,7 +874,7 @@ export async function exportRecordMutationAuditManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordMutationAuditManifestResult> {
   return postWorkerJson<RecordMutationAuditManifestResult>(
     workerUrl,
@@ -893,7 +894,7 @@ export async function exportProjectMembershipManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProjectMembershipManifestResult> {
   return postWorkerJson<ProjectMembershipManifestResult>(
     workerUrl,
@@ -913,7 +914,7 @@ export async function exportProjectMembershipHistory(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProjectMembershipHistoryResult> {
   return postWorkerJson<ProjectMembershipHistoryResult>(
     workerUrl,
@@ -934,7 +935,7 @@ export async function revokeProjectMembership(
     role: WorkspaceRole;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProjectMembershipRevokeResult> {
   return postWorkerJson<ProjectMembershipRevokeResult>(
     workerUrl,
@@ -954,7 +955,7 @@ export async function updateWorkspaceMemberStatus(
     status: WorkspaceMemberManagedStatus;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkspaceMemberStatusUpdateResult> {
   return postWorkerJson<WorkspaceMemberStatusUpdateResult>(
     workerUrl,
@@ -977,7 +978,7 @@ export async function revokeRecordPermission(
     permission: RecordPermissionLevel;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordPermissionRevokeResult> {
   return postWorkerJson<RecordPermissionRevokeResult>(
     workerUrl,
@@ -998,7 +999,7 @@ export async function transferRecordOwner(
     memberId: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordOwnerTransferResult> {
   return postWorkerJson<RecordOwnerTransferResult>(
     workerUrl,
@@ -1018,7 +1019,7 @@ export async function exportRecordOwnerManifest(
     entityId: string;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordOwnerManifestResult> {
   return postWorkerJson<RecordOwnerManifestResult>(
     workerUrl,
@@ -1039,7 +1040,7 @@ export async function exportRecordOwnerHistory(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordOwnerHistoryResult> {
   return postWorkerJson<RecordOwnerHistoryResult>(
     workerUrl,
@@ -1060,7 +1061,7 @@ export async function exportRecordPermissionManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordPermissionManifestResult> {
   return postWorkerJson<RecordPermissionManifestResult>(
     workerUrl,
@@ -1081,7 +1082,7 @@ export async function exportRecordPermissionHistory(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordPermissionHistoryResult> {
   return postWorkerJson<RecordPermissionHistoryResult>(
     workerUrl,
@@ -1102,7 +1103,7 @@ export async function exportExpiredRecordPermissionManifest(
     limit?: number;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RecordPermissionManifestResult> {
   return postWorkerJson<RecordPermissionManifestResult>(
     workerUrl,

@@ -1,4 +1,5 @@
 import { hashSmsRecipient, normalizeSmsRecipient } from "./sms-identity";
+import { reconcileTelnyxDelivery } from "./telnyx-delivery";
 import type { TelnyxMessagingWebhookEvent } from "./telnyx-webhook";
 
 export const TELNYX_WEBHOOK_MAX_BYTES = 256 * 1024;
@@ -80,18 +81,12 @@ export async function applyTelnyxComplianceEvent(input: TelnyxComplianceInput): 
     const existing = await db.prepare("SELECT id FROM telnyx_webhook_events WHERE provider_event_id = ? LIMIT 1")
       .bind(event.providerEventId)
       .first<{ id: string }>();
-    if (existing) return complianceSuccess(event, true, false, false, 0);
+    if (existing) {
+      await reconcileOutboundEvent(db, event);
+      return complianceSuccess(event, true, false, false, 0);
+    }
 
     if (!event.autoresponseType) {
-      const attempt = event.messageId && event.direction === "outbound"
-        ? await db.prepare(`
-            SELECT id, workspace_id, project_id
-            FROM sms_delivery_attempts
-            WHERE provider_message_id = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-          `).bind(event.messageId).first<{ id: string; workspace_id: string; project_id: string }>()
-        : null;
       const eventInsert = db.prepare(`
         INSERT INTO telnyx_webhook_events (
           id, provider_event_id, event_type, occurred_at, message_id, direction,
@@ -110,47 +105,9 @@ export async function applyTelnyxComplianceEvent(input: TelnyxComplianceInput): 
         event.parts,
         receivedAt,
       );
-      if (!attempt) {
-        const result = await eventInsert.run();
-        if (!result.success || Number(result.meta?.changes ?? 0) !== 1) throw new Error("telnyx event insert failed");
-        return complianceSuccess(event, false, false, false, 0);
-      }
-      const deliveryStatus = smsAttemptStatus(event.deliveryStatus);
-      const results = await db.batch([
-        eventInsert,
-        db.prepare(`
-          UPDATE sms_delivery_attempts
-          SET status = ?, error_codes_json = ?, source_webhook_event_id = ?, updated_at = ?
-          WHERE id = ? AND workspace_id = ? AND provider_message_id = ?
-        `).bind(
-          deliveryStatus,
-          JSON.stringify(event.errorCodes),
-          event.providerEventId,
-          receivedAt,
-          attempt.id,
-          attempt.workspace_id,
-          event.messageId,
-        ),
-        db.prepare(`
-          INSERT INTO audit_events (
-            id, workspace_id, project_id, actor_member_id, action, metadata_json, created_at
-          ) VALUES (?, ?, ?, NULL, 'provider.telnyx_delivery_updated', ?, ?)
-        `).bind(
-          `audit_telnyx_delivery_${(await sha256Hex(event.providerEventId)).slice(0, 32)}`,
-          attempt.workspace_id,
-          attempt.project_id,
-          JSON.stringify({
-            deliveryStatus,
-            providerErrorCodeCount: event.errorCodes.length,
-            messageBodyStored: false,
-            recipientValuesStoredInAudit: false,
-          }),
-          receivedAt,
-        ),
-      ]);
-      if (results.some((result) => !result.success) || Number(results[0]?.meta?.changes ?? 0) !== 1) {
-        throw new Error("telnyx delivery update failed");
-      }
+      const result = await eventInsert.run();
+      if (!result.success || Number(result.meta?.changes ?? 0) !== 1) throw new Error("telnyx event insert failed");
+      await reconcileOutboundEvent(db, event);
       return complianceSuccess(event, false, false, false, 0);
     }
 
@@ -272,7 +229,10 @@ export async function applyTelnyxComplianceEvent(input: TelnyxComplianceInput): 
       const existing = await db.prepare("SELECT id FROM telnyx_webhook_events WHERE provider_event_id = ? LIMIT 1")
         .bind(event.providerEventId)
         .first<{ id: string }>();
-      if (existing) return complianceSuccess(event, true, false, false, 0);
+      if (existing) {
+        await reconcileOutboundEvent(db, event);
+        return complianceSuccess(event, true, false, false, 0);
+      }
     } catch {
       // Preserve the fail-closed storage result below.
     }
@@ -299,11 +259,10 @@ function complianceSuccess(
   };
 }
 
-function smsAttemptStatus(status: TelnyxMessagingWebhookEvent["deliveryStatus"]): "queued" | "sent" | "delivered" | "failed" {
-  if (status === "sent") return "sent";
-  if (status === "delivered") return "delivered";
-  if (status === "sending_failed" || status === "delivery_failed" || status === "delivery_unconfirmed") return "failed";
-  return "queued";
+async function reconcileOutboundEvent(db: D1Database, event: TelnyxMessagingWebhookEvent): Promise<void> {
+  if (!event.autoresponseType && event.direction === "outbound" && event.messageId) {
+    await reconcileTelnyxDelivery(db, event.messageId);
+  }
 }
 
 function complianceError(

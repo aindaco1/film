@@ -1,5 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { seedWorkspace } from "@film/schema";
+import { renderOperationsGrid, renderOverviewBottom, renderProductionOverview } from "../src/project-overview";
+import { PRODUCTION_VIEW_MODULES, readUiSources } from "./ui-source-helpers";
 
 function functionSource(source: string, name: string): string {
   const start = source.indexOf(`function ${name}`);
@@ -10,17 +13,23 @@ function functionSource(source: string, name: string): string {
 
 function countStaticAttributes(source: string, attribute: string): Map<string, number> {
   const counts = new Map<string, number>();
-  const pattern = new RegExp(`${attribute}=["']([^"'$]+)["']`, "g");
+  const pattern = new RegExp(`\\s${attribute}=["']([^"'$]+)["']`, "g");
   for (const match of source.matchAll(pattern)) {
     counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
   }
   return counts;
 }
 
+async function renderedSource(): Promise<string> {
+  const source = await readFile("src/main.ts", "utf8");
+  let renderSource = source.slice(0, source.indexOf("function bindEvents(): void"));
+  renderSource += await readUiSources("backup-workspace", ...PRODUCTION_VIEW_MODULES, "create-disclosure");
+  return renderSource;
+}
+
 describe("canonical UI surface ownership", () => {
   it("renders each singleton user command on one canonical surface", async () => {
-    const source = await readFile("src/main.ts", "utf8");
-    const renderSource = source.slice(0, source.indexOf("function bindEvents(): void"));
+    const renderSource = await renderedSource();
     const actionCounts = countStaticAttributes(renderSource, "data-action");
 
     for (const action of [
@@ -38,14 +47,12 @@ describe("canonical UI surface ownership", () => {
   });
 
   it("allows repeated static commands only for contextual row controls", async () => {
-    const source = await readFile("src/main.ts", "utf8");
-    const renderSource = source.slice(0, source.indexOf("function bindEvents(): void"));
+    const renderSource = await renderedSource();
     const repeatedActions = [...countStaticAttributes(renderSource, "data-action")]
       .filter(([, count]) => count > 1)
       .sort(([left], [right]) => left.localeCompare(right));
 
     expect(repeatedActions).toEqual([
-      ["call-sheet-select", 2],
       ["contextual-record-update", 4],
       ["permission-manifest", 2],
       ["production-shot-reorder", 2],
@@ -78,20 +85,22 @@ describe("canonical UI surface ownership", () => {
 
   it("keeps backup recovery in Backups instead of the inspector or top bar", async () => {
     const source = await readFile("src/main.ts", "utf8");
-    const backups = functionSource(source, "renderBackupsWorkspace");
+    const backups = functionSource(await readFile("src/backup-workspace.ts", "utf8"), "renderBackupsWorkspace");
     const topbar = functionSource(source, "renderTopbar");
 
     expect(backups).toContain("renderBackupRestoreWorkflow");
     expect(backups).toContain('data-action="backup"');
     expect(source).not.toContain('inspectorViewPanelAttributes("backups")');
     expect(topbar).not.toContain('data-action="backup"');
-    expect(topbar).toContain("Manage backups in the Backups workspace");
+    expect(topbar).toContain("localBackupSummary(state.operations)");
+    expect(topbar).not.toContain("state.workspace.restorePoints");
   });
 
   it("limits direct workspace links to summary drilldowns and prerequisite recovery", async () => {
-    const source = await readFile("src/main.ts", "utf8");
-    const renderSource = source.slice(0, source.indexOf("function bindEvents(): void"));
-    const linkCounts = [...countStaticAttributes(renderSource, "data-workspace-section")].sort(([left], [right]) =>
+    const renderSource = await renderedSource();
+    const project = seedWorkspace.projects[0]!;
+    const overview = renderOperationsGrid(project, null) + renderProductionOverview(project, seedWorkspace) + renderOverviewBottom(project, seedWorkspace);
+    const linkCounts = [...countStaticAttributes(renderSource + overview, "data-workspace-section")].sort(([left], [right]) =>
       left.localeCompare(right),
     );
 
@@ -103,6 +112,7 @@ describe("canonical UI surface ownership", () => {
       ["expenses", 1],
       ["people", 1],
       ["planning", 1],
+      ["schedule", 2],
       ["tasks", 1],
     ]);
   });

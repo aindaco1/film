@@ -106,7 +106,7 @@ describe("Telnyx compliance processing", () => {
     expect(JSON.stringify(redactedRows.results)).not.toContain("15555550999");
   });
 
-  it("records START as evidence without reactivating consent and fails closed on unmapped numbers", async () => {
+  it.each(["START", "HELP"] as const)("records %s as evidence without reactivating consent and fails closed on unmapped numbers", async (keyword) => {
     const { db, close } = createSmsTestD1();
     cleanups.push(close);
     await seedSmsTestWorkspace(db);
@@ -126,12 +126,12 @@ describe("Telnyx compliance processing", () => {
     await db.prepare("UPDATE sms_recipients SET status = 'revoked', categories_json = '[]' WHERE id = ?")
       .bind(consent.recipient?.id)
       .run();
-    const startBody = inboundBody("event_start_001", "START");
-    const startEvent = normalizeTelnyxMessagingWebhookEvent(startBody)!;
-    const start = await applyTelnyxComplianceEvent({
+    const rawBody = inboundBody("event_keyword_001", keyword);
+    const event = normalizeTelnyxMessagingWebhookEvent(rawBody)!;
+    const result = await applyTelnyxComplianceEvent({
       db,
-      rawBody: startBody,
-      event: startEvent,
+      rawBody,
+      event,
       recipientHashKey: hashKey,
       inboundNumberMappings: '{"+15555550999":"workspace_acme"}',
     });
@@ -143,17 +143,18 @@ describe("Telnyx compliance processing", () => {
       recipientHashKey: hashKey,
       inboundNumberMappings: '{"+15555550999":"workspace_acme"}',
     });
-    const recipient = await db.prepare("SELECT status FROM sms_recipients WHERE id = ?")
+    const recipient = await db.prepare("SELECT status, categories_json FROM sms_recipients WHERE id = ?")
       .bind(consent.recipient?.id)
-      .first<{ status: string }>();
-    const startEvents = await db.prepare("SELECT COUNT(*) AS count FROM sms_consent_events WHERE event_type = 'opt_in_received'")
+      .first<{ status: string; categories_json: string }>();
+    const keywordEvents = await db.prepare("SELECT COUNT(*) AS count FROM sms_consent_events WHERE event_type = ?")
+      .bind(keyword === "START" ? "opt_in_received" : "help_requested")
       .first<{ count: number }>();
     const unmappedEvents = await db.prepare("SELECT COUNT(*) AS count FROM telnyx_webhook_events WHERE provider_event_id = 'event_stop_unmapped'")
       .first<{ count: number }>();
 
-    expect(start).toMatchObject({ recipientMatched: true, recipientRevoked: false, autoresponseType: "START" });
-    expect(recipient?.status).toBe("revoked");
-    expect(startEvents?.count).toBe(1);
+    expect(result).toMatchObject({ recipientMatched: true, recipientRevoked: false, autoresponseType: keyword });
+    expect(recipient).toEqual({ status: "revoked", categories_json: "[]" });
+    expect(keywordEvents?.count).toBe(1);
     expect(unmapped).toMatchObject({ error: "telnyx_webhook_workspace_mapping_required", errorStatus: 503 });
     expect(unmappedEvents?.count).toBe(0);
   });

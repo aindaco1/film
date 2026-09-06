@@ -124,7 +124,7 @@ describe("provider client", () => {
           mode: "read_only_provider_preflight",
           status: "pending_campaign_review",
           providerApiChecked: true,
-          profile: { reachable: true, enabled: true, nameMatches: true, webhookMatches: true, webhookApiV2: true },
+          profile: { reachable: true, enabled: true, nameMatches: true, webhookMatches: true, webhookApiV2: true, helpSettingsReachable: true, helpResponseConfigured: true },
           campaign: {
             reachable: true,
             status: "PENDING_MNO_REVIEW",
@@ -488,7 +488,7 @@ describe("provider client", () => {
             oauthPolicy: "worker_encrypted_oauth_ready",
             webhookPolicy: "not_configured",
             secretsPolicy: "worker_only",
-            requiredScopes: ["drive.metadata.readonly", "documents.readonly"],
+            requiredScopes: ["drive.readonly"],
             plannedActions: [
               {
                 id: "link_root_folder",

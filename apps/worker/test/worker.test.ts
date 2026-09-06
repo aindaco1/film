@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
+import { encryptGoogleToken, GOOGLE_DRIVE_METADATA_SCOPE } from "../src/google-oauth";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -2565,6 +2566,12 @@ describe("film worker", () => {
     const senderNumber = "+15055550199";
     const providerFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input));
+      if (url.pathname.endsWith("/autoresp_configs")) {
+        return new Response(JSON.stringify({
+          data: [{ op: "help", country_code: "*", keywords: ["HELP"], resp_text: "Film by Dust Wave: Contact your production coordinator for help." }],
+          meta: { total_pages: 1 },
+        }), { status: 200 });
+      }
       if (url.pathname.startsWith("/v2/messaging_profiles/")) {
         return new Response(JSON.stringify({ data: {
           name: "Film",
@@ -2632,7 +2639,7 @@ describe("film worker", () => {
       secretValuesExposed: false,
     });
     expect(Object.values(body.readiness.configured).every(Boolean)).toBe(true);
-    expect(providerFetch).toHaveBeenCalledTimes(5);
+    expect(providerFetch).toHaveBeenCalledTimes(6);
     const serialized = JSON.stringify(body);
     for (const privateValue of [apiKey, profileId, campaignId, senderNumber, "private not-found detail"]) {
       expect(serialized).not.toContain(privateValue);
@@ -2775,6 +2782,18 @@ describe("film worker", () => {
     expect(JSON.parse(disabledText)).toEqual({ error: "telnyx_sms_send_disabled" });
     expect(disabledText).not.toContain(messageBody);
     expect(disabledText).not.toContain(recipientId);
+  });
+
+  it("blocks live sends when the STOP webhook is disabled or unconfigured", async () => {
+    const { env, cookie, csrfToken } = await createAuthorizedTestSession("producer");
+    for (const webhookMode of ["disabled", "live"]) {
+      const response = await worker.fetch(new Request("https://worker.test/api/providers/sms/send", {
+        method: "POST", headers: { "content-type": "application/json", cookie, "x-film-csrf": csrfToken },
+        body: JSON.stringify({ workspaceId: "workspace_acme" }),
+      }), { ...env, SMS_MODE: "live", TELNYX_WEBHOOK_MODE: webhookMode });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "telnyx_sms_webhook_not_ready" });
+    }
   });
 
   it("protects SMS consent routes and never reflects recipient input in errors", async () => {
@@ -3449,6 +3468,49 @@ describe("film worker", () => {
     expect(body.readiness.blockers).toEqual([]);
   });
 
+  it.each(["disabled", "reconnected", "disconnected", "reconnected_error"])("guards Google reads when %s during token use", async change => {
+    const { env, cookie, csrfToken, fakeAuth } = await createAuthorizedTestSession("producer");
+    const tokenKey = base64ForTest(new Uint8Array(32).fill(11));
+    const encrypted = (value: string, kind: "access" | "refresh") => encryptGoogleToken(value, tokenKey, `google|workspace_acme|${kind}|v1`);
+    const now = new Date().toISOString();
+    const original: FakeGoogleProviderConnectionRow = {
+      id: "connection_google", workspace_id: "workspace_acme", provider: "google", status: "active",
+      scopes_json: JSON.stringify([GOOGLE_DRIVE_METADATA_SCOPE]),
+      access_token_ciphertext: await encrypted("access-before", "access"),
+      refresh_token_ciphertext: await encrypted("refresh-before", "refresh"),
+      token_expires_at: change === "disabled" ? new Date(Date.now() + 3_600_000).toISOString() : "2020-01-01T00:00:00Z",
+      token_type: "bearer", token_key_version: "v1", root_folder_id: null,
+      last_error_code: null, connected_at: now, disconnected_at: null, updated_at: now,
+    };
+    fakeAuth.providerConnections.set("workspace_acme:google", original);
+    const replacement = {
+      ...original,
+      status: change === "disconnected" ? "disconnected" : "active",
+      access_token_ciphertext: change === "disconnected" ? null : await encrypted("access-new", "access"),
+      refresh_token_ciphertext: change === "disconnected" ? null : await encrypted("refresh-new", "refresh"),
+    } as FakeGoogleProviderConnectionRow;
+    const providerFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      expect(String(input)).toBe("https://oauth2.googleapis.com/token");
+      fakeAuth.providerConnections.set("workspace_acme:google", { ...replacement });
+      return change === "reconnected_error"
+        ? Response.json({ error: "invalid_grant" }, { status: 400 })
+        : Response.json({ access_token: "stale-refresh-result", expires_in: 3600, scope: GOOGLE_DRIVE_METADATA_SCOPE, token_type: "Bearer" });
+    });
+    const result = await worker.fetch(new Request("https://worker.test/api/providers/google/drive-manifest", {
+      method: "POST", headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
+      body: JSON.stringify({ workspaceId: "workspace_acme", rootFolderId: "drive_folder_12345" }),
+    }), {
+      ...env, GOOGLE_OAUTH_CLIENT_ID: "google-client-id", GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
+      GOOGLE_OAUTH_REDIRECT_URI: "https://worker.test/api/providers/google/oauth/callback",
+      GOOGLE_OAUTH_MODE: change === "disabled" ? "disabled" : "live", GOOGLE_TOKEN_ENCRYPTION_KEY: tokenKey,
+    });
+    expect(result.status).toBe(change === "disabled" ? 503 : 409);
+    expect(await result.json()).toMatchObject({ error: change === "disabled" ? "google_token_runtime_unavailable"
+      : "google_connection_changed" });
+    expect(providerFetch).toHaveBeenCalledTimes(change === "disabled" ? 0 : 1);
+    expect(fakeAuth.providerConnections.get("workspace_acme:google")).toEqual(change === "disabled" ? original : replacement);
+  });
+
   it("connects and disconnects Google with one-time state and encrypted token storage", async () => {
     const { env, cookie, csrfToken, fakeAuth, fakeSessions } = await createAuthorizedTestSession("producer");
     const tokenKey = base64ForTest(new Uint8Array(32).fill(11));
@@ -3598,6 +3660,24 @@ describe("film worker", () => {
     expect(manifestText).not.toContain("google-access-refreshed-private");
     expect(fakeAuth.providerConnections.get("workspace_acme:google")?.access_token_ciphertext).not.toBe(initialAccessCiphertext);
 
+    for (const code of ["temporarily_unavailable", "invalid_grant"]) {
+      const current = fakeAuth.providerConnections.get("workspace_acme:google")!;
+      current.token_expires_at = "2026-07-09T00:00:00.000Z";
+      providerFetch.mockImplementationOnce(async () => Response.json({ error: code, error_description: "private-provider-diagnostic" }, { status: 400 }));
+      const request = (path: string, body: object) => new Request(`https://worker.test/api/providers/google/${path}`, {
+        method: "POST", headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
+        body: JSON.stringify({ workspaceId: "workspace_acme", ...body }),
+      });
+      const failure = await worker.fetch(request("drive-manifest", { rootFolderId: "drive_folder_12345" }), configuredEnv);
+      expect(failure.status).toBe(code === "invalid_grant" ? 409 : 502);
+      const failureBody = await failure.json();
+      expect(failureBody).toMatchObject({ error: code === "invalid_grant" ? "google_reauthorization_required" : "google_token_refresh_failed" });
+      expect(JSON.stringify(failureBody)).not.toContain("private");
+      const connection = await worker.fetch(request("connection", {}), configuredEnv);
+      expect(await connection.json()).toMatchObject({ connection: { status: "active", reauthorizationRequired: code === "invalid_grant" } });
+      expect(current.refresh_token_ciphertext).toBeTruthy();
+    }
+
     const disconnectResponse = await worker.fetch(
       new Request("https://worker.test/api/providers/google/disconnect", {
         method: "POST",
@@ -3629,7 +3709,7 @@ describe("film worker", () => {
     );
     expect(replayResponse.status).toBe(303);
     expect(replayResponse.headers.get("location")).toContain("google=error");
-    expect(providerFetch).toHaveBeenCalledTimes(4);
+    expect(providerFetch).toHaveBeenCalledTimes(6);
     expect(JSON.stringify([...fakeAuth.auditEvents.values()])).not.toContain("google-access-private");
     expect(JSON.stringify([...fakeAuth.auditEvents.values()])).not.toContain("google-refresh-private");
   });
@@ -3656,9 +3736,15 @@ describe("film worker", () => {
     expect(text).not.toContain("private-google-client-secret");
   });
 
-  it("connects Meta, selects a linked Page, reads bounded analytics, and disconnects", async () => {
+  it.each([
+    { linked: true, instagramScopes: true },
+    { linked: false, instagramScopes: true },
+    { linked: false, instagramScopes: false },
+  ])("connects Meta, selects a Page, reads bounded analytics, and disconnects: %j", async ({ linked, instagramScopes }) => {
     const { env, cookie, csrfToken, fakeAuth, fakeSessions } = await createAuthorizedTestSession("producer");
     const tokenKey = base64ForTest(new Uint8Array(32).fill(23));
+    const userTokenFixture = "meta-long-user-token-private".padEnd(512, "x");
+    const pageTokenFixture = "meta-page-token-private".padEnd(1024, "y");
     const configuredEnv = {
       ...env,
       INVITE_APP_ORIGIN: "https://film.test",
@@ -3677,7 +3763,7 @@ describe("film worker", () => {
         expect(url.searchParams.size).toBe(0);
         if (body.get("grant_type") === "fb_exchange_token") {
           expect(body.get("fb_exchange_token")).toBe("meta-short-user-token-private");
-          return Response.json({ access_token: "meta-long-user-token-private", expires_in: 5_184_000 });
+          return Response.json({ access_token: userTokenFixture, expires_in: 5_184_000 });
         }
         return Response.json({ access_token: "meta-short-user-token-private", expires_in: 3600 });
       }
@@ -3687,8 +3773,7 @@ describe("film worker", () => {
             "pages_show_list",
             "pages_read_engagement",
             "read_insights",
-            "instagram_basic",
-            "instagram_manage_insights",
+            ...(instagramScopes ? ["instagram_basic", "instagram_manage_insights"] : []),
           ].map((permission) => ({ permission, status: "granted" })),
         });
       }
@@ -3696,24 +3781,18 @@ describe("film worker", () => {
         return Response.json({ id: "333333333333333" });
       }
       if (url.pathname.endsWith("/me/accounts")) {
+        expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${userTokenFixture}`);
+        expect(url.searchParams.get("fields")?.includes("instagram_business_account")).toBe(instagramScopes);
         return Response.json({ data: [{
           id: "111111111111111",
           name: "Big Sword",
-          access_token: "meta-page-token-private-123456",
+          access_token: pageTokenFixture,
           tasks: ["ANALYZE", "CREATE_CONTENT"],
-          instagram_business_account: { id: "222222222222222", username: "bigswordfilm" },
+          instagram_business_account: linked ? { id: "222222222222222", username: "bigswordfilm" } : null,
         }] });
       }
-      if (url.pathname.endsWith("/111111111111111") && url.searchParams.get("fields")?.includes("access_token")) {
-        return Response.json({
-          id: "111111111111111",
-          name: "Big Sword",
-          access_token: "meta-page-token-private-123456",
-          tasks: ["ANALYZE", "CREATE_CONTENT"],
-          instagram_business_account: { id: "222222222222222", username: "bigswordfilm" },
-        });
-      }
       if (url.pathname.endsWith("/111111111111111/posts")) {
+        expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${pageTokenFixture}`);
         return Response.json({ data: [{
           id: "facebook_post_12345",
           message: "Big Sword production update",
@@ -3752,13 +3831,13 @@ describe("film worker", () => {
       throw new Error(`Unexpected Meta request: ${url}`);
     });
 
-    const protectedRequest = (path: string, body: Record<string, unknown>) => worker.fetch(
+    const protectedRequest = (path: string, body: Record<string, unknown>, runtimeEnv = configuredEnv) => worker.fetch(
       new Request(`https://worker.test${path}`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-film-csrf": csrfToken, cookie },
         body: JSON.stringify(body),
       }),
-      configuredEnv,
+      runtimeEnv,
     );
     const startResponse = await protectedRequest("/api/providers/meta/oauth/start", { workspaceId: "workspace_acme" });
     const startBody = (await startResponse.json()) as { authorizationUrl: string; scopes: string[] };
@@ -3767,6 +3846,7 @@ describe("film worker", () => {
     const stateKey = `oauth:meta:${await sha256HexForTest(state)}`;
     expect(startResponse.status).toBe(200);
     expect(authorizationUrl.hostname).toBe("www.facebook.com");
+    expect(authorizationUrl.searchParams.has("scope")).toBe(false);
     expect(startBody.scopes).not.toContain("pages_manage_posts");
     expect(fakeSessions.values.has(stateKey)).toBe(true);
 
@@ -3796,6 +3876,9 @@ describe("film worker", () => {
     const selectionBody = JSON.parse(selectionText) as { connection: { status: string; page: { name: string } } };
     expect(selectionResponse.status).toBe(200);
     expect(selectionBody.connection).toMatchObject({ status: "active", page: { name: "Big Sword" } });
+    expect(selectionBody.connection).toHaveProperty("instagramAccount", linked ? { id: "222222222222222", username: "bigswordfilm" } : null);
+    const selectedAudit = [...fakeAuth.auditEvents.values()].find(event => event.action === "provider.meta_page_selected");
+    expect(JSON.parse(selectedAudit!.metadata_json)).toMatchObject({ analyzable: true, instagramLinked: linked });
     expect(selectionText).not.toContain("meta-page-token-private");
     expect(fakeAuth.metaProviderConnections.get("workspace_acme")?.page_access_token_ciphertext)
       .not.toContain("meta-page-token-private");
@@ -3811,12 +3894,22 @@ describe("film worker", () => {
     };
     expect(analyticsResponse.status).toBe(200);
     expect(analyticsBody.analytics).toMatchObject({ status: "complete", secretValuesExposed: false });
-    expect(analyticsBody.analytics.calendar).toHaveLength(2);
-    expect(analyticsBody.analytics.insights).toHaveLength(2);
+    expect(analyticsBody.analytics.calendar).toHaveLength(linked ? 2 : 1);
+    expect(analyticsBody.analytics.insights).toHaveLength(linked ? 2 : 1);
     expect(analyticsText).not.toContain("meta-page-token-private");
     expect(analyticsText).not.toContain("private.example");
 
-    const disconnectResponse = await protectedRequest("/api/providers/meta/disconnect", { workspaceId: "workspace_acme" });
+    const disabledEnv = { ...configuredEnv, META_OAUTH_MODE: "disabled" };
+    const providerCallsBeforePause = providerFetch.mock.calls.length;
+    for (const path of ["pages", "select-page", "analytics"]) {
+      const pausedResponse = await protectedRequest(`/api/providers/meta/${path}`, {
+        workspaceId: "workspace_acme", pageId: "111111111111111", since: "2026-07-01", until: "2026-07-10",
+      }, disabledEnv);
+      expect(pausedResponse.status).toBe(503);
+      expect(await pausedResponse.json()).toMatchObject({ error: "meta_token_runtime_unavailable" });
+    }
+    expect(providerFetch).toHaveBeenCalledTimes(providerCallsBeforePause);
+    const disconnectResponse = await protectedRequest("/api/providers/meta/disconnect", { workspaceId: "workspace_acme" }, disabledEnv);
     const disconnectBody = (await disconnectResponse.json()) as { providerRevoked: boolean; connection: { status: string } };
     expect(disconnectResponse.status).toBe(200);
     expect(disconnectBody).toMatchObject({ providerRevoked: true, connection: { status: "disconnected" } });
@@ -3834,7 +3927,7 @@ describe("film worker", () => {
     const auditText = JSON.stringify([...fakeAuth.auditEvents.values()]);
     expect(auditText).not.toContain("meta-long-user-token-private");
     expect(auditText).not.toContain("meta-page-token-private");
-    expect(providerFetch).toHaveBeenCalledTimes(11);
+    expect(providerFetch).toHaveBeenCalledTimes(linked ? 11 : 9);
   });
 
   it("handles signed Meta data deletion, status replay, and deauthorization without retaining user IDs", async () => {
@@ -17203,7 +17296,7 @@ function createAuthD1(): {
                     row.page_access_token_ciphertext = String(pageAccessTokenCiphertext);
                     row.page_id = String(pageId);
                     row.page_name = String(pageName);
-                    row.instagram_account_id = String(instagramAccountId);
+                    row.instagram_account_id = instagramAccountId === null ? null : String(instagramAccountId);
                     row.instagram_username = instagramUsername === null ? null : String(instagramUsername);
                     row.last_error_code = null;
                     row.disconnected_at = null;
@@ -17285,6 +17378,16 @@ function createAuthD1(): {
                   }
                 }
 
+                if (sql.includes("UPDATE provider_connections") && sql.includes("SET last_error_code = ?") && sql.includes("provider = 'google'")) {
+                  const [code, updatedAt, workspaceId, refreshCiphertext] = values;
+                  const row = providerConnections.get(`${String(workspaceId)}:google`);
+                  mutationChanges = row?.status === "active" && row.refresh_token_ciphertext === refreshCiphertext ? 1 : 0;
+                  if (row && mutationChanges === 1) {
+                    row.last_error_code = String(code);
+                    row.updated_at = String(updatedAt);
+                  }
+                }
+
                 if (sql.includes("UPDATE provider_connections") && sql.includes("SET scopes_json = ?")) {
                   const [
                     scopesJson,
@@ -17295,9 +17398,11 @@ function createAuthD1(): {
                     tokenKeyVersion,
                     updatedAt,
                     workspaceId,
+                    expectedRefreshCiphertext,
                   ] = values;
                   const row = providerConnections.get(`${String(workspaceId)}:google`);
-                  if (row) {
+                  mutationChanges = row?.status === "active" && row.refresh_token_ciphertext === expectedRefreshCiphertext ? 1 : 0;
+                  if (row && mutationChanges === 1) {
                     row.scopes_json = String(scopesJson);
                     row.access_token_ciphertext = String(accessTokenCiphertext);
                     row.refresh_token_ciphertext = String(refreshTokenCiphertext);

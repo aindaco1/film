@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { NotionCoreRecord } from "@film/importers";
 import { postWorkerJsonResponse, type Fetcher } from "./worker-client";
 
@@ -33,7 +34,7 @@ export async function commitNotionCoreRecords(
   workerUrl: string,
   csrfToken: string,
   request: NotionCoreCommitRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<NotionCoreCommitSummary> {
   const records = request.records.slice(0, 200);
   if (records.length === 0) {

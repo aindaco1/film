@@ -1,5 +1,17 @@
 const browser = (marker) => ({ kind: "browser", file: "scripts/browser-smoke.mjs", marker });
 const test = (file, marker) => ({ kind: "automated", file, marker });
+const deferredProductionEvidence = [
+  { kind: "browser", file: "scripts/browser-deferred-view-flows.mjs", marker: "runDeferredViewSmoke" },
+  { kind: "browser", file: "scripts/browser-appearance-flows.mjs", marker: "previously loaded production document and resource modules" },
+];
+const productionDocumentEvidence = [
+  ...deferredProductionEvidence,
+  test("apps/web/test/production-documents-view.test.ts", "deferred daily production documents"),
+];
+const productionResourceEvidence = [
+  ...deferredProductionEvidence,
+  test("apps/web/test/production-resources-view.test.ts", "deferred production resources"),
+];
 
 export const WORKSPACE_FLOW_SECTIONS = [
   ["slate", "Overview"],
@@ -22,6 +34,21 @@ export const WORKSPACE_FLOW_SECTIONS = [
 ];
 
 export const FILM_USER_FLOWS = [
+  flow("DEMO-01", "Projects", "Rehearse a varied local demo portfolio", "Any user", "projects", [
+    "Open Demo portfolio from Projects without replacing the current workspace.",
+    "Review projects across types/phases, edit local production records, and export an encrypted demo backup.",
+    "Reload the demo, then return to the original workspace.",
+  ], "Twelve fictional projects remain isolated, persistent, responsive, and unable to call connected services.", [{ kind: "browser", file: "scripts/browser-demo-flows.mjs", marker: "runDemoPortfolioSmoke" }]),
+  flow("OVERVIEW-01", "Projects", "Review actual production readiness and follow a summary", "Any member", "slate", [
+    "Review source scenes, scheduled days, assigned strips, and issued reports for the selected project.",
+    "Open the displayed generated call sheet or a bounded summary's canonical workspace.",
+    "Export a project packet with the same derived counts.",
+  ], "The overview and export share projections; legacy timeline/call-sheet labels and invented overall progress are not presented as current evidence.", [test("apps/web/test/project-overview.test.ts", "project-derived overview"), { kind: "browser", file: "scripts/browser-demo-flows.mjs", marker: "Overview must open the exact displayed sheet" }]),
+  flow("APPEARANCE-01", "Appearance", "Use system, light, or dark appearance", "Any member", "slate", [
+    "Open Film with a light or dark system preference, then choose an explicit appearance override.",
+    "Edit an unsaved field, change appearance, reload, and open another tab or legal page.",
+    "Return to System and change the operating-system preference.",
+  ], "Appearance is neutral and high contrast, follows system changes by default, preserves drafts, and persists locally without changing project data.", [{ kind: "browser", file: "scripts/browser-appearance-flows.mjs", marker: "runAppearanceSmoke" }]),
   flow("NAV-01", "Navigation", "Move between operational workspaces", "Any member", "slate", [
     "Open Film and use the workspace navigation.",
     "Move through every operational section without losing the selected project.",
@@ -124,27 +151,28 @@ export const FILM_USER_FLOWS = [
   flow("SHOTS-01", "Shots", "Create and maintain a scene-linked shot list", "Director or camera department", "shots", [
     "Filter to a scene, create and edit shots, then reorder them within that scene.",
     "Export Markdown or formula-safe CSV.",
-  ], "Shot decisions persist locally and derive schedule/call-sheet use without copying screenplay text.", [browser("runProductionShotsWorkspaceSmoke")]),
+  ], "Shot decisions persist locally and derive schedule/call-sheet use without copying screenplay text. Deferred loading shares resource-screen recovery and offline behavior.", [browser("runProductionShotsWorkspaceSmoke"), ...productionResourceEvidence]),
   flow("LOCATIONS-01", "Locations", "Scout a location and apply logistics", "Producer or locations department", "locations", [
     "Create a linked/manual location, capture permit/access/facility/safety details, and export a brief.",
     "Apply a confirmed location to a matching draft call sheet.",
-  ], "Derived scene/schedule use stays current; final call sheets reject logistics mutation.", [browser("runLocationsWorkspaceSmoke")]),
+  ], "Derived scene/schedule use stays current; final call sheets reject logistics mutation. Deferred loading preserves drafts and cached screens work offline.", [browser("runLocationsWorkspaceSmoke"), ...productionResourceEvidence]),
   flow("TALENT-01", "Talent", "Track casting and apply a performer", "Producer or casting department", "talent", [
     "Create a linked/manual talent record and capture casting, paperwork, contact, deal, and readiness details.",
     "Apply a cast performer to a matching draft call sheet and export a brief.",
-  ], "Private details stay local; the workflow does not infer payroll, union, tax, or legal sufficiency.", [browser("runTalentWorkspaceSmoke")]),
+  ], "Private details stay local; the workflow does not infer payroll, union, tax, or legal sufficiency. Deferred loading shares the production resource lifecycle.", [browser("runTalentWorkspaceSmoke"), ...productionResourceEvidence]),
   flow("CALLSHEET-01", "Call Sheets", "Generate, edit, sync, and issue a call sheet", "Producer or AD", "call-sheets", [
+    "Open the document workspace on demand; reconnect and explicitly reload if its module download fails.",
     "Generate a draft from an assigned schedule day and edit logistics/cast calls.",
     "Review source drift, explicitly sync, finalize or reopen, and export Markdown.",
-  ], "Manual fields survive sync, final sheets are immutable, and downstream documents stay pinned until deliberate change.", [browser("runCallSheetsWorkspaceSmoke")]),
+  ], "Manual fields survive sync, final sheets are immutable, and downstream documents stay pinned until deliberate change. Previously fetched document screens remain available offline.", [browser("runCallSheetsWorkspaceSmoke"), ...productionDocumentEvidence]),
   flow("SIDES-01", "Sides", "Review and distribute local sides files", "Cast or production team", "sides", [
     "Choose a generated call sheet and review its pinned scene order/source ranges.",
     "Export source Markdown or standalone print HTML.",
-  ], "Only scheduled source appears; missing or stale source is explicit and the HTML loads no external resources.", [browser("runProductionSidesWorkspaceSmoke")]),
+  ], "Only scheduled source appears; missing or stale source is explicit and the HTML loads no external resources. Delayed loading preserves surrounding drafts and ignores obsolete navigation.", [browser("runProductionSidesWorkspaceSmoke"), ...productionDocumentEvidence]),
   flow("REPORTS-01", "Reports", "Complete and issue a daily production report", "Producer or AD", "reports", [
     "Create a report from a call sheet, enter actual timing/counts/notes, and update scene outcomes.",
     "Finalize or reopen, then export Markdown and scene CSV.",
-  ], "Overnight durations calculate correctly, final reports lock, and exports omit screenplay/private state.", [browser("runProductionReportsWorkspaceSmoke")]),
+  ], "Overnight durations calculate correctly, final reports lock, and exports omit screenplay/private state. Loading recovery and offline navigation share the document workflow lifecycle.", [browser("runProductionReportsWorkspaceSmoke"), ...productionDocumentEvidence]),
   flow("TASKS-01", "Tasks", "Create, update, complete, and export tasks", "Any authorized project member", "tasks", [
     "Add a task with optional due label, change its status, or complete it.",
     "Export the current project task list.",
@@ -192,9 +220,10 @@ export const FILM_USER_FLOWS = [
     "Download one object or a verified package using bounded ranges.",
   ], "The package matches its plan and expired or mismatched ranges fail closed.", [test("apps/web/test/attachment-export-client.test.ts", "downloadStoredAttachmentPackage")]),
   flow("BACKUP-01", "Backups", "Create and preview an encrypted local backup", "Owner or producer", "backups", [
+    "Open Backups on demand; if the screen cannot load, reconnect and explicitly reload without changing saved data.",
     "Export an encrypted ZIP with a passphrase.",
     "Choose the file, decrypt locally, and review the restore preview before writes.",
-  ], "The default artifact is encrypted, excludes secrets, and previewing does not mutate workspace state.", [browser("exportEncryptedBackup")]),
+  ], "The default artifact is encrypted, excludes secrets, and previewing does not mutate workspace state.", [browser("exportEncryptedBackup"), { kind: "browser", file: "scripts/browser-deferred-view-flows.mjs", marker: "runDeferredViewSmoke" }, test("apps/web/test/backup-workspace.test.ts", "backup workspace boundary")]),
   flow("BACKUP-02", "Backups", "Store and retrieve an encrypted backup", "Owner or producer", "backups", [
     "Explicitly upload already-encrypted backup bytes to R2.",
     "Review stored metadata or create a bounded download plan.",
@@ -212,17 +241,23 @@ export const FILM_USER_FLOWS = [
     "Commit each missing object with exact package/object hashes.",
   ], "Existing destinations are never overwritten and metadata failures compensate safely.", [test("apps/web/test/restore-client.test.ts", "commitRestoreAttachmentObject")]),
   flow("PROVIDERS-01", "Integrations", "Review provider capability and runtime readiness", "Owner or producer", "slate", [
+    "Open Integrations on demand; recover a failed screen load without changing saved data.",
     "Run provider dry-run preflights and protected runtime readiness.",
     "Review blockers without exposing secret values.",
-  ], "Each integration distinguishes dry-run, configured, connected, and live-ready states.", [browser("runProviderChipSmoke")]),
+    "Check service status explicitly; the header and picker must agree without implying account or delivery acceptance.",
+    "Refresh, fail, and retry without erasing form drafts, stealing focus, or reopening a different view.",
+    "Sign out while a provider request is pending; old-session results must not reach a later session.",
+  ], "Unchecked, checking, failed, live-enabled, partial, blocked, and offline-demo labels come from one status model; account acceptance remains separate. Loading and late results do not erase drafts.", [browser("runProviderChipSmoke"), browser("runProviderSessionBoundarySmoke"), { kind: "browser", file: "scripts/browser-deferred-view-flows.mjs", marker: "runDeferredViewSmoke" }, { kind: "browser", file: "scripts/browser-provider-status-flows.mjs", marker: "runProviderRuntimeStatusSmoke" }, test("apps/web/test/integration-view.test.ts", "integration view boundary"), test("apps/web/test/integration-runtime.test.ts", "integration runtime status")]),
   flow("GOOGLE-01", "Integrations", "Connect Google and review Drive sync", "Owner or producer", "slate", [
     "Start OAuth, check the connection, page through a Drive manifest, and run sync dry-run.",
+    "Reconnect after expired or revoked consent; temporary provider failures retain the connection and do not request new access.",
+    "Recheck a changed connection without allowing an older refresh to overwrite or invalidate it.",
     "Disconnect when access is no longer needed.",
-  ], "OAuth state is Worker-owned; browser results expose bounded metadata and no tokens.", [test("apps/web/test/provider-client.test.ts", "startGoogleOAuth")]),
+  ], "OAuth state is Worker-owned; browser results expose bounded metadata and no tokens. Testing grants and public scope verification are separate gates.", [{ kind: "browser", file: "scripts/browser-provider-status-flows.mjs", marker: "runGoogleRecoverySmoke" }, test("apps/web/test/provider-client.test.ts", "startGoogleOAuth"), test("apps/web/test/integration-view.test.ts", "offers one reconnect action"), test("apps/worker/test/google-oauth.test.ts", "classifies refresh error"), test("apps/worker/test/worker.test.ts", "connects and disconnects Google"), test("apps/worker/test/worker.test.ts", "guards Google reads when")]),
   flow("META-01", "Integrations", "Connect Meta and review social analytics", "Owner or producer", "slate", [
-    "Start OAuth, choose an eligible Facebook page, and review read-only Instagram/Facebook analytics/calendar data.",
+    "Start OAuth, choose an eligible Facebook Page, and review read-only analytics/calendar data. A linked Instagram account is optional.",
     "Disconnect when needed.",
-  ], "Film remains read-only and never competes with the Social app for publishing.", [test("apps/web/test/provider-client.test.ts", "startMetaOAuth")]),
+  ], "Film remains read-only and never competes with the Social app for publishing. Facebook-only accounts skip Instagram endpoints without showing false errors.", [browser("runMetaFacebookOnlySmoke"), test("apps/web/test/provider-client.test.ts", "startMetaOAuth"), test("apps/worker/test/meta-oauth.test.ts", "meta oauth"), test("apps/worker/test/meta-insights.test.ts", "meta insights")]),
   flow("STRIPE-01", "Integrations", "Review Pool/Store funding and sales summaries", "Owner or producer", "slate", [
     "Check summary readiness and fetch the normalized Pool/Store view.",
     "Review an empty configured state when no mapped campaign/product exists.",

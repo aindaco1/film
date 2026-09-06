@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
 export type MagicLinkRequestResult = {
@@ -34,7 +35,7 @@ type SessionMetadataResult = {
 export async function requestMagicLink(
   workerUrl: string,
   email: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<MagicLinkRequestResult> {
   const response = await fetcher(`${workerUrl}/api/auth/magic-link/request`, {
     method: "POST",
@@ -49,7 +50,7 @@ export async function requestMagicLink(
 export async function verifyMagicLink(
   workerUrl: string,
   token: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmSession> {
   const result = await parseJsonResponse<MagicLinkVerifyResult>(
     await fetcher(`${workerUrl}/api/auth/magic-link/verify`, {
@@ -66,7 +67,7 @@ export async function verifyMagicLink(
 
 export async function readSessionMetadata(
   workerUrl: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<FilmSessionMetadata | null> {
   const result = await parseJsonResponse<SessionMetadataResult>(
     await fetcher(`${workerUrl}/api/auth/session`, {
@@ -82,7 +83,7 @@ export async function readSessionMetadata(
 export async function logoutSession(
   workerUrl: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<void> {
   await parseJsonResponse<{ ok: boolean }>(
     await fetcher(`${workerUrl}/api/auth/logout`, {

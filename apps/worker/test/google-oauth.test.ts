@@ -5,6 +5,7 @@ import {
   encryptGoogleToken,
   exchangeGoogleAuthorizationCode,
   googleOAuthScopes,
+  googleTokenRefreshFailure,
   hasValidGoogleTokenEncryptionKey,
   refreshGoogleAccessToken,
   revokeGoogleToken,
@@ -111,6 +112,24 @@ describe("google oauth", () => {
     await expect(revokeGoogleToken("provider-token", fetcher as typeof fetch)).resolves.toBe(true);
     expect(fetcher).toHaveBeenCalledOnce();
     expect((requests[0]?.init?.body as URLSearchParams).get("token")).toBe("provider-token");
+  });
+
+  it.each(["invalid_grant", "invalid_client", "temporarily_unavailable"])("classifies refresh error %s without exposing provider details", async code => {
+    const fetcher = vi.fn(async () => Response.json({ error: code, error_description: "private-provider-diagnostic" }, { status: 400 }));
+    const error = await refreshGoogleAccessToken(configuration, "private-refresh", [], fetcher as typeof fetch).catch(error => error);
+    const failure = googleTokenRefreshFailure(error);
+    expect(failure.status).toBe(code === "invalid_grant" ? 409 : 502);
+    expect(failure.error).toBe(code === "invalid_grant" ? "google_reauthorization_required" : "google_token_refresh_failed");
+    expect(JSON.stringify(failure)).not.toContain("private");
+    expect(googleTokenRefreshFailure(new Error("invalid_grant")).status).toBe(502);
+  });
+
+  it.each([512, 2048])("round-trips realistic %i-byte provider tokens with context binding", async length => {
+    const key = base64(new Uint8Array(32).fill(7));
+    const token = "a".repeat(length);
+    const encrypted = await encryptGoogleToken(token, key, "google|workspace_a|access|v1");
+    await expect(decryptGoogleToken(encrypted, key, "google|workspace_a|access|v1")).resolves.toBe(token);
+    await expect(decryptGoogleToken(encrypted, key, "google|workspace_b|access|v1")).rejects.toThrow();
   });
 });
 

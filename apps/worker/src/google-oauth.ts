@@ -1,10 +1,9 @@
 import * as oauth from "oauth4webapi";
+import { googleOAuthScopes, type GoogleOAuthRequestedCapabilities } from "@film/providers";
+export { googleOAuthScopes, GOOGLE_DRIVE_METADATA_SCOPE, GOOGLE_DRIVE_READ_SCOPE, GOOGLE_CALENDAR_READ_SCOPE, type GoogleOAuthRequestedCapabilities } from "@film/providers";
 
 export const GOOGLE_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 export const GOOGLE_TOKEN_KEY_VERSION = "v1";
-export const GOOGLE_DRIVE_METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
-export const GOOGLE_DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
-export const GOOGLE_CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
 
 const googleAuthorizationServer: oauth.AuthorizationServer = {
   issuer: "https://accounts.google.com",
@@ -18,11 +17,6 @@ export type GoogleOAuthConfiguration = {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-};
-
-export type GoogleOAuthRequestedCapabilities = {
-  includeDocsExport?: boolean;
-  includeCalendarSync?: boolean;
 };
 
 export type GoogleOAuthAuthorization = {
@@ -39,14 +33,6 @@ export type GoogleOAuthTokens = {
   scopes: string[];
   expiresAt: string | null;
 };
-
-export function googleOAuthScopes(capabilities: GoogleOAuthRequestedCapabilities): string[] {
-  const includeDocsExport = capabilities.includeDocsExport ?? false;
-  return [
-    includeDocsExport ? GOOGLE_DRIVE_READ_SCOPE : GOOGLE_DRIVE_METADATA_SCOPE,
-    ...(capabilities.includeCalendarSync ? [GOOGLE_CALENDAR_READ_SCOPE] : []),
-  ];
-}
 
 export async function createGoogleOAuthAuthorization(
   configuration: GoogleOAuthConfiguration,
@@ -106,17 +92,7 @@ export async function exchangeGoogleAuthorizationCode(
     client,
     tokenResponse,
   );
-  const expiresAt = typeof tokens.expires_in === "number"
-    ? new Date(Date.now() + Math.max(0, tokens.expires_in - 30) * 1000).toISOString()
-    : null;
-
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: typeof tokens.refresh_token === "string" ? tokens.refresh_token : null,
-    tokenType: tokens.token_type,
-    scopes: normalizeScopes(tokens.scope, requestedScopes),
-    expiresAt,
-  };
+  return normalizeGoogleTokens(tokens, requestedScopes, null);
 }
 
 export async function refreshGoogleAccessToken(
@@ -138,16 +114,29 @@ export async function refreshGoogleAccessToken(
     client,
     tokenResponse,
   );
-  const expiresAt = typeof tokens.expires_in === "number"
-    ? new Date(Date.now() + Math.max(0, tokens.expires_in - 30) * 1000).toISOString()
-    : null;
+  return normalizeGoogleTokens(tokens, existingScopes, refreshToken);
+}
 
+export function googleTokenRefreshFailure(error: unknown): {
+  error: "google_reauthorization_required" | "google_token_refresh_failed";
+  lastErrorCode: "reauthorization_required" | "token_refresh_failed";
+  status: 409 | 502;
+} {
+  // Only the standards client's validated provider error establishes invalid consent.
+  return error instanceof oauth.ResponseBodyError && error.error === "invalid_grant"
+    ? { error: "google_reauthorization_required", lastErrorCode: "reauthorization_required", status: 409 }
+    : { error: "google_token_refresh_failed", lastErrorCode: "token_refresh_failed", status: 502 };
+}
+
+function normalizeGoogleTokens(tokens: oauth.TokenEndpointResponse, fallbackScopes: string[], fallbackRefreshToken: string | null): GoogleOAuthTokens {
   return {
     accessToken: tokens.access_token,
-    refreshToken: typeof tokens.refresh_token === "string" ? tokens.refresh_token : refreshToken,
+    refreshToken: typeof tokens.refresh_token === "string" ? tokens.refresh_token : fallbackRefreshToken,
     tokenType: tokens.token_type,
-    scopes: normalizeScopes(tokens.scope, existingScopes),
-    expiresAt,
+    scopes: normalizeScopes(tokens.scope, fallbackScopes),
+    expiresAt: typeof tokens.expires_in === "number"
+      ? new Date(Date.now() + Math.max(0, tokens.expires_in - 30) * 1000).toISOString()
+      : null,
   };
 }
 

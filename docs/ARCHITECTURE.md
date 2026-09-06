@@ -16,6 +16,38 @@ Film follows a static-first app architecture with Worker-owned trust boundaries.
 
 ## Runtime Boundaries
 
+### Shared Appearance and Offline Shell
+
+`apps/web/public/theme.css` owns the neutral semantic palette and common control/focus defaults. The app and four legal entry points load it before the shared `appearance.js` bootstrap. Appearance defaults to the operating-system preference; an explicit System/Light/Dark choice stays in a separate local-storage key, updates other tabs, and never rerenders the app or enters workspace exports. CSS also follows the system when JavaScript is disabled. Error states may use a restrained red accent, always with a textual state.
+
+`apps/web/src/offline-shell.ts` registers the service worker whether asynchronous local initialization finishes before or after `window.load`. The service worker caches only allowlisted public, same-origin app assets and compiled JS/CSS. API paths, external origins, authorization headers, private/no-store responses, and failed responses are excluded. Query URLs are excluded except the exact public `/?demo=portfolio` navigation, which reuses the query-free root shell cache entry. Cache activation only removes Film-owned old shell caches. A missing offline script is an error, not an HTML fallback.
+
+### Demo and Project Summaries
+
+`workspace-mode.ts` owns the explicit `?demo=portfolio` boundary, local storage namespacing, and default Worker transport. Demo mode loads `demo-portfolio.ts` lazily, uses a separate IndexedDB database and UI/session keys, skips authenticated hydration, and rejects Worker requests before network access. It does not replace the global browser fetch function. Injectable clients retain their existing test transport contract. Demo edits and encrypted local exports work normally, without sharing real workspace data, account membership, or provider connections.
+
+The fictional portfolio uses canonical schema factories and the existing screenplay parser to cover all six project types and four phases. It is not a second persistence model. New real projects use honest empty production defaults rather than copied crew, budget, or timeline fixtures.
+
+`project-summary.ts` derives task totals, ledger spend, the latest edited schedule, screenplay scene counts, generated call sheets, issued reports, and local encrypted export evidence. `project-overview.ts` owns bounded read-only overview lists and production summaries. Project lists, overview, expense top sheets, and handoff exports consume these projections; no parallel completion percentage or fixed phase timeline is maintained. Entered shoot targets remain distinct from scheduled dates. A recorded restore-point row is metadata, not proof of retained backup bytes or an automatic backup schedule.
+
+Backup serialization, Notion file review/apply tools, and the demo fixture load at their workflow boundaries. They add no UI framework or runtime package dependency. The main entry remains large and should continue to be reduced through domain-specific extraction.
+
+`backup-workspace.ts` and `integration-view.ts` own their markup over explicit, bounded view contracts. Both use `deferred-view.ts` for a single in-flight import, cached revisits, stale-mount protection, focus retention, and explicit reload after failed downloads. Only the still-connected current container is updated; surrounding drafts are untouched. Domain-specific binders retain one implementation of each action. The integration renderer receives capability booleans and redacted results, not an auth session or the production graph. Provider, backup, and restore clients load inside the actions' existing error boundaries, not with the initial workspace.
+
+Provider actions capture the session and workspace before loading or calling the client, recheck after asynchronous work, and ignore obsolete successes and errors. Sign-out clears integration results immediately. This prevents old-session metadata from repopulating a new session, but does not cancel a request already accepted by the Worker or move authorization into the browser. The Worker still enforces every protected operation. Provider details render only under their matching provider.
+
+Restore record planning is shared by previews and commit requests in `restore-records.ts`; icons and byte formatting also have one implementation. No restore authorization or persistence behavior moved into a renderer. Attachment ZIP verification loads the same import utilities on demand rather than pulling them into startup. Offline use of lazy features requires their assets to have been fetched previously; the compiled suite exercises encrypted export and preview with all Worker networking unavailable.
+
+`production-documents-view.ts` renders Call Sheets, Sides, and Reports through one deferred domain module. Its discriminated view contract contains only the selected project's local production inputs; existing controller selectors, canonical schema operations, event handlers, exports, and persistence remain authoritative. `production-documents-loader.ts` reuses the same deferred-view lifecycle. Navigation binding and the call-sheet selector are shared rather than copied. The cached module supports all three workspaces offline after its first successful fetch.
+
+`production-resources-view.ts` applies the same boundary to Shots, Locations, and Talent. Both production loaders use `createDeferredViewGroup`; they do not maintain parallel loading/recovery implementations. Shared create disclosures, value options, unlinked source-candidate filtering, and existing resource-usage projections keep rendering DRY. Render contracts exclude sessions and provider credentials, and controller-owned event binders remain the only write path.
+
+Google code exchange and refresh share token normalization, and the Worker/browser share redacted connection and Drive manifest contracts. OAuth and the dry-run planner derive scopes from one capability policy. A validated OAuth `invalid_grant` persists a reconnect requirement without deleting credentials; temporary failures remain distinct. Both successful refresh and error persistence compare the original refresh-token ciphertext and require an active connection, preventing stale work from overwriting a reconnect or continuing after disconnect. Disabled Google mode blocks token use as well as connection creation. The UI offers a deliberate metadata-only reconnect and retains explicit disconnect. The unexposed selected-file metadata adapter is evaluated in `google-selected-file-evaluation.md`; it does not enable Picker or new consent.
+
+The Vite build checks final entry, transitive initial-JS, and gzip budgets and rejects accidentally eager optional feature modules. The entry is now below 500 kB; the stricter budgets remain regression guards, not a claim that the remaining large main module is fully decomposed.
+
+### Trust Boundaries
+
 The browser may render local workspace state, capture user intent, keep an IndexedDB mirror with a queued operation log, export local backups, and decrypt encrypted backups for non-destructive previews. It must not own provider credentials, permanent authorization, billing, SMS/email eligibility, sensitive sharing decisions, or final restore commits.
 
 The Worker owns authentication, authorization, provider calls, backup storage handoff, audit events, destructive restore commits, import sanitization, and future collaboration coordination.
@@ -77,7 +109,7 @@ The first usable slice remains static-first and local-capable, with explicitly g
 - SQLite migration validation for local D1 schema safety
 - Local Wrangler D1 migrations applied for Miniflare development state
 - Remote Cloudflare MVP resources provisioned: D1 `film`, KV `SESSIONS`, R2 buckets `film-backups` and `film-attachments`, and an unpublished `film-worker` script with no public targets
-- Remote Worker secret names include the Resend/auth webhook, Stripe adapter, Google OAuth/token-encryption, and SMS identity-encryption families. Meta's token-encryption key remains absent while the login Keychain recovery copy is blocked; secret values are never recorded in repository documentation.
+- Remote Worker secret names include the Resend/auth webhook, Stripe adapter, Google OAuth/token-encryption, Meta OAuth/token-encryption, and SMS identity-encryption families. The Meta app secret and independent token-encryption key have a Film-specific recovery-manager record; secret values are never recorded in repository documentation.
 - Deployment readiness is checked with `npm run check:deploy`, which reports current production route/origin, invite delivery including `INVITE_DELIVERY_MODE=live`, rate-limit override shape, and Stripe summary-readiness blockers by configuration name without printing secrets or failing local development; the checker validates exact http(s) origins, production HTTPS Pool/Store `/film/stripe-summary` endpoints, usable Pool/Store mapping refs, and can count remote Wrangler secret names with `-- --wrangler-secrets` without reading values
 - Worker-origin smoke is available with `npm run smoke:worker`; it skips without `FILM_WORKER_SMOKE_ORIGIN` and verifies real local/staging Worker health, dry-run auth, provider dry-run routes, Stripe readiness, Google Drive planning, and logout without printing tokens or secrets
 - Browser-against-Worker smoke is available with `npm run smoke:browser:worker`; it skips without a Worker origin and verifies the static UI can complete dry-run magic-link auth, canonical integration readiness, Stripe readiness, Google Drive planning, canonical document sync, protected record mutation apply, encrypted backup export with Worker storage/metadata handoff, local restore preview, and logout through a real local/staging Worker origin
@@ -113,8 +145,8 @@ The first usable slice remains static-first and local-capable, with explicitly g
 
 ## Next Technical Steps
 
-1. Complete the first explicit owner Google connect/read/disconnect exercise after the owner accepts Google's unverified external-testing warning; keep the production smoke metadata-only until then.
-2. Create/review the Meta app and Login for Business configuration, register and smoke the implemented deauthorization/data-deletion callbacks, provision the independent recoverable token key, run the owned-account flow, and only then enable the implemented read-only OAuth/Page/analytics gate. Publishing remains in the Social application.
-3. Provision Telnyx resources and registration, approve the consent disclosure/quiet-hours/retention policy, configure the implemented signed webhook and outbound adapter, and run an owned-number send/delivery/STOP smoke before enabling SMS for production recipients.
+1. Resolve Google's public access model using the selected-file evaluation. Owner reauthorization and an empty metadata read have passed; real non-empty pagination, longer-term refresh, and disconnect acceptance remain separate from fixtures. The current owned connection stays active.
+2. Complete Meta business identity verification, Tech Provider access verification, reviewer access/recording, and App Review. Owned Facebook-only acceptance has passed; Instagram needs its own authorized professional asset. Publishing remains in Social, and Meta stays disabled outside approved test windows.
+3. Preserve the accepted Telnyx delivery/STOP/HELP/START behavior and explicit consent gates. No further sender provisioning is needed for the controlled test; that acceptance does not authorize crew-wide messages.
 
 Big Sword revenue mapping is intentionally deferred, not an MVP blocker, until exact companion resources exist. The July 10 aggregate traffic review found no active limiter windows or runtime errors, so Turnstile is also deferred unless later traffic or support evidence justifies its provider and UX cost.

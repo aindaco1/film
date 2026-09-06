@@ -2,7 +2,7 @@
 
 This is the canonical user-flow inventory for Film. The source of truth is `scripts/user-flow-catalog.mjs`; regenerate this document with `npm run docs:user-flows`.
 
-Current inventory: 51 flows across 26 areas. Every flow declares automated regression evidence and shared UX acceptance criteria.
+Current inventory: 54 flows across 27 areas. Every flow declares automated regression evidence and shared UX acceptance criteria.
 
 ## Automated UX Audit
 
@@ -14,10 +14,11 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 
 | Area | Flows |
 | --- | ---: |
+| Projects | 4 |
+| Appearance | 1 |
 | Navigation | 3 |
 | Access | 2 |
 | Collaboration | 4 |
-| Projects | 2 |
 | Offline | 1 |
 | Audit | 1 |
 | Breakdown | 6 |
@@ -40,6 +41,95 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 | Restore | 3 |
 | Integrations | 4 |
 | Messaging | 2 |
+
+## Projects
+
+### DEMO-01: Rehearse a varied local demo portfolio
+
+- Persona: Any user
+- Primary workspace: projects
+- Steps:
+  1. Open Demo portfolio from Projects without replacing the current workspace.
+  2. Review projects across types/phases, edit local production records, and export an encrypted demo backup.
+  3. Reload the demo, then return to the original workspace.
+- Successful outcome: Twelve fictional projects remain isolated, persistent, responsive, and unable to call connected services.
+- UX checks:
+  - Entry point and current state are visible.
+  - Unavailable or destructive actions explain their gate before mutation.
+  - Success or failure feedback names the resulting state.
+  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
+- Regression evidence:
+  - browser: `scripts/browser-demo-flows.mjs` contains `runDemoPortfolioSmoke`
+
+### OVERVIEW-01: Review actual production readiness and follow a summary
+
+- Persona: Any member
+- Primary workspace: slate
+- Steps:
+  1. Review source scenes, scheduled days, assigned strips, and issued reports for the selected project.
+  2. Open the displayed generated call sheet or a bounded summary's canonical workspace.
+  3. Export a project packet with the same derived counts.
+- Successful outcome: The overview and export share projections; legacy timeline/call-sheet labels and invented overall progress are not presented as current evidence.
+- UX checks:
+  - Entry point and current state are visible.
+  - Unavailable or destructive actions explain their gate before mutation.
+  - Success or failure feedback names the resulting state.
+  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
+- Regression evidence:
+  - automated: `apps/web/test/project-overview.test.ts` contains `project-derived overview`
+  - browser: `scripts/browser-demo-flows.mjs` contains `Overview must open the exact displayed sheet`
+
+### PROJECT-01: Create, select, and update a film project
+
+- Persona: Owner or producer
+- Primary workspace: projects
+- Steps:
+  1. Open New project, enter a title, and choose a project type.
+  2. Submit and select the resulting project.
+  3. Edit phase, dates, budget, location, or description directly in the project overview.
+- Successful outcome: The typed film template and in-place edits each queue one bounded canonical-sync operation.
+- UX checks:
+  - Entry point and current state are visible.
+  - Unavailable or destructive actions explain their gate before mutation.
+  - Success or failure feedback names the resulting state.
+  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
+- Regression evidence:
+  - browser: `scripts/browser-smoke.mjs` contains `project overview edited canonical project details in place`
+
+### PROJECT-02: Export a filtered project directory
+
+- Persona: Any member
+- Primary workspace: projects
+- Steps:
+  1. Filter the project directory.
+  2. Export the visible result as Markdown.
+- Successful outcome: The handoff matches the visible rows and omits document bodies and private/provider state.
+- UX checks:
+  - Entry point and current state are visible.
+  - Unavailable or destructive actions explain their gate before mutation.
+  - Success or failure feedback names the resulting state.
+  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
+- Regression evidence:
+  - browser: `scripts/browser-smoke.mjs` contains `Project directory exported`
+
+## Appearance
+
+### APPEARANCE-01: Use system, light, or dark appearance
+
+- Persona: Any member
+- Primary workspace: slate
+- Steps:
+  1. Open Film with a light or dark system preference, then choose an explicit appearance override.
+  2. Edit an unsaved field, change appearance, reload, and open another tab or legal page.
+  3. Return to System and change the operating-system preference.
+- Successful outcome: Appearance is neutral and high contrast, follows system changes by default, preserves drafts, and persists locally without changing project data.
+- UX checks:
+  - Entry point and current state are visible.
+  - Unavailable or destructive actions explain their gate before mutation.
+  - Success or failure feedback names the resulting state.
+  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
+- Regression evidence:
+  - browser: `scripts/browser-appearance-flows.mjs` contains `runAppearanceSmoke`
 
 ## Navigation
 
@@ -192,41 +282,6 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runRecordMutationSmoke`
-
-## Projects
-
-### PROJECT-01: Create, select, and update a film project
-
-- Persona: Owner or producer
-- Primary workspace: projects
-- Steps:
-  1. Open New project, enter a title, and choose a project type.
-  2. Submit and select the resulting project.
-  3. Edit phase, dates, budget, location, or description directly in the project overview.
-- Successful outcome: The typed film template and in-place edits each queue one bounded canonical-sync operation.
-- UX checks:
-  - Entry point and current state are visible.
-  - Unavailable or destructive actions explain their gate before mutation.
-  - Success or failure feedback names the resulting state.
-  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
-- Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `project overview edited canonical project details in place`
-
-### PROJECT-02: Export a filtered project directory
-
-- Persona: Any member
-- Primary workspace: projects
-- Steps:
-  1. Filter the project directory.
-  2. Export the visible result as Markdown.
-- Successful outcome: The handoff matches the visible rows and omits document bodies and private/provider state.
-- UX checks:
-  - Entry point and current state are visible.
-  - Unavailable or destructive actions explain their gate before mutation.
-  - Success or failure feedback names the resulting state.
-  - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
-- Regression evidence:
-  - browser: `scripts/browser-smoke.mjs` contains `Project directory exported`
 
 ## Offline
 
@@ -453,7 +508,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Steps:
   1. Filter to a scene, create and edit shots, then reorder them within that scene.
   2. Export Markdown or formula-safe CSV.
-- Successful outcome: Shot decisions persist locally and derive schedule/call-sheet use without copying screenplay text.
+- Successful outcome: Shot decisions persist locally and derive schedule/call-sheet use without copying screenplay text. Deferred loading shares resource-screen recovery and offline behavior.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -461,6 +516,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runProductionShotsWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-resources-view.test.ts` contains `deferred production resources`
 
 ## Locations
 
@@ -471,7 +529,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Steps:
   1. Create a linked/manual location, capture permit/access/facility/safety details, and export a brief.
   2. Apply a confirmed location to a matching draft call sheet.
-- Successful outcome: Derived scene/schedule use stays current; final call sheets reject logistics mutation.
+- Successful outcome: Derived scene/schedule use stays current; final call sheets reject logistics mutation. Deferred loading preserves drafts and cached screens work offline.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -479,6 +537,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runLocationsWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-resources-view.test.ts` contains `deferred production resources`
 
 ## Talent
 
@@ -489,7 +550,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Steps:
   1. Create a linked/manual talent record and capture casting, paperwork, contact, deal, and readiness details.
   2. Apply a cast performer to a matching draft call sheet and export a brief.
-- Successful outcome: Private details stay local; the workflow does not infer payroll, union, tax, or legal sufficiency.
+- Successful outcome: Private details stay local; the workflow does not infer payroll, union, tax, or legal sufficiency. Deferred loading shares the production resource lifecycle.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -497,6 +558,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runTalentWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-resources-view.test.ts` contains `deferred production resources`
 
 ## Call Sheets
 
@@ -505,9 +569,10 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Persona: Producer or AD
 - Primary workspace: call-sheets
 - Steps:
-  1. Generate a draft from an assigned schedule day and edit logistics/cast calls.
-  2. Review source drift, explicitly sync, finalize or reopen, and export Markdown.
-- Successful outcome: Manual fields survive sync, final sheets are immutable, and downstream documents stay pinned until deliberate change.
+  1. Open the document workspace on demand; reconnect and explicitly reload if its module download fails.
+  2. Generate a draft from an assigned schedule day and edit logistics/cast calls.
+  3. Review source drift, explicitly sync, finalize or reopen, and export Markdown.
+- Successful outcome: Manual fields survive sync, final sheets are immutable, and downstream documents stay pinned until deliberate change. Previously fetched document screens remain available offline.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -515,6 +580,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runCallSheetsWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-documents-view.test.ts` contains `deferred daily production documents`
 
 ## Sides
 
@@ -525,7 +593,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Steps:
   1. Choose a generated call sheet and review its pinned scene order/source ranges.
   2. Export source Markdown or standalone print HTML.
-- Successful outcome: Only scheduled source appears; missing or stale source is explicit and the HTML loads no external resources.
+- Successful outcome: Only scheduled source appears; missing or stale source is explicit and the HTML loads no external resources. Delayed loading preserves surrounding drafts and ignores obsolete navigation.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -533,6 +601,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runProductionSidesWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-documents-view.test.ts` contains `deferred daily production documents`
 
 ## Reports
 
@@ -543,7 +614,7 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Steps:
   1. Create a report from a call sheet, enter actual timing/counts/notes, and update scene outcomes.
   2. Finalize or reopen, then export Markdown and scene CSV.
-- Successful outcome: Overnight durations calculate correctly, final reports lock, and exports omit screenplay/private state.
+- Successful outcome: Overnight durations calculate correctly, final reports lock, and exports omit screenplay/private state. Loading recovery and offline navigation share the document workflow lifecycle.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -551,6 +622,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runProductionReportsWorkspaceSmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-appearance-flows.mjs` contains `previously loaded production document and resource modules`
+  - automated: `apps/web/test/production-documents-view.test.ts` contains `deferred daily production documents`
 
 ## Tasks
 
@@ -739,8 +813,9 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Persona: Owner or producer
 - Primary workspace: backups
 - Steps:
-  1. Export an encrypted ZIP with a passphrase.
-  2. Choose the file, decrypt locally, and review the restore preview before writes.
+  1. Open Backups on demand; if the screen cannot load, reconnect and explicitly reload without changing saved data.
+  2. Export an encrypted ZIP with a passphrase.
+  3. Choose the file, decrypt locally, and review the restore preview before writes.
 - Successful outcome: The default artifact is encrypted, excludes secrets, and previewing does not mutate workspace state.
 - UX checks:
   - Entry point and current state are visible.
@@ -749,6 +824,8 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `exportEncryptedBackup`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - automated: `apps/web/test/backup-workspace.test.ts` contains `backup workspace boundary`
 
 ### BACKUP-02: Store and retrieve an encrypted backup
 
@@ -823,9 +900,13 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Persona: Owner or producer
 - Primary workspace: slate
 - Steps:
-  1. Run provider dry-run preflights and protected runtime readiness.
-  2. Review blockers without exposing secret values.
-- Successful outcome: Each integration distinguishes dry-run, configured, connected, and live-ready states.
+  1. Open Integrations on demand; recover a failed screen load without changing saved data.
+  2. Run provider dry-run preflights and protected runtime readiness.
+  3. Review blockers without exposing secret values.
+  4. Check service status explicitly; the header and picker must agree without implying account or delivery acceptance.
+  5. Refresh, fail, and retry without erasing form drafts, stealing focus, or reopening a different view.
+  6. Sign out while a provider request is pending; old-session results must not reach a later session.
+- Successful outcome: Unchecked, checking, failed, live-enabled, partial, blocked, and offline-demo labels come from one status model; account acceptance remains separate. Loading and late results do not erase drafts.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -833,6 +914,11 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runProviderChipSmoke`
+  - browser: `scripts/browser-smoke.mjs` contains `runProviderSessionBoundarySmoke`
+  - browser: `scripts/browser-deferred-view-flows.mjs` contains `runDeferredViewSmoke`
+  - browser: `scripts/browser-provider-status-flows.mjs` contains `runProviderRuntimeStatusSmoke`
+  - automated: `apps/web/test/integration-view.test.ts` contains `integration view boundary`
+  - automated: `apps/web/test/integration-runtime.test.ts` contains `integration runtime status`
 
 ### GOOGLE-01: Connect Google and review Drive sync
 
@@ -840,31 +926,41 @@ Current inventory: 51 flows across 26 areas. Every flow declares automated regre
 - Primary workspace: slate
 - Steps:
   1. Start OAuth, check the connection, page through a Drive manifest, and run sync dry-run.
-  2. Disconnect when access is no longer needed.
-- Successful outcome: OAuth state is Worker-owned; browser results expose bounded metadata and no tokens.
+  2. Reconnect after expired or revoked consent; temporary provider failures retain the connection and do not request new access.
+  3. Recheck a changed connection without allowing an older refresh to overwrite or invalidate it.
+  4. Disconnect when access is no longer needed.
+- Successful outcome: OAuth state is Worker-owned; browser results expose bounded metadata and no tokens. Testing grants and public scope verification are separate gates.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
+  - browser: `scripts/browser-provider-status-flows.mjs` contains `runGoogleRecoverySmoke`
   - automated: `apps/web/test/provider-client.test.ts` contains `startGoogleOAuth`
+  - automated: `apps/web/test/integration-view.test.ts` contains `offers one reconnect action`
+  - automated: `apps/worker/test/google-oauth.test.ts` contains `classifies refresh error`
+  - automated: `apps/worker/test/worker.test.ts` contains `connects and disconnects Google`
+  - automated: `apps/worker/test/worker.test.ts` contains `guards Google reads when`
 
 ### META-01: Connect Meta and review social analytics
 
 - Persona: Owner or producer
 - Primary workspace: slate
 - Steps:
-  1. Start OAuth, choose an eligible Facebook page, and review read-only Instagram/Facebook analytics/calendar data.
+  1. Start OAuth, choose an eligible Facebook Page, and review read-only analytics/calendar data. A linked Instagram account is optional.
   2. Disconnect when needed.
-- Successful outcome: Film remains read-only and never competes with the Social app for publishing.
+- Successful outcome: Film remains read-only and never competes with the Social app for publishing. Facebook-only accounts skip Instagram endpoints without showing false errors.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
   - Success or failure feedback names the resulting state.
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
+  - browser: `scripts/browser-smoke.mjs` contains `runMetaFacebookOnlySmoke`
   - automated: `apps/web/test/provider-client.test.ts` contains `startMetaOAuth`
+  - automated: `apps/worker/test/meta-oauth.test.ts` contains `meta oauth`
+  - automated: `apps/worker/test/meta-insights.test.ts` contains `meta insights`
 
 ### STRIPE-01: Review Pool/Store funding and sales summaries
 

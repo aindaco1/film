@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { CanonicalWorkspaceSnapshot } from "@film/schema";
 import type { Fetcher } from "./worker-client";
 
@@ -11,7 +12,7 @@ export async function readCanonicalWorkspaceSnapshot(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<CanonicalWorkspaceSnapshot> {
   const response = await fetcher(`${workerUrl}/api/workspaces/current/snapshot`, {
     method: "POST",

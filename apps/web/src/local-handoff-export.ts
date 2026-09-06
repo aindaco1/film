@@ -14,7 +14,7 @@ import {
   packetText,
   shortHash,
 } from "./presentation-format";
-import { budgetTopSheetForProject } from "./project-summary";
+import { budgetTopSheetForProject, productionCallSheetStripCount, productionSummaryForProject, taskSummaryForProject, type ProductionSummarySource } from "./project-summary";
 
 export type LocalHandoffPlanningRow = {
   kindLabel: string;
@@ -62,8 +62,12 @@ export function createProjectPacketMarkdown(
   project: FilmProject,
   planningRows: LocalHandoffPlanningRow[],
   exportedAt: string,
+  productionSource?: ProductionSummarySource,
 ): string {
-  const callSheet = project.callSheet;
+  const production = productionSummaryForProject(project, productionSource, exportedAt.slice(0, 10));
+  const callSheet = production.callSheet;
+  const tasks = taskSummaryForProject(project);
+  const budget = budgetTopSheetForProject(project);
   return createMarkdownHandoff({
     title: project.title,
     exportedAt,
@@ -73,30 +77,36 @@ export function createProjectPacketMarkdown(
       "## Summary",
       `- Type: ${packetText(project.type)}`,
       `- Phase: ${packetText(project.phase)}`,
-      `- Shoot dates: ${packetText(project.shootDates)}`,
+      `- Shoot dates: ${packetText(production.shootDates)}`,
       `- Location: ${packetText(project.location)}`,
       `- Runtime: ${project.runtimeMinutes} minutes`,
       `- Format: ${packetText(project.format)}`,
-      `- Progress: ${project.progress}%`,
-      `- Budget: ${formatCurrency(project.spentBudget)} spent of ${formatCurrency(project.totalBudget)}`,
+      `- Tasks completed: ${tasks.done} of ${tasks.total}`,
+      `- Budget: ${formatCurrency(budget.spent)} spent of ${formatCurrency(budget.totalBudget)} (${budget.spendSource})`,
       `- Workflow: ${packetText(project.workflow)}`,
       "",
       "## Logline",
       packetText(project.description) || "No logline recorded.",
       "",
-      "## Phase Timeline",
-      ...project.timeline.map((item) => `- ${packetText(item.label)}: ${packetText(item.month)} lane ${item.start}-${item.start + item.width}%`),
+      "## Production Overview",
+      `- Latest edited schedule: ${packetText(production.schedule?.title ?? "None")}`,
+      `- Source scenes: ${production.sceneCount}`,
+      `- Shoot days: ${production.days.length}`,
+      `- Assigned strips: ${production.assignedStrips}`,
+      `- Unassigned strips: ${production.unassignedStrips}`,
+      `- Issued reports: ${production.issuedReports}`,
       "",
-      "## Upcoming Call Sheet",
-      `- Date: ${packetText(callSheet.day)} ${packetText(callSheet.month)}`,
-      `- Call: ${packetText(callSheet.callTime)}`,
-      `- Wrap: ${packetText(callSheet.wrapTime)}`,
-      `- Location: ${packetText(callSheet.location)}`,
-      `- Day: ${callSheet.dayNumber} of ${callSheet.totalDays}`,
-      `- Scenes: ${callSheet.scenes}`,
-      `- Pages: ${packetText(callSheet.pages)}`,
-      `- People: ${callSheet.people}`,
-      `- Weather: ${packetText(callSheet.weather)}`,
+      "## Call Sheet",
+      ...(callSheet ? [
+        `- ${production.callSheetLabel}: ${packetText(callSheet.title)} (${callSheet.status})`,
+        `- Date: ${callSheet.date ?? "Not set"}`,
+        `- Call: ${packetText(callSheet.callTime)}`,
+        `- Wrap: ${packetText(callSheet.estimatedWrapTime)}`,
+        `- Location: ${packetText(callSheet.primaryLocation)}`,
+        `- Day: ${callSheet.dayOrdinal}`,
+        `- Scenes: ${callSheet.sceneIds.length}`,
+        `- Scheduled strips: ${productionCallSheetStripCount(callSheet)}`,
+      ] : ["No generated call sheet."]),
       "",
       "## Planning Rows",
       ...(planningRows.length
@@ -174,7 +184,7 @@ export function createTeamRosterMarkdown(
 }
 
 export function createProjectDirectoryMarkdown(
-  workspace: Pick<WorkspaceData, "name" | "projects" | "archivedProjectCount">,
+  workspace: Pick<WorkspaceData, "name" | "projects" | "archivedProjectCount"> & Partial<ProductionSummarySource>,
   projects: FilmProject[],
   filter: string,
   exportedAt: string,
@@ -192,30 +202,34 @@ export function createProjectDirectoryMarkdown(
       "",
       "## Projects",
       ...(projects.length
-        ? projects.map((project) => [
+        ? projects.map((project) => {
+          const tasks = taskSummaryForProject(project);
+          const budget = budgetTopSheetForProject(project);
+          const production = productionSummaryForProject(project, workspace, exportedAt.slice(0, 10));
+          return [
           `### ${packetText(project.title)}`,
           `- Type: ${packetText(project.type)}`,
           `- Phase: ${packetText(project.phase)}`,
-          `- Shoot dates: ${packetText(project.shootDates)}`,
+          `- Shoot dates: ${packetText(production.shootDates)}`,
           `- Location: ${packetText(project.location)}`,
           `- Runtime: ${project.runtimeMinutes} minutes`,
           `- Format: ${packetText(project.format)}`,
-          `- Progress: ${project.progress}%`,
-          `- Budget: ${formatCurrency(project.spentBudget)} spent of ${formatCurrency(project.totalBudget)}`,
-          `- Tasks: ${project.tasks.done} done of ${project.tasks.total}`,
+          `- Budget: ${formatCurrency(budget.spent)} spent of ${formatCurrency(budget.totalBudget)} (${budget.spendSource})`,
+          `- Tasks: ${tasks.done} done of ${tasks.total}`,
           `- Open tasks: ${project.openTasks.length}`,
           `- Docs: ${project.docs.length}`,
           `- People: ${project.people.length}`,
           `- Equipment: ${project.equipment.length}`,
           `- Expenses: ${project.expenses.length}`,
           "",
-        ].join("\n"))
+        ].join("\n"); })
         : ["No projects match the current filter.", ""]),
     ],
   });
 }
 
 export function createTaskListMarkdown(workspaceName: string, project: FilmProject, exportedAt: string): string {
+  const tasks = taskSummaryForProject(project);
   const statusCounts = {
     overdue: project.openTasks.filter((task) => task.status === "overdue").length,
     pending: project.openTasks.filter((task) => task.status === "pending").length,
@@ -229,7 +243,7 @@ export function createTaskListMarkdown(workspaceName: string, project: FilmProje
     body: [
       "## Summary",
       `- Open tasks: ${project.openTasks.length}`,
-      `- Completed: ${project.tasks.done} of ${project.tasks.total}`,
+      `- Completed: ${tasks.done} of ${tasks.total}`,
       `- Overdue: ${statusCounts.overdue}`,
       `- Pending: ${statusCounts.pending}`,
       `- Ready: ${statusCounts.ready}`,
@@ -327,8 +341,8 @@ export function createBudgetTopSheetMarkdown(workspaceName: string, project: Fil
     policy: "provider secrets, OAuth tokens, raw attachment bytes, private Worker state, and raw import source paths are excluded.",
     body: [
       "## Summary",
-      `- Total budget: ${formatCurrency(project.totalBudget)}`,
-      `- Spent: ${formatCurrency(project.spentBudget)}`,
+      `- Total budget: ${formatCurrency(budget.totalBudget)}`,
+      `- Spent: ${formatCurrency(budget.spent)}`,
       `- Remaining: ${formatCurrency(budget.remaining)}`,
       `- Used: ${budget.usedPercent}%`,
       `- Line budget: ${formatCurrency(budget.lineBudget)}`,

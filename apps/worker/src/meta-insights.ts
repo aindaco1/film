@@ -37,7 +37,7 @@ export type MetaAnalyticsResult = {
 type MetaAnalyticsInput = {
   graphVersion: string;
   pageId: string;
-  instagramAccountId: string;
+  instagramAccountId: string | null;
   pageAccessToken: string;
   since: string;
   until: string;
@@ -58,51 +58,50 @@ export async function readMetaAnalytics(
   if (
     !/^v\d{1,2}\.\d$/.test(input.graphVersion)
     || !isMetaId(input.pageId)
-    || !isMetaId(input.instagramAccountId)
+    || (input.instagramAccountId !== null && !isMetaId(input.instagramAccountId))
     || !isValidMetaAnalyticsDateRange(input.since, input.until)
   ) {
     throw new Error("invalid_meta_analytics_request");
   }
   const configuration: Pick<MetaOAuthConfiguration, "graphVersion"> = { graphVersion: input.graphVersion };
   const endpoints = [
-    metaGraphUrl(configuration, `${input.pageId}/posts`, {
+    { name: "facebook_calendar", url: metaGraphUrl(configuration, `${input.pageId}/posts`, {
       fields: "id,message,created_time,permalink_url,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
       limit: "50",
       since: input.since,
       until: input.until,
-    }),
-    metaGraphUrl(configuration, `${input.instagramAccountId}/media`, {
+    }) },
+    ...(input.instagramAccountId ? [{ name: "instagram_calendar", url: metaGraphUrl(configuration, `${input.instagramAccountId}/media`, {
       fields: "id,caption,media_type,permalink,timestamp,like_count,comments_count",
       limit: "50",
-    }),
-    metaGraphUrl(configuration, `${input.pageId}/insights`, {
+    }) }] : []),
+    { name: "facebook_insights", url: metaGraphUrl(configuration, `${input.pageId}/insights`, {
       metric: PAGE_INSIGHT_METRICS.join(","),
       period: "day",
       since: input.since,
       until: input.until,
-    }),
-    metaGraphUrl(configuration, `${input.instagramAccountId}/insights`, {
+    }) },
+    ...(input.instagramAccountId ? [{ name: "instagram_insights", url: metaGraphUrl(configuration, `${input.instagramAccountId}/insights`, {
       metric: INSTAGRAM_INSIGHT_METRICS.join(","),
       period: "day",
       since: input.since,
       until: input.until,
-    }),
+    }) }] : []),
   ];
   const results = await Promise.allSettled(
-    endpoints.map((url) => fetchMetaJson(url, input.pageAccessToken, fetcher)),
+    endpoints.map(({ url }) => fetchMetaJson(url, input.pageAccessToken, fetcher)),
   );
   const warnings: string[] = [];
-  const facebookPosts = settledValue(results[0], "facebook_calendar_unavailable", warnings);
-  const instagramMedia = settledValue(results[1], "instagram_calendar_unavailable", warnings);
-  const facebookInsights = settledValue(results[2], "facebook_insights_unavailable", warnings);
-  const instagramInsights = settledValue(results[3], "instagram_insights_unavailable", warnings);
+  const data = Object.fromEntries(endpoints.map(({ name }, index) => [
+    name, settledValue(results[index], `${name}_unavailable`, warnings),
+  ]));
   const calendar = [
-    ...normalizeFacebookCalendar(facebookPosts),
-    ...normalizeInstagramCalendar(instagramMedia, input.since, input.until),
+    ...normalizeFacebookCalendar(data.facebook_calendar),
+    ...normalizeInstagramCalendar(data.instagram_calendar, input.since, input.until),
   ].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)).slice(0, META_CALENDAR_MAX_ROWS);
   const insights = [
-    ...normalizeInsights("facebook", facebookInsights, PAGE_INSIGHT_METRICS),
-    ...normalizeInsights("instagram", instagramInsights, INSTAGRAM_INSIGHT_METRICS),
+    ...normalizeInsights("facebook", data.facebook_insights, PAGE_INSIGHT_METRICS),
+    ...normalizeInsights("instagram", data.instagram_insights, INSTAGRAM_INSIGHT_METRICS),
   ].slice(0, META_INSIGHT_MAX_SERIES);
   const successCount = results.filter((result) => result.status === "fulfilled").length;
   return {
@@ -141,7 +140,12 @@ async function fetchMetaJson(url: URL, accessToken: string, fetcher: typeof fetc
   } catch {
     throw new Error("meta_graph_invalid_response");
   }
-  if (!response.ok) throw new Error(`meta_graph_http_${response.status}`);
+  if (!response.ok) {
+    const code = isRecord(parsed) && isRecord(parsed.error) ? parsed.error.code : null;
+    const providerCode = typeof code === "number" && Number.isSafeInteger(code) && code > 0 && code <= 999999
+      ? `_code_${code}` : "";
+    throw new Error(`meta_graph_http_${response.status}${providerCode}`);
+  }
   return parsed;
 }
 
@@ -151,7 +155,9 @@ function settledValue(
   warnings: string[],
 ): unknown {
   if (result?.status === "fulfilled") return result.value;
-  warnings.push(warning);
+  const reason = result?.status === "rejected" && result.reason instanceof Error ? result.reason.message : "";
+  const diagnostic = /^meta_graph_http_\d{3}(?:_code_\d{1,6})?$/.test(reason) ? `:${reason}` : "";
+  warnings.push(`${warning}${diagnostic}`);
   return null;
 }
 

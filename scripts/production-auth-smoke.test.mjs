@@ -22,6 +22,12 @@ test("production project creation requires the explicit project apply gate", asy
   assert.match(result.stdout, /ready for Big Sword \(Feature Film\)/);
 });
 
+test("owned SMS testing requires a separate explicit gate and private configuration", async () => {
+  for (const args of [["--send-owned-sms"], ["--sms-smoke-config", "not-read-without-approval"], ["--expected-sms-mode", "auto"]]) {
+    assert.equal((await runScript(args)).code, 1);
+  }
+});
+
 test("production auth smoke consumes a delivered message without printing sensitive values", async (context) => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "film-production-auth-smoke-"));
   context.after(() => rmSync(tempDir, { recursive: true, force: true }));
@@ -45,6 +51,8 @@ test("production auth smoke consumes a delivered message without printing sensit
   let importedTasks = [];
   let importedDocuments = [];
   let googleConnectionAttempts = 0;
+  let smsLive = false;
+  let smsSendRequests = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", serverOrigin);
     const json = (status, value, headers = {}) => {
@@ -128,19 +136,31 @@ test("production auth smoke consumes a delivered message without printing sensit
         dryRun: true,
         readiness: {
           secretValuesExposed: false,
-          liveCount: 2,
+          liveCount: smsLive ? 3 : 2,
           partialLiveCount: 0,
-          blockedCount: 5,
+          blockedCount: smsLive ? 4 : 5,
           providers: [
-            ...["resend", "google"].map((key) => ({ key, status: "live" })),
-            ...["pool", "store", "stripe", "social", "sms"].map((key) => ({ key, status: "blocked" })),
+            ...["resend", "google", ...(smsLive ? ["sms"] : [])].map((key) => ({ key, status: "live" })),
+            ...["pool", "store", "stripe", "social", ...(!smsLive ? ["sms"] : [])].map((key) => ({ key, status: "blocked" })),
           ],
         },
       });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/providers/sms/send") {
+      smsSendRequests += 1;
       json(503, { error: "telnyx_sms_send_disabled" });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/providers/sms/provider-readiness") {
+      assert.equal(request.headers.cookie, cookie);
+      assert.equal(request.headers["x-film-csrf"], csrfValue);
+      json(200, { readiness: {
+        status: "ready_for_number_assignment", secretValuesExposed: false,
+        configured: { apiKey: true }, activationGates: { webhookLive: false, sendLive: false },
+        campaign: { active: true }, number: { campaignAssigned: false },
+        unexpectedSecret: "telnyx_private_test_value",
+      } });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/providers/google/connection") {
@@ -253,6 +273,7 @@ test("production auth smoke consumes a delivered message without printing sensit
     "--allow-send",
     "--require",
     "--check-runtime-readiness",
+    "--check-telnyx-readiness",
     "--create-project-title", "Big Sword",
     "--project-type", "Feature Film",
     "--apply-project",
@@ -268,15 +289,26 @@ test("production auth smoke consumes a delivered message without printing sensit
 
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /Production auth smoke passed/);
+  assert.match(result.stdout, /Telnyx readiness:.*ready_for_number_assignment/);
   assert.match(result.stdout, /provider runtime gates/);
   assert.match(result.stdout, /live Google readiness/);
   assert.match(result.stdout, /metadata-only authorization start/);
   assert.match(result.stdout, /canonical project created: Big Sword \(Feature Film\)/);
   assert.match(result.stdout, /Notion import 2 core committed\/0 idempotent and 1 planning committed\/0 idempotent/);
   assert.equal(googleConnectionAttempts, 2);
-  for (const sensitiveValue of [email, apiKey, token, cookie, csrfValue, "message_test", "Private production notes"]) {
+  for (const sensitiveValue of [email, apiKey, token, cookie, csrfValue, "message_test", "Private production notes", "telnyx_private_test_value"]) {
     assert.equal(`${result.stdout}\n${result.stderr}`.includes(sensitiveValue), false);
   }
+  smsLive = true;
+  loggedOut = false;
+  const liveCheck = await runScript([
+    "--allow-send", "--require", "--check-runtime-readiness", "--expected-sms-mode", "live",
+    "--origin", serverOrigin, "--app-origin", serverOrigin,
+    "--resend-api-origin", `${serverOrigin}/resend`, "--source-dev-vars", devVarsPath,
+  ]);
+  assert.equal(liveCheck.code, 0, liveCheck.stderr);
+  assert.match(liveCheck.stdout, /live SMS configuration \(no test send\)/);
+  assert.equal(smsSendRequests, 1, "The live runtime check must not send an SMS");
 });
 
 test("production auth smoke retries cleanup after a post-session failure", async (context) => {

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { PRODUCTION_VIEW_MODULES, readUiSources } from "./ui-source-helpers";
 
 describe("web app shell", () => {
   it("boots from a static app root and TypeScript entrypoint", async () => {
@@ -38,7 +39,7 @@ describe("web app shell", () => {
   });
 
   it("exposes workspace sections for project navigation", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readUiSources("main", ...PRODUCTION_VIEW_MODULES);
     const productionExports = await readFile("src/production-document-export.ts", "utf8");
     const productionResourceExports = await readFile("src/production-resource-export.ts", "utf8");
     const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
@@ -154,7 +155,7 @@ describe("web app shell", () => {
     expect(source).toContain("renderWorkspaceSection");
     expect(source).toContain("renderMobileWorkspaceNav");
     expect(source).toContain("mobile-workspace-nav");
-    expect(source).toContain("applyAccessibleControlNames");
+    expect(source).toContain("applyAccessibleControlSemantics");
     expect(source).toContain("tabindex=\"0\"");
     expect(source).toContain('aria-label="Project view"');
     expect(source).toContain("projects-workspace-head");
@@ -167,7 +168,7 @@ describe("web app shell", () => {
   });
 
   it("keeps every MVP provider behind one consolidated integration status", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/integration-state.ts", "utf8") + await readFile("src/integration-view.ts", "utf8");
 
     expect(source).toContain("const INTEGRATION_DEFINITIONS");
     for (const label of ["Pool", "Store", "Stripe", "Meta insights", "Google", "Resend", "Telnyx SMS"]) {
@@ -189,7 +190,7 @@ describe("web app shell", () => {
 
   it("publishes the crew SMS disclosure used by self-enrollment", async () => {
     const smsTerms = await readFile("public/sms.html", "utf8");
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/integration-view.ts", "utf8");
 
     for (const requiredText of [
       "Message frequency varies",
@@ -220,7 +221,7 @@ describe("web app shell", () => {
   });
 
   it("does not advertise template actions without a binding contract", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readUiSources("main", "backup-workspace", "backup-workspace-loader", "integration-view", "production-resources-loader", ...PRODUCTION_VIEW_MODULES);
     const actions = [...source.matchAll(/data-action=["']([^"'$]+)["']/g)].map((match) => match[1]);
 
     expect(new Set(actions).size).toBeGreaterThan(190);
@@ -238,7 +239,7 @@ describe("web app shell", () => {
   });
 
   it("renders provider scopes and compliance notes in the inspector", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/integration-view.ts", "utf8");
 
     expect(source).toContain("requiredScopes");
     expect(source).toContain("complianceNotes");
@@ -266,7 +267,7 @@ describe("web app shell", () => {
     expect(source).toContain('state.ui.inspectorView = "integrations"');
     for (const viewId of viewIds) {
       expect(source).toContain(`id: "${viewId}"`);
-      expect(source).toContain(`inspectorViewPanelAttributes("${viewId}")`);
+      expect(source).toContain(viewId === "integrations" ? 'data-inspector-view-panel="integrations"' : `inspectorViewPanelAttributes("${viewId}")`);
     }
     expect(source).not.toContain('inspectorViewPanelAttributes("backups")');
     expect(styles).toContain(".inspector-view-panel[hidden]");
@@ -359,7 +360,7 @@ describe("web app shell", () => {
   });
 
   it("selects production records from the visible roster instead of detached dropdowns", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readUiSources("main", ...PRODUCTION_VIEW_MODULES);
     const styles = await readFile("src/styles.css", "utf8");
 
     expect(source).toContain('data-action="production-location-row-select"');
@@ -376,10 +377,9 @@ describe("web app shell", () => {
   });
 
   it("keeps dashboard cards summary-only and routes editing to workspaces", async () => {
-    const source = await readFile("src/main.ts", "utf8");
-    const dashboardStart = source.indexOf("function renderTaskPanel");
-    const dashboardEnd = source.indexOf("function renderDocumentEditor");
-    const dashboardPanels = source.slice(dashboardStart, dashboardEnd);
+    const { renderOperationsGrid } = await import("../src/project-overview");
+    const { seedWorkspace } = await import("@film/schema");
+    const dashboardPanels = renderOperationsGrid(seedWorkspace.projects[0]!, null);
 
     expect(dashboardPanels).not.toContain('data-action="add-task"');
     expect(dashboardPanels).not.toContain('data-action="add-person"');
@@ -390,13 +390,13 @@ describe("web app shell", () => {
   });
 
   it("exposes stored backup manifest and preview controls", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/backup-workspace.ts", "utf8");
     const localHandoffExports = await readFile("src/local-handoff-export.ts", "utf8");
 
     expect(source).toContain("section: \"backups\"");
     expect(source).toContain("renderBackupsWorkspace");
     expect(source).toContain("backup-workspace-grid");
-    expect(source).toContain("Restore Points");
+    expect(source).toContain("Recorded restore points");
     expect(source).toContain("Safety State");
     expect(source).toContain("Stored backups");
     expect(source).toContain("Preview stored backup");
@@ -408,7 +408,7 @@ describe("web app shell", () => {
     expect(source).toContain("document.body.append(link)");
     expect(source).toContain("URL.revokeObjectURL(url)");
     expect(source).toContain("Worker audit");
-    expect(source).toContain('escapeHtml(latestBackup?.label ?? "None")');
+    expect(source).toContain("localBackupSummary(state.operations)");
     expect(source).toContain("data-action=\"export-activity-log\"");
     expect(source).toContain("createActivityLogMarkdown");
     expect(localHandoffExports).toContain("raw Worker audit metadata");
@@ -420,7 +420,7 @@ describe("web app shell", () => {
   });
 
   it("exposes the Worker restore confirmation gate after previews", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/backup-workspace.ts", "utf8");
 
     expect(source).toContain("Check restore gate");
     expect(source).toContain("Record approval");
@@ -694,16 +694,16 @@ describe("web app shell", () => {
   });
 
   it("renders protected provider runtime live gates", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/integration-view.ts", "utf8");
 
     expect(source).toContain("provider-runtime-readiness");
     expect(source).toContain("checkProviderRuntimeReadiness");
-    expect(source).toContain("readiness.policy.replaceAll");
-    expect(source).toContain("no secret values");
+    expect(source).toContain("integrationRuntimeStatus");
+    expect(source).toContain("updateIntegrationRuntime");
   });
 
   it("renders the redacted Telnyx campaign and number readiness check", async () => {
-    const source = await readFile("src/main.ts", "utf8");
+    const source = await readFile("src/main.ts", "utf8") + await readFile("src/integration-view.ts", "utf8");
 
     expect(source).toContain("telnyx-provider-readiness");
     expect(source).toContain("checkTelnyxProviderStatus");

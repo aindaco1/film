@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { Fetcher } from "./worker-client";
 
 export type CanonicalDocumentMarkdownUpdate = {
@@ -29,7 +30,7 @@ export async function saveCanonicalDocumentMarkdown(
     markdownSnapshot: string;
     expectedUpdatedAt: string;
   },
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<CanonicalDocumentMarkdownUpdate> {
   const response = await fetcher(`${workerUrl}/api/documents/markdown`, {
     method: "POST",

@@ -11,6 +11,34 @@ const input = {
 };
 
 describe("meta insights", () => {
+  it.each([
+    { failures: [], status: "complete" },
+    { failures: ["insights"], status: "partial" },
+    { failures: ["posts", "insights"], status: "unavailable" },
+  ])("reads only Facebook endpoints without a linked Instagram account: $status", async ({ failures, status }) => {
+    const fetcher = vi.fn(async (value: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(value));
+      expect(url.pathname).toMatch(new RegExp(`/${input.pageId}/(posts|insights)$`));
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(url.searchParams.has("access_token")).toBe(false);
+      return failures.some(endpoint => url.pathname.endsWith(`/${endpoint}`))
+        ? Response.json({ error: { message: "private provider detail" } }, { status: 403 })
+        : Response.json({ data: [] });
+    });
+    const result = await readMetaAnalytics({ ...input, instagramAccountId: null }, fetcher as typeof fetch);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ status, calendar: [], insights: [], secretValuesExposed: false });
+    expect(result.warnings).toHaveLength(failures.length);
+    expect(JSON.stringify(result)).not.toMatch(/instagram_.*unavailable|private provider detail|page_meta_token/);
+  });
+
+  it.each(["", "not-a-meta-id"])("rejects invalid non-null Instagram IDs: %s", async (instagramAccountId) => {
+    const fetcher = vi.fn();
+    await expect(readMetaAnalytics({ ...input, instagramAccountId }, fetcher))
+      .rejects.toThrow("invalid_meta_analytics_request");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("normalizes bounded read-only calendar and engagement data", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -104,11 +132,21 @@ describe("meta insights", () => {
     expect(result.status).toBe("partial");
     expect(result.calendar).toHaveLength(1);
     expect(result.warnings).toEqual([
-      "instagram_calendar_unavailable",
-      "facebook_insights_unavailable",
-      "instagram_insights_unavailable",
+      "instagram_calendar_unavailable:meta_graph_http_503",
+      "facebook_insights_unavailable:meta_graph_http_503",
+      "instagram_insights_unavailable:meta_graph_http_503",
     ]);
     expect(JSON.stringify(result)).not.toContain("provider secret detail");
+  });
+
+  it.each([100, "private-code", -1, 1000000])("bounds provider diagnostics without reflecting private data: %j", async (code) => {
+    const fetcher = vi.fn(async (value: string | URL | Request) => new URL(String(value)).pathname.endsWith("/posts")
+      ? Response.json({ data: [] })
+      : Response.json({ error: { code, message: "private-provider-message", fbtrace_id: "private-trace" } }, { status: 400 }));
+    const result = await readMetaAnalytics({ ...input, instagramAccountId: null }, fetcher as typeof fetch);
+    expect(result.status).toBe("partial");
+    expect(result.warnings).toEqual([`facebook_insights_unavailable:meta_graph_http_400${code === 100 ? "_code_100" : ""}`]);
+    expect(JSON.stringify(result)).not.toContain("private");
   });
 
   it("enforces a bounded ISO date range", () => {

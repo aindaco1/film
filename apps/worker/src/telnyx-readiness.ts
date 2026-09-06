@@ -1,4 +1,7 @@
+import type { TelnyxProviderReadiness } from "@film/providers";
 import { isValidTelnyxMessagingProfileId } from "./telnyx-send";
+
+export type { TelnyxProviderReadiness } from "@film/providers";
 
 const TELNYX_API_ORIGIN = "https://api.telnyx.com";
 const TELNYX_READINESS_MAX_RESPONSE_BYTES = 256 * 1024;
@@ -12,48 +15,6 @@ type TelnyxReadinessConfiguration = {
   fromNumber: string;
   expectedProfileName: string;
   expectedWebhookUrl: string;
-};
-
-export type TelnyxProviderReadiness = {
-  provider: "telnyx";
-  mode: "read_only_provider_preflight";
-  status:
-    | "blocked_configuration"
-    | "blocked_provider"
-    | "pending_campaign_review"
-    | "ready_for_number_assignment"
-    | "pending_number_assignment"
-    | "ready_for_owned_number_smoke";
-  providerApiChecked: boolean;
-  profile: {
-    reachable: boolean;
-    enabled: boolean;
-    nameMatches: boolean;
-    webhookMatches: boolean;
-    webhookApiV2: boolean;
-  };
-  campaign: {
-    reachable: boolean;
-    status: string | null;
-    active: boolean;
-    rejectedOrSuspended: boolean;
-    mno: {
-      approved: number;
-      review: number;
-      rejected: number;
-      other: number;
-      total: number;
-    };
-  };
-  number: {
-    reachable: boolean;
-    smsCapable: boolean;
-    profileAssigned: boolean;
-    campaignAssigned: boolean;
-    assignmentStatus: string | null;
-  };
-  blockers: string[];
-  secretValuesExposed: false;
 };
 
 type TelnyxResponse = {
@@ -78,12 +39,13 @@ export async function checkTelnyxProviderReadiness(
   const profileId = encodeURIComponent(configuration.messagingProfileId);
   const campaignId = encodeURIComponent(configuration.campaignId);
   const number = encodeURIComponent(configuration.fromNumber);
-  const [profileResponse, campaignResponse, mnoResponse, numberResponse, assignmentResponse] = await Promise.all([
+  const [profileResponse, campaignResponse, mnoResponse, numberResponse, assignmentResponse, helpResponse] = await Promise.all([
     telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/messaging_profiles/${profileId}`, headers),
     telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/10dlc/campaign/${campaignId}`, headers),
     telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/10dlc/campaign/${campaignId}/operationStatus`, headers),
     telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/messaging_phone_numbers/${number}`, headers),
     telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/10dlc/phone_number_campaigns/${number}`, headers),
+    telnyxGet(fetcher, `${TELNYX_API_ORIGIN}/v2/messaging_profiles/${profileId}/autoresp_configs`, headers),
   ]);
 
   const profileBody = unwrapData(profileResponse.body);
@@ -101,6 +63,7 @@ export async function checkTelnyxProviderReadiness(
     webhookMatches: profileResponse.ok
       && normalizedUrl(valueAt(profileBody, "webhook_url")) === configuration.expectedWebhookUrl,
     webhookApiV2: profileResponse.ok && String(valueAt(profileBody, "webhook_api_version") ?? "") === "2",
+    ...summarizeHelpSettings(helpResponse),
   };
   const campaign = {
     reachable: campaignResponse.ok && isRecord(campaignBody),
@@ -189,6 +152,11 @@ function providerBlockers(input: {
     if (!input.profile.webhookMatches) blockers.push("The Film messaging profile webhook does not target the Film Worker.");
     if (!input.profile.webhookApiV2) blockers.push("The Film messaging profile must use webhook API v2.");
   }
+  if (!input.profile.helpSettingsReachable) {
+    blockers.push("The Film profile's complete keyword settings could not be verified.");
+  } else if (!input.profile.helpResponseConfigured) {
+    blockers.push("Configure an automatic HELP response in the Film messaging profile's keyword settings.");
+  }
   if (input.number.reachable) {
     if (!input.number.smsCapable) blockers.push("The configured sender does not report SMS capability.");
     if (!input.number.profileAssigned) blockers.push("The configured sender is not assigned to the Film messaging profile.");
@@ -204,13 +172,15 @@ function readinessStatus(
   number: TelnyxProviderReadiness["number"],
   blockers: string[],
 ): TelnyxProviderReadiness["status"] {
-  if (!profile.reachable || !campaign.reachable || !number.reachable) return "blocked_provider";
+  if (!profile.reachable || !campaign.reachable || !number.reachable || !profile.helpSettingsReachable) return "blocked_provider";
   if (campaign.rejectedOrSuspended || campaign.mno.rejected > 0) return "blocked_provider";
   if (!profile.enabled || !profile.nameMatches || !profile.webhookMatches || !profile.webhookApiV2
-    || !number.smsCapable || !number.profileAssigned) {
+    || !profile.helpResponseConfigured || !number.smsCapable || !number.profileAssigned) {
     return "blocked_configuration";
   }
-  if (!campaign.active || campaign.mno.review > 0) return "pending_campaign_review";
+  if (!campaign.active || campaign.mno.review > 0 || campaign.mno.approved === 0 || campaign.mno.other > 0) {
+    return "pending_campaign_review";
+  }
   if (!number.campaignAssigned) {
     return number.assignmentStatus?.includes("PENDING")
       ? "pending_number_assignment"
@@ -219,13 +189,37 @@ function readinessStatus(
   return blockers.length > 0 ? "blocked_provider" : "ready_for_owned_number_smoke";
 }
 
+function summarizeHelpSettings(response: TelnyxResponse): Pick<TelnyxProviderReadiness["profile"], "helpSettingsReachable" | "helpResponseConfigured"> {
+  const body = response.body;
+  const data = valueAt(body, "data");
+  const pages = valueAt(valueAt(body, "meta"), "total_pages");
+  const complete = response.ok && Array.isArray(data) && data.every(isRecord)
+    && (pages === 0 || pages === 1);
+  if (!complete) return { helpSettingsReachable: false, helpResponseConfigured: false };
+
+  // Film's current sender is US-only. Country rules override the global operation.
+  // The REST SDK calls the operation `info`; the guide also documents `help`.
+  const help = data.filter((rule) => rule.op === "help" || rule.op === "info");
+  const domestic = help.filter((rule) => valueAt(rule, "country_code") === "US");
+  const effective = domestic.length ? domestic : help.filter((rule) => valueAt(rule, "country_code") === "*");
+  const keywords = valueAt(effective[0], "keywords");
+  const hasHelpTrigger = valueAt(effective[0], "op") === "help"
+    || (Array.isArray(keywords) && keywords.some((keyword) => typeof keyword === "string" && keyword.trim().toUpperCase() === "HELP"));
+  const responseText = boundedString(valueAt(effective[0], "resp_text"), 4096);
+  return {
+    helpSettingsReachable: true,
+    helpResponseConfigured: effective.length === 1 && hasHelpTrigger
+      && Boolean(responseText && responseText.trim().length >= 20),
+  };
+}
+
 async function telnyxGet(
   fetcher: Fetcher,
   url: string,
   headers: Record<string, string>,
 ): Promise<TelnyxResponse> {
   try {
-    const response = await fetcher(url, { method: "GET", headers });
+    const response = await fetcher(url, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
     const text = await response.text();
     if (new TextEncoder().encode(text).byteLength > TELNYX_READINESS_MAX_RESPONSE_BYTES) {
       return { ok: false, status: 502, body: null };
@@ -253,7 +247,10 @@ function emptyReadiness(
     mode: "read_only_provider_preflight",
     status,
     providerApiChecked: false,
-    profile: { reachable: false, enabled: false, nameMatches: false, webhookMatches: false, webhookApiV2: false },
+    profile: {
+      reachable: false, enabled: false, nameMatches: false, webhookMatches: false, webhookApiV2: false,
+      helpSettingsReachable: false, helpResponseConfigured: false,
+    },
     campaign: {
       reachable: false,
       status: null,
@@ -278,14 +275,14 @@ function summarizeMnoStatuses(value: unknown): TelnyxProviderReadiness["campaign
   if (!isRecord(body)) return { approved: 0, review: 0, rejected: 0, other: 0, total: 0 };
   const statuses = Object.values(body)
     .map((candidate) => boundedProviderStatus(candidate))
-    .filter((candidate): candidate is string => Boolean(candidate))
     .slice(0, 20);
   let approved = 0;
   let review = 0;
   let rejected = 0;
   let other = 0;
   for (const status of statuses) {
-    if (["APPROVED", "ACCEPTED", "ACTIVE", "REGISTERED", "SUCCESS"].includes(status)) approved += 1;
+    if (!status) other += 1;
+    else if (["APPROVED", "ACCEPTED", "ACTIVE", "REGISTERED", "SUCCESS"].includes(status)) approved += 1;
     else if (status.includes("REVIEW") || status.includes("PENDING") || status.includes("SUBMITTED")) review += 1;
     else if (isRejectedCampaignStatus(status)) rejected += 1;
     else other += 1;
@@ -299,7 +296,15 @@ function campaignStatusFrom(value: unknown): string | null {
     boundedProviderStatus(valueAt(value, "status")),
     boundedProviderStatus(valueAt(value, "submissionStatus")),
   ].filter((candidate): candidate is string => Boolean(candidate));
-  return statuses.find((status) => status === "ACTIVE") ?? statuses[0] ?? null;
+  // The generic status defaults to ACTIVE even before carrier approval. Specific
+  // rejection, suspension, and provisioning state must take precedence.
+  const rejected = statuses.find(isRejectedCampaignStatus);
+  if (rejected) return rejected;
+  const campaignStatus = boundedProviderStatus(valueAt(value, "campaignStatus"));
+  if (campaignStatus && !["ACTIVE", "MNO_ACCEPTED", "MNO_PROVISIONED"].includes(campaignStatus)) {
+    return campaignStatus;
+  }
+  return statuses.find((status) => status === "ACTIVE") ?? campaignStatus ?? statuses[0] ?? null;
 }
 
 function isRejectedCampaignStatus(value: string | null): boolean {

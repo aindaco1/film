@@ -262,17 +262,26 @@ SMS_DELIVERY_RETENTION_DAYS = "90"
 SMS_MODE = "disabled"`,
   ).replace("[vars]", "[triggers]\ncrons = [\"17 9 * * *\"]\n\n[vars]");
   const telnyxSecretFixture = "telnyx_preflight_fixture_" + "x".repeat(24);
-  const complete = runCheck(preflightConfig, ["--strict", "--sms-preflight"], {
+  const secrets = {
     ...readySecrets(),
     TELNYX_API_KEY: telnyxSecretFixture,
     TELNYX_WEBHOOK_PUBLIC_KEY: Buffer.alloc(32, 19).toString("base64"),
     TELNYX_INBOUND_NUMBER_MAPPINGS: '{"+15555550999":"workspace_acme"}',
-  });
+  };
+  const complete = runCheck(preflightConfig, ["--strict", "--sms-preflight"], secrets);
 
   assert.equal(complete.status, 0, complete.stdout + complete.stderr);
   assert.match(complete.stdout, /webhook gate remains explicitly disabled during preflight/);
   assert.match(complete.stdout, /live-send gate remains explicitly disabled during preflight/);
   assert.doesNotMatch(complete.stdout, new RegExp(telnyxSecretFixture));
+  const webhookOnly = preflightConfig.replace('TELNYX_WEBHOOK_MODE = "disabled"', 'TELNYX_WEBHOOK_MODE = "live"');
+  const callbackActivation = runCheck(webhookOnly, ["--strict"], secrets);
+  assert.equal(callbackActivation.status, 0, callbackActivation.stdout + callbackActivation.stderr);
+  assert.match(callbackActivation.stdout, /outbound SMS remains explicitly disabled/);
+  const missingKey = runCheck(webhookOnly, ["--strict"], { ...secrets, TELNYX_WEBHOOK_PUBLIC_KEY: "" });
+  assert.equal(missingKey.status, 1);
+  assert.match(missingKey.stdout, /needs `TELNYX_WEBHOOK_PUBLIC_KEY`/);
+  assert.equal(runCheck(webhookOnly, ["--strict", "--sms-preflight"], secrets).status, 1);
 });
 
 function runCheck(config, args = [], env = {}, files = {}) {

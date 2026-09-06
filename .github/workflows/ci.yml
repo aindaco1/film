@@ -13,7 +13,7 @@ jobs:
   smoke:
     name: Smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -34,6 +34,9 @@ jobs:
       - name: Run smoke suite
         run: npm run smoke
 
+      - name: Exercise real local Worker and D1 flows
+        run: npm run smoke:local:worker
+
       - name: Report deployment readiness
         run: npm run check:deploy
 
@@ -43,3 +46,11 @@ jobs:
 
       - name: Package Web Worker dry run
         run: npx wrangler deploy --dry-run --config apps/web/wrangler.toml
+
+      - name: Retain tested web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: film-web-${{ github.sha }}
+          path: apps/web/dist/
+          if-no-files-found: error
+          retention-days: 14

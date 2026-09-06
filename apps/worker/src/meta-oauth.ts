@@ -1,13 +1,22 @@
 export const META_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 export const META_TOKEN_KEY_VERSION = "v1";
+const META_MAX_TOKEN_LENGTH = 4096;
+const AES_GCM_TAG_BYTES = 16;
 export const META_REQUIRED_SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
   "read_insights",
+] as const;
+export const META_INSTAGRAM_SCOPES = [
   "instagram_basic",
   "instagram_manage_insights",
 ] as const;
-export const META_ALLOWED_GRANTED_SCOPES = [...META_REQUIRED_SCOPES, "public_profile"] as const;
+export const META_REQUESTED_SCOPES = [...META_REQUIRED_SCOPES, ...META_INSTAGRAM_SCOPES] as const;
+export const META_ALLOWED_GRANTED_SCOPES = [...META_REQUESTED_SCOPES, "public_profile"] as const;
+
+export function hasMetaInstagramScopes(scopes: readonly string[]): boolean {
+  return META_INSTAGRAM_SCOPES.every((scope) => scopes.includes(scope));
+}
 
 export type MetaOAuthConfiguration = {
   clientId: string;
@@ -66,8 +75,8 @@ export function createMetaOAuthAuthorization(configuration: MetaOAuthConfigurati
   authorizationUrl.searchParams.set("response_type", "code");
   authorizationUrl.searchParams.set("config_id", configuration.loginConfigurationId);
   authorizationUrl.searchParams.set("override_default_response_type", "true");
-  authorizationUrl.searchParams.set("scope", META_REQUIRED_SCOPES.join(","));
-  return { authorizationUrl: authorizationUrl.toString(), state, scopes: [...META_REQUIRED_SCOPES] };
+  // Business Login uses the selected configuration; a scope override can force Instagram into a Page-only flow.
+  return { authorizationUrl: authorizationUrl.toString(), state, scopes: [...META_REQUESTED_SCOPES] };
 }
 
 export async function exchangeMetaAuthorizationCode(
@@ -108,39 +117,54 @@ export async function exchangeMetaAuthorizationCode(
 export async function listMetaPageCandidates(
   configuration: Pick<MetaOAuthConfiguration, "graphVersion">,
   userAccessToken: string,
+  scopes: readonly string[],
   fetcher: typeof fetch = fetch,
 ): Promise<MetaPageCandidate[]> {
-  const url = new URL(`${graphOrigin(configuration)}/me/accounts`);
-  url.searchParams.set("fields", "id,name,tasks,instagram_business_account{id,username}");
-  url.searchParams.set("limit", "25");
-  const response = await fetcher(url, { headers: metaBearerHeaders(userAccessToken) });
-  const parsed = await readMetaJson(response, "meta_page_candidates_failed");
-  if (!isRecord(parsed) || !Array.isArray(parsed.data)) throw new Error("meta_page_candidates_invalid");
-  return parsed.data.flatMap((value) => {
-    const candidate = normalizePageCandidate(value);
+  const pages = await readMetaManagedPages(configuration, userAccessToken, scopes, false, fetcher);
+  return pages.flatMap((value) => {
+    const candidate = normalizePageCandidate(value, hasMetaInstagramScopes(scopes));
     return candidate ? [candidate] : [];
-  }).slice(0, 25);
+  });
 }
 
 export async function readMetaPageSelection(
   configuration: Pick<MetaOAuthConfiguration, "graphVersion">,
   userAccessToken: string,
   pageId: string,
+  scopes: readonly string[],
   fetcher: typeof fetch = fetch,
 ): Promise<MetaPageSelection> {
   if (!isMetaId(pageId)) throw new Error("invalid_meta_page_id");
-  const url = new URL(`${graphOrigin(configuration)}/${pageId}`);
-  url.searchParams.set("fields", "id,name,access_token,tasks,instagram_business_account{id,username}");
-  const parsed = await readMetaJson(
-    await fetcher(url, { headers: metaBearerHeaders(userAccessToken) }),
-    "meta_page_selection_failed",
-  );
-  const candidate = normalizePageCandidate(parsed);
+  const pages = await readMetaManagedPages(configuration, userAccessToken, scopes, true, fetcher);
+  const parsed = pages.find((page) => isRecord(page) && page.id === pageId);
+  const candidate = normalizePageCandidate(parsed, hasMetaInstagramScopes(scopes));
   const pageAccessToken = isRecord(parsed) ? boundedToken(parsed.access_token) : null;
   if (!candidate || candidate.id !== pageId || !pageAccessToken) throw new Error("meta_page_selection_invalid");
   if (!candidate.tasks.includes("ANALYZE")) throw new Error("meta_page_analyze_task_required");
-  if (!candidate.instagramAccount) throw new Error("meta_linked_instagram_account_required");
   return { ...candidate, pageAccessToken };
+}
+
+async function readMetaManagedPages(
+  configuration: Pick<MetaOAuthConfiguration, "graphVersion">,
+  userAccessToken: string,
+  scopes: readonly string[],
+  includeToken: boolean,
+  fetcher: typeof fetch,
+): Promise<unknown[]> {
+  // Task permissions belong to the user's managed-Pages edge, not the standalone Page node.
+  const url = new URL(`${graphOrigin(configuration)}/me/accounts`);
+  url.searchParams.set("fields", metaPageFields(scopes, includeToken));
+  url.searchParams.set("limit", "25");
+  const errorPrefix = includeToken ? "meta_page_selection" : "meta_page_candidates";
+  const response = await fetcher(url, { headers: metaBearerHeaders(userAccessToken) });
+  const parsed = await readMetaJson(response, `${errorPrefix}_failed`);
+  if (!isRecord(parsed) || !Array.isArray(parsed.data)) throw new Error(`${errorPrefix}_invalid`);
+  return parsed.data.slice(0, 25);
+}
+
+function metaPageFields(scopes: readonly string[], includeToken = false): string {
+  return ["id", "name", "tasks", ...(includeToken ? ["access_token"] : []),
+    ...(hasMetaInstagramScopes(scopes) ? ["instagram_business_account{id,username}"] : [])].join(",");
 }
 
 export async function revokeMetaPermissions(
@@ -178,8 +202,8 @@ export async function decryptMetaToken(encryptedToken: string, encodedKey: strin
   if (version !== META_TOKEN_KEY_VERSION || !encodedIv || !encodedCiphertext || extra.length > 0) {
     throw new Error("invalid_meta_token_ciphertext");
   }
-  const iv = base64ToBytes(encodedIv);
-  const ciphertext = base64ToBytes(encodedCiphertext);
+  const iv = base64ToBytes(encodedIv, 12);
+  const ciphertext = base64ToBytes(encodedCiphertext, META_MAX_TOKEN_LENGTH + AES_GCM_TAG_BYTES);
   if (!iv || iv.byteLength !== 12 || !ciphertext) throw new Error("invalid_meta_token_ciphertext");
   const key = await importTokenEncryptionKey(encodedKey, ["decrypt"]);
   const plaintext = await crypto.subtle.decrypt(
@@ -197,7 +221,7 @@ export async function decryptMetaToken(encryptedToken: string, encodedKey: strin
 }
 
 export function hasValidMetaTokenEncryptionKey(encodedKey: string): boolean {
-  return base64ToBytes(encodedKey)?.byteLength === 32;
+  return base64ToBytes(encodedKey, 32)?.byteLength === 32;
 }
 
 export function metaTokenAdditionalData(workspaceId: string, kind: "user" | "page"): string {
@@ -292,7 +316,7 @@ async function readMetaJson(response: Response, errorCode: string): Promise<unkn
   return parsed;
 }
 
-function normalizePageCandidate(value: unknown): MetaPageCandidate | null {
+function normalizePageCandidate(value: unknown, includeInstagram: boolean): MetaPageCandidate | null {
   if (!isRecord(value)) return null;
   const id = typeof value.id === "string" ? value.id.trim() : "";
   const name = boundedText(value.name, 160);
@@ -300,7 +324,7 @@ function normalizePageCandidate(value: unknown): MetaPageCandidate | null {
   const tasks = Array.isArray(value.tasks)
     ? [...new Set(value.tasks.filter((task): task is string => typeof task === "string" && /^[A-Z_]{2,40}$/.test(task)))].sort()
     : [];
-  const instagram = isRecord(value.instagram_business_account) ? value.instagram_business_account : null;
+  const instagram = includeInstagram && isRecord(value.instagram_business_account) ? value.instagram_business_account : null;
   const instagramId = instagram && typeof instagram.id === "string" ? instagram.id.trim() : "";
   const username = instagram ? boundedText(instagram.username, 64) : null;
   return {
@@ -317,7 +341,11 @@ function graphOrigin(configuration: Pick<MetaOAuthConfiguration, "graphVersion">
 }
 
 function boundedToken(value: unknown): string | null {
-  return typeof value === "string" && /^[A-Za-z0-9._-]{16,4096}$/.test(value.trim()) ? value.trim() : null;
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  return token.length >= 16 && token.length <= META_MAX_TOKEN_LENGTH && /^[A-Za-z0-9._-]+$/.test(token)
+    ? token
+    : null;
 }
 
 function metaBearerHeaders(accessToken: string): Record<string, string> {
@@ -336,15 +364,16 @@ function boundedText(value: unknown, maxLength: number): string | null {
 }
 
 async function importTokenEncryptionKey(encodedKey: string, usages: KeyUsage[]): Promise<CryptoKey> {
-  const bytes = base64ToBytes(encodedKey);
+  const bytes = base64ToBytes(encodedKey, 32);
   if (!bytes || bytes.byteLength !== 32) throw new Error("invalid_meta_token_encryption_key");
   return crypto.subtle.importKey("raw", copyArrayBuffer(bytes), "AES-GCM", false, usages);
 }
 
-function base64ToBytes(value: string): Uint8Array | null {
-  if (!value || value.length > 128 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+function base64ToBytes(value: string, maxBytes: number): Uint8Array | null {
+  if (!value || value.length > Math.ceil(maxBytes / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
   try {
     const binary = atob(value);
+    if (binary.length > maxBytes) return null;
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
   } catch {
     return null;

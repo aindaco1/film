@@ -1743,13 +1743,21 @@ export function createFilmProjectFromTemplate(title: string, projectType = "Feat
     phase: "Development",
     phaseTone: "blue",
     color: "blue",
-    progress: 8,
+    progress: 0,
+    runtimeMinutes: 0,
+    format: "TBD",
     shootDates: "TBD",
     spentBudget: 0,
-    totalBudget: 25000,
+    totalBudget: 0,
     tasks: { done: 0, total: 2 },
     starred: false,
-    description: `${normalizedTitle} is staged from the reusable film project template.`,
+    description: "",
+    timeline: [],
+    openTasks: seedProjectShell.openTasks.map((task) => ({ ...task, id: `task_${cryptoSafeId()}` })),
+    docs: [createProjectDoc("Treatment", "MD")],
+    people: [],
+    equipment: [],
+    expenses: [],
   };
 }
 
@@ -5283,8 +5291,14 @@ function makeProject(
   done: number,
   total: number,
 ): FilmProject {
+  const shell = clone(seedProjectShell);
+  for (const records of [shell.openTasks, shell.docs, shell.people, shell.equipment, shell.expenses]) {
+    for (const record of records) {
+      if (record.id) record.id = `${id}_${record.id}`;
+    }
+  }
   return {
-    ...seedProjectShell,
+    ...shell,
     id,
     title,
     phase,

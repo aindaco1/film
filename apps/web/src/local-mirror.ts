@@ -6,14 +6,15 @@ import {
   type OperationRecord,
   type WorkspaceData,
 } from "@film/schema";
+import { workspaceStorageKey } from "./workspace-mode";
 
-const DB_NAME = "film-offline-v1";
+const DB_NAME = workspaceStorageKey("film-offline-v1");
 const DB_VERSION = 2;
 const WORKSPACE_STORE = "workspaces";
 const OPERATION_STORE = "operations";
 const ATTACHMENT_STORE = "attachments";
-const FALLBACK_WORKSPACE_KEY = "film.workspace.v1";
-const FALLBACK_OPERATIONS_KEY = "film.operations.v1";
+const FALLBACK_WORKSPACE_KEY = workspaceStorageKey("film.workspace.v1");
+const FALLBACK_OPERATIONS_KEY = workspaceStorageKey("film.operations.v1");
 
 export type AttachmentBlobRecord = {
   key: string;

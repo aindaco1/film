@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { Fetcher } from "./worker-client";
 
 export type WorkerAuditEventManifestEntry = {
@@ -40,7 +41,7 @@ export async function exportWorkerAuditEventManifest(
   workspaceId: string,
   csrfToken: string,
   options: number | WorkerAuditEventManifestOptions = 50,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkerAuditEventManifest> {
   const request = typeof options === "number"
     ? { workspaceId, limit: options }

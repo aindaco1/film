@@ -2,12 +2,14 @@ import {
   TELNYX_SMS_PROGRAM_NAME,
   TELNYX_SMS_SENDER_PREFIX,
   type TelnyxSmsCategory,
+  type TelnyxSmsSendResult,
 } from "@film/providers";
 import {
   decryptSmsRecipient,
   normalizeSmsRecipient,
   smsRecipientAdditionalData,
 } from "./sms-identity";
+import { reconcileTelnyxDelivery } from "./telnyx-delivery";
 
 export const TELNYX_LIVE_RECIPIENT_CAP = 10;
 export const TELNYX_LIVE_SEGMENT_CAP = 60;
@@ -56,19 +58,7 @@ export type TelnyxSendInput = {
   actorMemberId: string;
 };
 
-export type TelnyxSendResult = {
-  status: "sent" | "partial" | "replayed" | "blocked";
-  persistence: "d1_sms_delivery_attempts";
-  recipientCount: number;
-  segmentCountPerRecipient: number;
-  totalSegmentCount: number;
-  queuedCount: number;
-  failedCount: number;
-  replayedCount: number;
-  emergencyOverrideApplied: boolean;
-  attempts: Array<{ id: string; status: "queued" | "failed" | "replayed" }>;
-  secretValuesExposed: false;
-};
+export type TelnyxSendResult = TelnyxSmsSendResult;
 
 export type TelnyxSendError = {
   error: string;
@@ -168,24 +158,7 @@ export async function sendTelnyxSmsBatch(
     .first<{ id: string }>();
   if (!project) return sendError("sms_project_not_found", 404);
 
-  const placeholders = input.recipientIds.map(() => "?").join(", ");
-  const recipientResult = await db.prepare(`
-    SELECT
-      recipient.id,
-      recipient.recipient_hash,
-      recipient.recipient_ciphertext,
-      recipient.status,
-      recipient.categories_json,
-      recipient.member_id,
-      member_status.status AS member_status
-    FROM sms_recipients AS recipient
-    LEFT JOIN workspace_member_statuses AS member_status
-      ON member_status.workspace_id = recipient.workspace_id
-      AND member_status.member_id = recipient.member_id
-    WHERE recipient.workspace_id = ? AND recipient.id IN (${placeholders})
-    ORDER BY recipient.id
-  `).bind(input.workspaceId, ...input.recipientIds).all<SmsRecipientRow>();
-  const recipients = recipientResult.results ?? [];
+  const recipients = await loadRecipients(db, input.workspaceId, input.recipientIds);
   if (recipients.length !== input.recipientIds.length) return sendError("sms_recipient_not_found", 404);
   if (recipients.some((recipient) => !isEligibleRecipient(recipient, input.category))) {
     return sendError("sms_recipient_not_consented", 409);
@@ -262,16 +235,37 @@ export async function sendTelnyxSmsBatch(
   if (newAttempts.length === 0) return replayResult(attempts, segmentCount, input.emergencyOverride);
 
   const fetcher = options.fetcher ?? fetch;
-  const outcomes: Array<{ id: string; status: "queued" | "failed" }> = [];
+  const outcomes: TelnyxSendResult["attempts"] = [];
   for (const attempt of newAttempts) {
+    // Consent, membership, and STOP suppression may change while earlier recipients send.
+    try {
+      const [recipient] = await loadRecipients(db, input.workspaceId, [attempt.recipient.id]);
+      const current = (await existingAttempts(db, [attempt.id])).get(attempt.id);
+      if (!recipient || !isEligibleRecipient(recipient, input.category)
+        || recipient.recipient_hash !== attempt.recipient.recipient_hash || current?.status !== "queued") {
+        await db.prepare(`
+          UPDATE sms_delivery_attempts SET status = 'suppressed', updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND status = 'queued'
+        `).bind(new Date().toISOString(), attempt.id, input.workspaceId).run();
+        outcomes.push({ id: attempt.id, status: "suppressed" });
+        continue;
+      }
+    } catch {
+      // An unverifiable recipient must never reach the provider; the attempt stays non-retryable.
+      outcomes.push({ id: attempt.id, status: "failed" });
+      continue;
+    }
     const provider = await sendOne(fetcher, configuration, attempt.recipient.e164, messageBody);
     const status = provider.ok ? "queued" : "failed";
     const errorCodes = provider.ok ? [] : [provider.errorCode];
     try {
       await db.prepare(`
         UPDATE sms_delivery_attempts
-        SET status = ?, provider_message_id = ?, error_codes_json = ?, updated_at = ?
-        WHERE id = ? AND workspace_id = ? AND status = 'queued'
+        SET status = CASE WHEN status = 'queued' THEN ? ELSE status END,
+          provider_message_id = ?,
+          error_codes_json = CASE WHEN status = 'queued' THEN ? ELSE error_codes_json END,
+          updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND provider_message_id IS NULL
       `).bind(
         status,
         provider.ok ? provider.messageId : null,
@@ -280,6 +274,7 @@ export async function sendTelnyxSmsBatch(
         attempt.id,
         input.workspaceId,
       ).run();
+      if (provider.ok) await reconcileTelnyxDelivery(db, provider.messageId);
     } catch {
       outcomes.push({ id: attempt.id, status: provider.ok ? "queued" : "failed" });
       continue;
@@ -291,16 +286,18 @@ export async function sendTelnyxSmsBatch(
     .filter((attempt) => existing.has(attempt.id))
     .map((attempt) => ({ id: attempt.id, status: "replayed" as const }));
   const failedCount = outcomes.filter((outcome) => outcome.status === "failed").length;
-  const queuedCount = outcomes.length - failedCount;
-  await recordCompletionAudit(db, input, queuedCount, failedCount, replayedAttempts.length, now);
+  const suppressedCount = outcomes.filter((outcome) => outcome.status === "suppressed").length;
+  const queuedCount = outcomes.filter((outcome) => outcome.status === "queued").length;
+  await recordCompletionAudit(db, input, queuedCount, failedCount, suppressedCount, replayedAttempts.length, now);
   return {
-    status: failedCount === 0 ? "sent" : queuedCount === 0 ? "blocked" : "partial",
+    status: failedCount + suppressedCount === 0 ? "sent" : queuedCount === 0 ? "blocked" : "partial",
     persistence: "d1_sms_delivery_attempts",
     recipientCount: attempts.length,
     segmentCountPerRecipient: segmentCount,
     totalSegmentCount: segmentCount * attempts.length,
     queuedCount,
     failedCount,
+    suppressedCount,
     replayedCount: replayedAttempts.length,
     emergencyOverrideApplied: input.emergencyOverride,
     attempts: [...replayedAttempts, ...outcomes],
@@ -364,6 +361,22 @@ function isEligibleRecipient(recipient: SmsRecipientRow, category: TelnyxSmsCate
   } catch {
     return false;
   }
+}
+
+async function loadRecipients(db: D1Database, workspaceId: string, ids: string[]): Promise<SmsRecipientRow[]> {
+  const result = await db.prepare(`
+    SELECT recipient.id, recipient.recipient_hash, recipient.recipient_ciphertext,
+      recipient.status, recipient.categories_json, recipient.member_id,
+      member_status.status AS member_status
+    FROM sms_recipients AS recipient
+    LEFT JOIN workspace_member_statuses AS member_status
+      ON member_status.workspace_id = recipient.workspace_id
+      AND member_status.member_id = recipient.member_id
+    WHERE recipient.workspace_id = ? AND recipient.id IN (${ids.map(() => "?").join(", ")})
+    ORDER BY recipient.id
+  `).bind(workspaceId, ...ids).all<SmsRecipientRow>();
+  if (!result.success) throw new Error("sms_recipient_storage_unavailable");
+  return result.results ?? [];
 }
 
 async function existingAttempts(db: D1Database, ids: string[]): Promise<Map<string, SmsAttemptRow>> {
@@ -443,6 +456,7 @@ async function recordCompletionAudit(
   input: TelnyxSendInput,
   queuedCount: number,
   failedCount: number,
+  suppressedCount: number,
   replayedCount: number,
   createdAt: string,
 ): Promise<void> {
@@ -460,6 +474,7 @@ async function recordCompletionAudit(
         category: input.category,
         queuedCount,
         failedCount,
+        suppressedCount,
         replayedCount,
         messageBodyStored: false,
         recipientValuesStoredInAudit: false,
@@ -484,6 +499,7 @@ function replayResult(
     totalSegmentCount: segmentCount * attempts.length,
     queuedCount: 0,
     failedCount: 0,
+    suppressedCount: 0,
     replayedCount: attempts.length,
     emergencyOverrideApplied: emergencyOverride,
     attempts: attempts.map((attempt) => ({ id: attempt.id, status: "replayed" })),

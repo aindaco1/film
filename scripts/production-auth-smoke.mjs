@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyNotionImport } from "@film/importers";
 import { createFilmProjectFromTemplate, seedWorkspace } from "@film/schema";
+import { ownedSmsSmokeConfiguration, runOwnedSmsSmoke } from "./owned-sms-smoke.mjs";
 import {
   boundedInteger,
   normalizeSecureHttpBaseUrl,
@@ -16,15 +17,17 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = parseCliArgs(process.argv.slice(2), {
-  booleans: ["--allow-send", "--require", "--check-runtime-readiness", "--apply-project", "--apply-notion-import"],
+  booleans: ["--allow-send", "--require", "--check-runtime-readiness", "--check-telnyx-readiness", "--send-owned-sms", "--apply-project", "--apply-notion-import"],
   values: [
     "--origin", "--app-origin", "--resend-api-origin", "--source-dev-vars", "--email-key", "--resend-key",
     "--request-timeout-ms", "--poll-timeout-ms", "--poll-interval-ms", "--workspace", "--create-project-title",
-    "--project-type", "--project-id", "--notion-source-dir",
+    "--project-type", "--project-id", "--notion-source-dir", "--sms-smoke-config", "--expected-sms-mode",
   ],
 });
 const required = Boolean(args.require || process.env.FILM_PRODUCTION_AUTH_SMOKE_REQUIRED === "1");
 const allowSend = Boolean(args["allow-send"] || process.env.FILM_PRODUCTION_AUTH_SMOKE_ALLOW_SEND === "1");
+const expectedSmsMode = args["expected-sms-mode"] ?? "disabled";
+if (!["disabled", "live"].includes(expectedSmsMode)) fail("--expected-sms-mode must be disabled or live");
 const projectTitle = optionalLabel(args["create-project-title"], "project title", 180);
 const projectType = optionalLabel(args["project-type"], "project type", 80) || "Feature Film";
 const projectId = projectTitle
@@ -33,6 +36,12 @@ const projectId = projectTitle
 const applyProject = Boolean(args["apply-project"]);
 const notionSourceDir = args["notion-source-dir"] ? path.resolve(args["notion-source-dir"]) : "";
 const applyNotionSource = Boolean(args["apply-notion-import"]);
+if (Boolean(args["send-owned-sms"]) !== Boolean(args["sms-smoke-config"])) {
+  fail("Owned SMS testing requires both --send-owned-sms and --sms-smoke-config after explicit recipient approval");
+}
+const smsSmoke = args["send-owned-sms"]
+  ? ownedSmsSmokeConfiguration(parseEnvFile(readFileSync(path.resolve(args["sms-smoke-config"]), "utf8")))
+  : null;
 
 if (applyProject && !projectTitle) {
   fail("--apply-project requires --create-project-title");
@@ -153,35 +162,39 @@ try {
       body: JSON.stringify({ workspaceId }),
     }, [200]);
     assert.equal(runtime.body.readiness?.secretValuesExposed, false, "runtime readiness did not enforce redaction");
-    assert.equal(runtime.body.readiness?.liveCount, 2, "runtime readiness live count changed");
+    const expectedLive = ["resend", "google", ...(expectedSmsMode === "live" ? ["sms"] : [])];
+    const expectedBlocked = ["pool", "store", "stripe", "social", ...(expectedSmsMode === "disabled" ? ["sms"] : [])];
+    assert.equal(runtime.body.readiness?.liveCount, expectedLive.length, "runtime readiness live count changed");
     assert.equal(runtime.body.readiness?.partialLiveCount, 0, "runtime readiness partial-live count changed");
-    assert.equal(runtime.body.readiness?.blockedCount, 5, "runtime readiness blocked count changed");
+    assert.equal(runtime.body.readiness?.blockedCount, expectedBlocked.length, "runtime readiness blocked count changed");
     const statuses = new Map((runtime.body.readiness?.providers ?? []).map((provider) => [provider.key, provider.status]));
-    for (const key of ["resend", "google"]) assert.equal(statuses.get(key), "live", `${key} runtime gate is not live`);
-    for (const key of ["pool", "store", "stripe", "social", "sms"]) assert.equal(statuses.get(key), "blocked", `${key} runtime gate is not blocked`);
+    for (const key of expectedLive) assert.equal(statuses.get(key), "live", `${key} runtime gate is not live`);
+    for (const key of expectedBlocked) assert.equal(statuses.get(key), "blocked", `${key} runtime gate is not blocked`);
 
-    const smsProbeContent = "production_sms_disabled_probe_content";
-    const smsProbeRecipient = "sms_recipient_0123456789abcdef0123456789abcdef";
-    const sms = await requestJsonEventually(`${workerOrigin}/api/providers/sms/send`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie,
-        "x-film-csrf": csrfToken,
-      },
-      body: JSON.stringify({
-        workspaceId,
-        projectId: snapshot.body.snapshot?.projects?.[0]?.id ?? "proj_disabled_probe",
-        recipientIds: [smsProbeRecipient],
-        category: "call_sheet",
-        messageBody: smsProbeContent,
-        requestKey: "production_sms_disabled_probe_0001",
-      }),
-    }, [503]);
-    assert.equal(sms.body.error, "telnyx_sms_send_disabled", "production SMS send gate is not closed");
-    const smsResponse = JSON.stringify(sms.body);
-    assert.equal(smsResponse.includes(smsProbeContent), false, "disabled SMS response reflected message content");
-    assert.equal(smsResponse.includes(smsProbeRecipient), false, "disabled SMS response reflected recipient metadata");
+    if (expectedSmsMode === "disabled") {
+      const smsProbeContent = "production_sms_disabled_probe_content";
+      const smsProbeRecipient = "sms_recipient_0123456789abcdef0123456789abcdef";
+      const sms = await requestJsonEventually(`${workerOrigin}/api/providers/sms/send`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          "x-film-csrf": csrfToken,
+        },
+        body: JSON.stringify({
+          workspaceId,
+          projectId: snapshot.body.snapshot?.projects?.[0]?.id ?? "proj_disabled_probe",
+          recipientIds: [smsProbeRecipient],
+          category: "call_sheet",
+          messageBody: smsProbeContent,
+          requestKey: "production_sms_disabled_probe_0001",
+        }),
+      }, [503]);
+      assert.equal(sms.body.error, "telnyx_sms_send_disabled", "production SMS send gate is not closed");
+      const smsResponse = JSON.stringify(sms.body);
+      assert.equal(smsResponse.includes(smsProbeContent), false, "disabled SMS response reflected message content");
+      assert.equal(smsResponse.includes(smsProbeRecipient), false, "disabled SMS response reflected recipient metadata");
+    }
 
     const google = await requestJsonEventually(`${workerOrigin}/api/providers/google/connection`, {
       method: "POST",
@@ -232,6 +245,39 @@ try {
     assert(Date.parse(googleStart.body.expiresAt) > Date.now(), "Google OAuth state did not receive a future expiry");
   }
 
+  if (args["check-telnyx-readiness"]) {
+    const telnyx = await requestJsonEventually(`${workerOrigin}/api/providers/sms/provider-readiness`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, "x-film-csrf": csrfToken },
+      body: JSON.stringify({ workspaceId }),
+    }, [200]);
+    const readiness = telnyx.body.readiness;
+    assert.equal(readiness?.secretValuesExposed, false, "Telnyx readiness did not enforce redaction");
+    // Only report allowlisted scalar diagnostics, never raw provider bodies or identifiers.
+    const booleans = (value) => Object.fromEntries(Object.entries(value ?? {}).filter(([, item]) => typeof item === "boolean"));
+    console.log("Telnyx readiness:", JSON.stringify({
+      status: /^[a-z_]{1,64}$/.test(readiness.status) ? readiness.status : "unknown",
+      configured: booleans(readiness.configured),
+      activationGates: booleans(readiness.activationGates),
+      profile: booleans(readiness.profile),
+      campaign: booleans(readiness.campaign),
+      carrierCounts: Object.fromEntries(["approved", "review", "rejected", "other", "total"].map((key) => {
+        const count = readiness.campaign?.mno?.[key];
+        return [key, Number.isSafeInteger(count) && count >= 0 && count <= 20 ? count : null];
+      })),
+      number: booleans(readiness.number),
+      readyForOwnedNumberSmoke: readiness.readyForOwnedNumberSmoke === true,
+    }));
+  }
+
+  if (smsSmoke) await runOwnedSmsSmoke({
+    configuration: smsSmoke, workspaceId, snapshot: snapshot.body.snapshot,
+    post: (endpoint, body, statuses) => requestJson(`${workerOrigin}${endpoint}`, {
+      method: "POST", headers: { "content-type": "application/json", cookie, "x-film-csrf": csrfToken },
+      body: JSON.stringify(body),
+    }, statuses),
+  });
+
   const logout = await requestJsonEventually(`${workerOrigin}/api/auth/logout`, {
     method: "POST",
     headers: {
@@ -247,7 +293,7 @@ try {
     headers: { cookie },
   }, [401]);
 
-  console.log(`Production auth smoke passed: live member-only mode, generic request, delivered approved message, member session, canonical workspace snapshot${projectResult}${notionResult}${args["check-runtime-readiness"] ? ", provider runtime gates, disabled SMS send boundary, live Google readiness, and metadata-only authorization start" : ""}, logout, revoked session.`);
+  console.log(`Production auth smoke passed: live member-only mode, generic request, delivered approved message, member session, canonical workspace snapshot${projectResult}${notionResult}${args["check-runtime-readiness"] ? `, provider runtime gates, ${expectedSmsMode === "disabled" ? "disabled SMS send boundary" : "live SMS configuration (no test send)"}, live Google readiness, and metadata-only authorization start` : ""}, logout, revoked session.`);
 } catch (error) {
   await bestEffortLogout(activeSession);
   fail(error instanceof Error ? error.message : "unknown failure");
@@ -594,6 +640,11 @@ function safeEndpointLabel(value) {
       ["/api/auth/session", "Worker session check"],
       ["/api/workspaces/current/snapshot", "Worker canonical workspace snapshot"],
       ["/api/providers/runtime-readiness", "Worker runtime readiness"],
+      ["/api/providers/sms/provider-readiness", "Worker Telnyx readiness"],
+      ["/api/providers/sms/consent/commit", "Worker SMS test consent"],
+      ["/api/providers/sms/consent/revoke", "Worker SMS consent cleanup"],
+      ["/api/providers/sms/consent/manifest", "Worker SMS consent status"],
+      ["/api/providers/sms/send", "Worker SMS send"],
       ["/api/providers/google/connection", "Worker Google connection status"],
       ["/api/providers/google/oauth/start", "Worker Google authorization start"],
       ["/api/imports/notion/dry-run", "Worker Notion import preflight"],

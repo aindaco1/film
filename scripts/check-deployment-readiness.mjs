@@ -227,7 +227,8 @@ record(
   "Telnyx SMS needs a separate base64 32-byte `SMS_RECIPIENT_HASH_KEY` secret before recipient identity can be indexed.",
 );
 const smsMode = readConfiguredValue("SMS_MODE").toLowerCase();
-if (smsMode === "live" || smsPreflight) {
+const telnyxWebhookLive = readConfiguredValue("TELNYX_WEBHOOK_MODE").toLowerCase() === "live";
+if (smsMode === "live" || smsPreflight || telnyxWebhookLive) {
   const telnyxApiKey = readConfiguredValue("TELNYX_API_KEY");
   const telnyxProfileId = readConfiguredValue("TELNYX_MESSAGING_PROFILE_ID");
   const telnyxCampaignId = readConfiguredValue("TELNYX_CAMPAIGN_ID");
@@ -262,11 +263,16 @@ if (smsMode === "live" || smsPreflight) {
     "Telnyx receiving-number workspace mapping is available via environment/secret binding.",
     "SMS live mode needs `TELNYX_INBOUND_NUMBER_MAPPINGS`.",
   );
-  if (smsMode === "live") {
+  if (smsMode === "live" || (telnyxWebhookLive && !smsPreflight)) {
     record(
       readConfiguredValue("TELNYX_WEBHOOK_MODE").toLowerCase() === "live",
       "Telnyx signed webhook live mode is explicitly enabled.",
       "SMS live mode needs `TELNYX_WEBHOOK_MODE=live`.",
+    );
+    if (smsMode !== "live") record(
+      smsMode === "disabled",
+      "Telnyx signed callbacks are enabled while outbound SMS remains explicitly disabled.",
+      "Webhook-only activation needs `SMS_MODE=disabled`.",
     );
   } else {
     record(

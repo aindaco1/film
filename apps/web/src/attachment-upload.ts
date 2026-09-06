@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { WorkspaceData } from "@film/schema";
 import type { Fetcher } from "./worker-client";
 
@@ -148,7 +149,7 @@ export async function uploadAttachmentObject(
   intent: AttachmentUploadIntent,
   blob: Blob,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<AttachmentObjectUploadResult> {
   const response = await fetcher(`${workerUrl}/api/attachments/r2/upload-object`, {
     method: "PUT",

@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { WorkspaceRole } from "@film/schema";
 import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
 
@@ -127,7 +128,7 @@ export async function createWorkspaceInvite(
   email: string,
   role: WorkspaceRole,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkspaceInviteCreateResult> {
   return parseJsonResponse<WorkspaceInviteCreateResult>(
     await fetcher(`${workerUrl}/api/invites/create-dry-run`, {
@@ -147,7 +148,7 @@ export async function checkInviteDeliveryReadiness(
   workerUrl: string,
   workspaceId: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<InviteDeliveryReadinessResult> {
   return parseJsonResponse<InviteDeliveryReadinessResult>(
     await fetcher(`${workerUrl}/api/invites/delivery-readiness`, {
@@ -168,7 +169,7 @@ export async function exportWorkspaceInviteManifest(
   workspaceId: string,
   limit: number,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkspaceInviteManifestResult> {
   return parseJsonResponse<WorkspaceInviteManifestResult>(
     await fetcher(`${workerUrl}/api/invites/manifest`, {
@@ -189,7 +190,7 @@ export async function exportInviteDeliverySuppressions(
   workspaceId: string,
   limit: number,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<InviteDeliverySuppressionManifestResult> {
   return parseJsonResponse<InviteDeliverySuppressionManifestResult>(
     await fetcher(`${workerUrl}/api/invites/delivery-suppressions`, {
@@ -214,7 +215,7 @@ export async function revokeWorkspaceInvite(
     role: WorkspaceRole;
   },
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkspaceInviteRevokeResult> {
   return parseJsonResponse<WorkspaceInviteRevokeResult>(
     await fetcher(`${workerUrl}/api/invites/revoke-dry-run`, {
@@ -234,7 +235,7 @@ export async function acceptWorkspaceInvite(
   workerUrl: string,
   token: string,
   displayName: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkspaceInviteAcceptResult> {
   return parseJsonResponse<WorkspaceInviteAcceptResult>(
     await fetcher(`${workerUrl}/api/invites/accept-dry-run`, {

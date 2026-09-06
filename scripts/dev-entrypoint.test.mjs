@@ -20,7 +20,7 @@ test("the local Worker smoke suite does not reuse occupied dev ports", async () 
 
   assert.match(source, /await smokePort\("FILM_LOCAL_WORKER_SMOKE_WORKER_PORT", 8787\)/);
   assert.match(source, /await smokePort\("FILM_LOCAL_WORKER_SMOKE_APP_PORT", 5173\)/);
-  assert.match(source, /`ALLOWED_ORIGINS:\$\{appOrigin\}`/);
+  assert.match(source, /allowedOrigin: appOrigin/);
   assert.match(source, /error\?\.code !== "EADDRINUSE"/);
   assert.match(source, /return reservePort\(0\)/);
 });

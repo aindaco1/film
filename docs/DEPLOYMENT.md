@@ -4,6 +4,8 @@ Film's Worker production route, static app origin, member-only live magic-link a
 
 ## Local Worker Vars
 
+`npm run dev` and `npm run dev:worker` use the shared non-sending policy in `scripts/local-worker-config.mjs`. Local auth/invites are dry-run; Google, Meta, SMS, signed Telnyx webhooks, and Stripe summary modes are explicitly disabled, even when production configuration or local credentials exist. The real local-Worker smoke suite uses the same policy with disposable ports. Deliberate live-provider exercises must remain separate opt-in operator commands.
+
 Copy `apps/worker/.dev.vars.example` to `apps/worker/.dev.vars` only when local overrides are needed. Keep `.dev.vars` out of git.
 
 The example contains placeholder names for:
@@ -89,7 +91,13 @@ The deletion callback returns a generated status URL under `https://api.film.dus
 
 Set `META_GRAPH_API_VERSION` to an explicitly reviewed `vN.N` value. Configure only `pages_show_list`, `pages_read_engagement`, `read_insights`, `instagram_basic`, and `instagram_manage_insights`. Generate `META_TOKEN_ENCRYPTION_KEY` separately from every Google/SMS key, store it in Wrangler and the approved recovery manager, and do not rotate it after connections exist without multi-key decryption.
 
-Keep `META_OAUTH_MODE=disabled` until the Meta app ID/secret, numeric Login for Business configuration ID, owned Page and linked Instagram account, data handling answers, App Review requirements, signed deletion/deauthorization smoke, and owner smoke are complete. The OAuth callback creates `pending_page_selection`; an owner/producer must select a Page with `ANALYZE` and linked Instagram before the bounded 31-day analytics route can run. Disconnect revokes the user grant when possible and always deletes local ciphertext and mappings.
+Facebook Login for Business requires every permission in the selected configuration. For Facebook-only accounts, point `META_LOGIN_CONFIGURATION_ID` at a user-token configuration containing only `pages_show_list`, `pages_read_engagement`, and `read_insights`. Use the combined five-permission configuration only for accounts with an authorized Instagram asset. The authorization URL uses `config_id` without a redundant `scope` override, following [Meta's configuration contract](https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business). The Worker still requires the three Facebook grants and rejects grants outside its read-only allowlist; its stored OAuth-state scope list is that bounded allowlist, not a claim that Instagram access was granted.
+
+Page discovery and selection share a bounded `/me/accounts` read so task permissions and the selected Page token come from the user's authorized managed-Pages edge. Discovery never returns tokens. Analytics warnings retain endpoint identity and allowlisted numeric HTTP/provider error codes only; the audit records these codes without provider messages, traces, URLs, or credentials.
+
+Keep `META_OAUTH_MODE=disabled` outside an explicitly approved owned-account acceptance run until the Meta app ID/secret, numeric Login for Business configuration ID, owned Page, data handling answers, applicable App Review requirements, signed deletion/deauthorization smoke, and owner smoke are complete. The OAuth callback creates `pending_page_selection`; an owner/producer must select a Page with `ANALYZE` before the bounded 31-day analytics route can run. A linked Instagram professional account is optional. Facebook-only acceptance can use an owned test Page; Instagram reads require both Instagram permissions and a linked account. Empty test-Page results do not prove Instagram or general customer acceptance. Disconnect revokes the user grant when possible and always deletes local ciphertext and mappings.
+
+Disabling `META_OAUTH_MODE` also blocks Page discovery, selection, and analytics through existing tokens. Disconnect and signed deletion/deauthorization callbacks remain available for cleanup while the integration is disabled.
 
 ## Telnyx SMS Keys
 

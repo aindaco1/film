@@ -1,6 +1,6 @@
 {
   "name": "film",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "private": true,
   "description": "Static-first film production workspace with Worker-owned trust boundaries.",
   "license": "MIT",
@@ -18,6 +18,9 @@
     "test": "npm run test:scripts && npm run test --workspaces --if-present",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
+    "test:appearance": "node scripts/browser-smoke.mjs --appearance-only",
+    "test:demo": "node scripts/browser-smoke.mjs --demo-only",
+    "test:offline": "npm run build -w @film/web && node scripts/browser-smoke.mjs --offline-only",
     "accept:screenplay": "node scripts/screenplay-acceptance.mjs",
     "docs:user-flows": "node scripts/render-user-flows.mjs",
     "test:security": "node scripts/check-secrets.mjs",
@@ -34,7 +37,7 @@
     "check:sms:preflight": "node scripts/check-deployment-readiness.mjs --strict --wrangler-secrets --sms-preflight",
     "bootstrap:production-owner": "node scripts/bootstrap-production-owner.mjs",
     "report:production-traffic": "node scripts/production-traffic-report.mjs",
-    "smoke": "npm run build && npm run typecheck:web && npm run test && npm run test:security && npm run test:migrations && npm run test:browser"
+    "smoke": "npm run build && npm run typecheck:web && npm run test && npm run test:security && npm run test:migrations && npm run test:browser && node scripts/browser-smoke.mjs --offline-only"
   },
   "devDependencies": {
     "axe-core": "^4.12.1",

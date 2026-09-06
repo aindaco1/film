@@ -7,6 +7,11 @@ import { chromium } from "playwright";
 import { spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
 import { WORKSPACE_FLOW_SECTIONS } from "./user-flow-catalog.mjs";
 import { createStoredZip } from "./zip-fixture.mjs";
+import { auditWorkspaceAppearance, runAppearanceSmoke, runOfflineShellSmoke } from "./browser-appearance-flows.mjs";
+import { runDemoPortfolioSmoke } from "./browser-demo-flows.mjs";
+import { runDeferredViewSmoke } from "./browser-deferred-view-flows.mjs";
+import { browserReleaseOrigin } from "./browser-release-origin.mjs";
+import { providerRuntimeFixture, runProviderRuntimeStatusSmoke, runGoogleRecoverySmoke } from "./browser-provider-status-flows.mjs";
 import {
   clickWorkspaceSection,
   exportEncryptedBackup,
@@ -17,7 +22,8 @@ import {
 } from "./browser-flow-helpers.mjs";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const failureDir = resolve(rootDir, "test-results");
+const releaseOrigin = browserReleaseOrigin(process.argv.slice(2));
+const failureDir = resolve(rootDir, "test-results", ...(releaseOrigin ? ["public-release"] : []));
 const smokePassphrase = "browser smoke passphrase";
 const screenplaySmokeFountain = `Title: Night Signal
 
@@ -137,12 +143,12 @@ async function waitForServer(url, serverProcess, timeoutMs = 30_000) {
   throw new Error(`Timed out waiting for ${url}: ${lastError instanceof Error ? lastError.message : "unknown error"}`);
 }
 
-async function startWebServer() {
+async function startWebServer({ preview = false } = {}) {
   const port = await findFreePort();
   const url = `http://127.0.0.1:${port}/`;
   const serverProcess = spawnManagedProcess(
     process.execPath,
-    [viteCliPath, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
+    [viteCliPath, ...(preview ? ["preview"] : []), "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
     {
       cwd: resolve(rootDir, "apps", "web"),
       env: { ...process.env, NO_COLOR: "1" },
@@ -215,6 +221,11 @@ async function expectNoDocumentOverflow(page, label) {
       bodyScrollWidth: document.body.scrollWidth,
       bodyClientWidth: document.body.clientWidth,
       overflowElements,
+      overflowingContainers: [...document.querySelectorAll("section, div")].filter((element) => element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX === "visible").slice(0, 8).map((element) => ({
+        className: element.className,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      })),
     };
   });
 
@@ -462,36 +473,7 @@ async function mockProviderRoutes(page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({
-        dryRun: true,
-        persistence: "browser_smoke_mock",
-        auditPersistence: "browser_smoke_mock",
-        readiness: {
-          policy: "explicit_provider_live_gates",
-          secretValuesExposed: false,
-          liveCount: 4,
-          partialLiveCount: 0,
-          blockedCount: 3,
-          providers: [
-            ["pool", "Pool", "live", "live_summary_only", ["campaign_aggregate_summary"]],
-            ["store", "Store", "live", "live_summary_only", ["order_revenue_aggregate_summary"]],
-            ["stripe", "Stripe", "live", "live_summary_only", ["pool_store_payment_summary"]],
-            ["resend", "Resend", "live", "live_transactional_email", ["member_magic_link_delivery", "workspace_invite_delivery"]],
-            ["google", "Google", "blocked", "dry_run_only", []],
-            ["social", "Social", "blocked", "dry_run_only", []],
-            ["sms", "SMS", "blocked", "dry_run_only", []],
-          ].map(([key, label, status, runtimeMode, liveCapabilities]) => ({
-            key,
-            label,
-            status,
-            runtimeMode,
-            liveCapabilities,
-            blockers: status === "blocked" ? [`${label} browser-smoke blocker.`] : [],
-            requiredDecisions: [],
-            dataBoundary: "browser_smoke_boundary",
-          })),
-        },
-      }),
+      body: JSON.stringify(providerRuntimeFixture()),
     });
   });
 
@@ -537,7 +519,7 @@ async function mockProviderRoutes(page) {
           mode: "read_only_provider_preflight",
           status: "pending_campaign_review",
           providerApiChecked: true,
-          profile: { reachable: true, enabled: true, nameMatches: true, webhookMatches: true, webhookApiV2: true },
+          profile: { reachable: true, enabled: true, nameMatches: true, webhookMatches: true, webhookApiV2: true, helpSettingsReachable: true, helpResponseConfigured: true },
           campaign: {
             reachable: true,
             status: "PENDING_MNO_REVIEW",
@@ -1037,6 +1019,144 @@ async function runTeamSignInGateSmoke(page) {
   await selectInspectorView(page, "overview");
 }
 
+async function runProviderSessionBoundarySmoke(url, browser) {
+  for (const status of [200, 503]) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
+    const page = await context.newPage();
+    const errors = [];
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    page.on("pageerror", error => errors.push(error.message));
+    try {
+      await page.route("**/api/**", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Unmocked route blocked"}' }));
+      await mockAuthRoutes(page);
+      await mockProviderRoutes(page);
+      await page.route("**/api/providers/sms/consent/manifest", async route => {
+        await held;
+        await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(status === 200 ? {
+          count: 1, truncated: false, secretValuesExposed: false, persistence: "d1_sms_compliance",
+          recipients: [{ id: "late-recipient", memberId: "Late private recipient", status: "active", categories: ["call_sheet"], disclosureVersion: "v1", consentedAt: null, revokedAt: null, updatedAt: "2026-09-05" }],
+        } : { error: "Late private request failure" }) });
+      });
+      await page.goto(url);
+      await runAuthSmoke(page, { signOut: false });
+      await selectInspectorView(page, "integrations");
+      await page.locator('[data-integration="sms"]').click();
+      await expectBodyText(page, "SMS dry run checked by the Worker.");
+      const requested = page.waitForRequest("**/api/providers/sms/consent/manifest");
+      await page.locator('[data-action="sms-consent-manifest"]').click();
+      await requested;
+      await runSignOutSmoke(page);
+      assert(await page.locator('[data-action="sms-consent-enroll"]').count() === 0, "Sign-out must clear provider controls");
+      await runAuthSmoke(page, { signOut: false });
+      await selectInspectorView(page, "integrations");
+      await page.locator('[data-integration="sms"]').click();
+      await expectBodyText(page, "SMS dry run checked by the Worker.");
+      const phone = page.locator('input[name="recipientE164"]');
+      await phone.fill("+15055550123");
+      await phone.focus();
+      const received = page.waitForResponse("**/api/providers/sms/consent/manifest");
+      release();
+      await received;
+      await page.waitForTimeout(150);
+      assert(!(await page.locator("body").innerText()).includes("Late private"), "Old-session provider result or error leaked into the new session");
+      assert(await page.locator('[data-action="sms-send"]').count() === 0, "Old-session recipients enabled sending");
+      assert(await phone.inputValue() === "+15055550123", "Old provider response erased a new-session draft");
+      assert(await phone.evaluate(input => input === document.activeElement), "Old provider response stole focus");
+      assert(errors.length === 0, `Provider session boundary raised browser errors: ${errors.join(", ")}`);
+    } finally {
+      release();
+      await context.close();
+    }
+  }
+  record("sign-out clears integration results and late provider successes/errors cannot repopulate or interrupt a new session; no messages sent");
+}
+
+async function runMetaFacebookOnlySmoke(url, browser) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
+  const page = await context.newPage();
+  const errors = [];
+  const requests = [];
+  const testPage = { id: "111111111111111", name: "Dust Wave Social Test", tasks: ["ANALYZE"], instagramAccount: null };
+  let connection = {
+    provider: "meta", status: "pending_page_selection", scopes: ["pages_show_list", "pages_read_engagement", "read_insights"],
+    tokenExpiresAt: null, page: null, instagramAccount: null,
+    connectedAt: "2026-09-05T12:00:00Z", disconnectedAt: null, updatedAt: "2026-09-05T12:00:00Z",
+  };
+  page.on("pageerror", error => errors.push(error.message));
+  try {
+    await page.route("**/api/**", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Unmocked route blocked"}' }));
+    await mockAuthRoutes(page);
+    await mockProviderRoutes(page);
+    await page.route("**/api/providers/meta/**", async route => {
+      const action = new URL(route.request().url()).pathname.split("/").at(-1);
+      const request = route.request().postDataJSON();
+      requests.push(action);
+      let result;
+      if (action === "connection") {
+        result = { connection, readiness: { status: "blocked_oauth", liveOAuthAllowed: false, blockers: [] } };
+      } else if (action === "pages") {
+        result = { pages: [testPage, { ...testPage, id: "999999999999999", name: "No analytics access", tasks: [] }] };
+      } else if (action === "select-page") {
+        assert(request.pageId === testPage.id, "Only the selected test Page may be submitted");
+        connection = { ...connection, status: "active", page: { id: testPage.id, name: testPage.name } };
+        result = { connection };
+      } else if (action === "analytics") {
+        result = { analytics: { status: "complete", since: request.since, until: request.until, calendar: [], insights: [], warnings: [], secretValuesExposed: false } };
+      } else if (action === "disconnect") {
+        connection = { ...connection, status: "disconnected", page: null, disconnectedAt: "2026-09-05T12:10:00Z" };
+        result = { connection, providerRevoked: true };
+      } else {
+        throw new Error(`Unexpected Meta browser fixture action: ${action}`);
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        ok: true, secretValuesExposed: false, persistence: "browser_smoke_mock", connectionPersistence: "browser_smoke_mock", auditPersistence: "browser_smoke_mock", ...result,
+      }) });
+    });
+    await page.goto(url);
+    await runAuthSmoke(page, { signOut: false });
+    await selectInspectorView(page, "integrations");
+    await page.locator('[data-integration="social"]').click();
+    await page.locator('[data-action="meta-connection-check"]').click();
+    await page.locator('[data-action="meta-pages"]').click();
+    await page.getByText("1 eligible Page", { exact: true }).waitFor();
+    assert(await page.locator('[data-page-id="999999999999999"]').isDisabled(), "Missing ANALYZE must disable selection");
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      for (const theme of ["light", "dark"]) {
+        await page.getByLabel("Appearance", { exact: true }).selectOption(theme);
+        await expectNoSeriousA11yViolations(page, `Facebook-only ${width} ${theme}`);
+        await expectNoDocumentOverflow(page, `Facebook-only ${width} ${theme}`);
+        assert(await page.locator('[data-action="meta-select-page"]').evaluateAll(buttons => buttons.every(button => {
+          const label = button.previousElementSibling.getBoundingClientRect();
+          const control = button.getBoundingClientRect();
+          return button.scrollWidth <= button.clientWidth + 1 && control.left >= label.right && control.top < label.bottom;
+        })), "Page selection controls must fit beside their account labels");
+        await mkdir(resolve(failureDir, "ux-audit"), { recursive: true });
+        await page.screenshot({ path: resolve(failureDir, "ux-audit", `meta-facebook-only-${width}-${theme}.png`), fullPage: true });
+      }
+    }
+    await page.locator(`[data-page-id="${testPage.id}"]`).click();
+    await expectBodyText(page, "Dust Wave Social Test connected for read-only analytics.");
+    await page.getByText("Facebook only", { exact: true }).waitFor();
+    await page.locator('[data-action="meta-analytics"]').click();
+    await page.getByText("No published items in this period.", { exact: true }).waitFor();
+    assert(!(await page.locator("body").innerText()).includes("partial read warning"), "Unlinked Instagram must not appear as a failed read");
+    page.once("dialog", dialog => dialog.accept());
+    await page.locator('[data-action="meta-disconnect"]').click();
+    await expectBodyText(page, "Meta disconnected and provider access revoked.");
+    assert(await page.locator('[data-action="meta-analytics"]').count() === 0, "Disconnect must clear analytics");
+    assert(requests.join(",") === "connection,pages,select-page,analytics,disconnect", "Unexpected Meta requests");
+    assert(errors.length === 0, `Meta browser errors: ${errors.join(", ")}`);
+    record("Facebook-only Page selection, empty analytics, and disconnect retain access gates across desktop/mobile themes; no live provider calls");
+  } catch (error) {
+    await page.screenshot({ path: resolve(failureDir, "meta-facebook-only-failure.png"), fullPage: true }).catch(() => {});
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
 async function runTeamInlineEditingSmoke(page) {
   await selectInspectorView(page, "team");
   assert(await page.locator(".team-edit-gate").count() === 0, "Owner sessions should edit the team in context");
@@ -1092,10 +1212,12 @@ async function runProviderChipSmoke(page) {
     await expectBodyText(page, `${label} browser-smoke compliance note.`);
   }
   await page.locator("[data-action='provider-runtime-readiness']").click();
-  await expectBodyText(page, "Provider runtime readiness: 4 live, 3 blocked.");
-  await expectBodyText(page, "4 live");
+  await expectBodyText(page, "4 enabled, 3 blocked");
+  assert(await page.locator('[data-integration-status="pool"]').innerText() === "Live enabled", "Picker must use checked status");
+  await page.locator('[data-integration="pool"]').click();
   await expectBodyText(page, "3 blocked");
   await expectBodyText(page, "live summary only");
+  await page.locator('[data-integration="google"]').click();
   await expectBodyText(page, "Google browser-smoke blocker.");
 }
 
@@ -1192,7 +1314,7 @@ async function runSmsComposerSmoke(page) {
   await form.screenshot({ path: resolve(failureDir, "sms-composer-mobile.png") });
   await page.setViewportSize({ width: 1440, height: 950 });
   await form.locator("button[type='submit']").click();
-  await expectBodyText(page, "SMS send: 1 queued, 0 failed, 0 replayed.");
+  await expectBodyText(page, "SMS send: 1 queued, 0 failed, 0 suppressed, 0 replayed.");
   assert(await page.locator("form[data-action='sms-send'] textarea[name='messageBody']").inputValue() === "", "SMS content should clear after render");
 }
 
@@ -1522,7 +1644,7 @@ async function runScheduleWorkspaceSmoke(page) {
   const packet = await readFile(packetPath, "utf8");
   assert(packet.includes("# Echoes in the Static"), "Project packet should include the selected project title");
   assert(packet.includes("Policy: provider secrets"), "Project packet should include the export policy");
-  assert(packet.includes("## Upcoming Call Sheet"), "Project packet should include call-sheet metadata");
+  assert(packet.includes("## Call Sheet"), "Project packet should include generated call-sheet metadata");
   assert(packet.includes("## Planning Rows"), "Project packet should include the planning section");
   await expectBodyText(page, "Project packet exported for Echoes in the Static.");
   await expectNoDocumentOverflow(page, "desktop schedule workspace");
@@ -2318,7 +2440,7 @@ async function runDesktopSmoke(url, browser) {
     await page.goto(url, { waitUntil: "networkidle" });
     await expectBodyText(page, "Film");
     await expectBodyText(page, "Integrations");
-    await expectBodyText(page, "7 dry-run");
+    await expectBodyText(page, "Not checked");
     await expectNoDocumentOverflow(page, "desktop initial");
     await expectNoSeriousA11yViolations(page, "desktop initial");
     const initialInspectorMetrics = await page.evaluate(() => ({
@@ -2682,6 +2804,13 @@ async function runDesktopSmoke(url, browser) {
     await runAuthSmoke(page, { signOut: false });
     await runRestoreApplicationPreflightA11ySmoke(page);
     record("desktop restore gate through application preflight rendered mocked Worker states and passed axe checks");
+    await auditWorkspaceAppearance(page, {
+      outputDir: resolve(failureDir, "ux-audit"),
+      checkAccessibility: expectNoSeriousA11yViolations,
+      checkOverflow: expectNoDocumentOverflow,
+      prefix: "populated-",
+    });
+    record("populated production graph and signed-in inspector passed both-theme desktop, tablet, and mobile audits");
   } catch (error) {
     await mkdir(failureDir, { recursive: true });
     await page
@@ -2789,7 +2918,7 @@ async function runMobileSmoke(url, browser) {
     await page.locator("[data-action='filter']").fill("");
 
     await clickWorkspaceSection(page, "backups");
-    await expectBodyText(page, "Restore Points");
+    await page.getByRole("heading", { name: "Recorded restore points", exact: true }).waitFor();
     await expectNoDocumentOverflow(page, "mobile backups workspace");
     await expectNoSeriousA11yViolations(page, "mobile backups workspace");
     record("mobile backups workspace rendered without document overflow");
@@ -2911,12 +3040,74 @@ let webServer = null;
 let browser = null;
 
 try {
-  webServer = await startWebServer();
+  const offlineOnly = process.argv.includes("--offline-only");
+  webServer = releaseOrigin ? { url: releaseOrigin, getLogs: () => "Public-release browser check" }
+    : await startWebServer({ preview: offlineOnly || process.argv.includes("--built") });
   browser = await chromium.launch({ headless: true });
-  await runSensitiveLinkSmoke(webServer.url, browser);
-  await runMultiTabOperationMirrorSmoke(webServer.url, browser);
-  await runDesktopSmoke(webServer.url, browser);
-  await runMobileSmoke(webServer.url, browser);
+  const providerOptions = {
+    prepare: async page => { await mockAuthRoutes(page); await mockProviderRoutes(page); },
+    authenticate: page => runAuthSmoke(page, { signOut: false }), record,
+    checkAccessibility: expectNoSeriousA11yViolations, checkOverflow: expectNoDocumentOverflow,
+    outputDir: resolve(failureDir, "ux-audit"),
+  };
+  const runStatusSmoke = () => runProviderRuntimeStatusSmoke(webServer.url, browser, providerOptions);
+  const runGoogleSmoke = () => runGoogleRecoverySmoke(webServer.url, browser, providerOptions);
+  if (releaseOrigin) {
+    // These suites isolate browser storage and block or mock every API route; no live auth or provider writes.
+    await runDemoPortfolioSmoke(webServer.url, browser, {
+      outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
+      checkOverflow: expectNoDocumentOverflow, record,
+    });
+    await runStatusSmoke();
+    await runGoogleSmoke();
+    await runDeferredViewSmoke(webServer.url, browser, {
+      outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
+      checkOverflow: expectNoDocumentOverflow, record,
+    });
+    record("public assets exercised with isolated local data and mocked or blocked API routes; no production account or delivery acceptance implied");
+  } else if (offlineOnly) {
+    await runOfflineShellSmoke(webServer.url, browser, record);
+  } else if (process.argv.includes("--provider-status-only")) {
+    await runStatusSmoke();
+  } else if (process.argv.includes("--google-only")) {
+    await runGoogleSmoke();
+  } else if (process.argv.includes("--meta-only")) {
+    await runMetaFacebookOnlySmoke(webServer.url, browser);
+  } else if (process.argv.includes("--backup-loading-only") || process.argv.includes("--deferred-views-only")) {
+    await runDeferredViewSmoke(webServer.url, browser, {
+      only: process.argv.includes("--backup-loading-only") ? "backups" : undefined,
+      outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
+      checkOverflow: expectNoDocumentOverflow, record,
+    });
+    if (process.argv.includes("--deferred-views-only")) await runProviderSessionBoundarySmoke(webServer.url, browser);
+  } else {
+    if (!process.argv.includes("--appearance-only")) await runDemoPortfolioSmoke(webServer.url, browser, {
+      outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
+      checkOverflow: expectNoDocumentOverflow, record,
+    });
+    if (!process.argv.includes("--demo-only")) {
+      await runAppearanceSmoke(webServer.url, browser, {
+        outputDir: resolve(failureDir, "ux-audit"),
+        checkAccessibility: expectNoSeriousA11yViolations,
+        checkOverflow: expectNoDocumentOverflow,
+        record,
+      });
+      if (!process.argv.includes("--appearance-only")) {
+        await runStatusSmoke();
+        await runGoogleSmoke();
+        await runDeferredViewSmoke(webServer.url, browser, {
+          outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
+          checkOverflow: expectNoDocumentOverflow, record,
+        });
+        await runProviderSessionBoundarySmoke(webServer.url, browser);
+        await runMetaFacebookOnlySmoke(webServer.url, browser);
+        await runSensitiveLinkSmoke(webServer.url, browser);
+        await runMultiTabOperationMirrorSmoke(webServer.url, browser);
+        await runDesktopSmoke(webServer.url, browser);
+        await runMobileSmoke(webServer.url, browser);
+      }
+    }
+  }
   console.log(`Browser smoke passed: ${checks.join("; ")}`);
 } catch (error) {
   if (webServer) {
@@ -2926,5 +3117,5 @@ try {
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
-  if (webServer) await stopWebServer(webServer.serverProcess);
+  if (webServer?.serverProcess) await stopWebServer(webServer.serverProcess);
 }

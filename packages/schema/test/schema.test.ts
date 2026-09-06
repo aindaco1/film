@@ -155,6 +155,15 @@ describe("schema helpers", () => {
     expect(project.type).toBe("Short Film");
     expect(project.phase).toBe("Development");
     expect(project.docs.map((doc) => doc.name)).toContain("Treatment.md");
+    expect(project.progress).toBe(0);
+    expect(project.totalBudget).toBe(0);
+    expect(project.runtimeMinutes).toBe(0);
+    expect(project.timeline).toEqual([]);
+    expect(project.people).toEqual([]);
+    expect(project.expenses).toEqual([]);
+    const other = createFilmProjectFromTemplate("Another project");
+    const ids = new Set([...project.openTasks, ...project.docs].map((record) => record.id));
+    expect([...other.openTasks, ...other.docs].every((record) => !ids.has(record.id))).toBe(true);
   });
 
   it("creates queued operation records for offline sync", () => {

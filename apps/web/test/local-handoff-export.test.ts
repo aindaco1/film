@@ -43,7 +43,9 @@ describe("local handoff exports", () => {
 
     expect(markdown).toContain("# Signal Noise");
     expect(markdown).toContain("Workspace: Dust Wave");
-    expect(markdown).toContain("## Upcoming Call Sheet");
+    expect(markdown).toContain("## Call Sheet");
+    expect(markdown).toContain("No generated call sheet.");
+    expect(markdown).not.toContain("## Phase Timeline");
     expect(markdown).toContain("- Locations: Radio Station - status=Confirmed; contact=Excluded from source path");
     expect(markdown).toContain("## Date-Driven Tasks");
     expect(markdown).toContain("provider secrets, OAuth tokens, raw attachment bytes, and private Worker state are excluded");
@@ -80,6 +82,10 @@ describe("local handoff exports", () => {
     const budget = createBudgetTopSheetMarkdown(currentWorkspace.name, selected, exportedAt);
     expect(budget).toContain("- Budget risk: 1 over budget / 0 near budget");
     expect(budget).toContain("- Uncategorized - $100 spent of $50 (200%)");
+    const staleTotals = createBudgetTopSheetMarkdown(currentWorkspace.name, { ...selected, spentBudget: 999_999, totalBudget: 0 }, exportedAt);
+    expect(staleTotals).toContain("- Spent: $63,510");
+    expect(staleTotals).toContain("- Total budget: $95,050");
+    expect(staleTotals).not.toContain("$999,999");
   });
 
   it("identifies canonical versus local planning sources without exposing source paths", () => {

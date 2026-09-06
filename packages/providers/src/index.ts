@@ -1,4 +1,6 @@
 import type { IntegrationKey } from "@film/schema";
+import { googleOAuthScopes, GOOGLE_SCOPE_PREFIX, type GoogleOAuthRequestedCapabilities } from "./google";
+export * from "./google";
 
 export type ProviderDryRunStatus = {
   key: IntegrationKey;
@@ -21,11 +23,9 @@ export type ProviderProductionReadPolicy = {
   blockers: string[];
 };
 
-export type GoogleDriveSyncDryRunInput = {
+export type GoogleDriveSyncDryRunInput = GoogleOAuthRequestedCapabilities & {
   workspaceId: string;
   rootFolderId?: string | null;
-  includeDocsExport?: boolean;
-  includeCalendarSync?: boolean;
 };
 
 export type GoogleDrivePlannedAction = {
@@ -61,6 +61,54 @@ export const TELNYX_SMS_DISCLOSURE_VERSION = "crew-sms-v1-2026-07-13";
 export const TELNYX_SMS_CATEGORIES = ["call_sheet", "schedule_change", "safety_location_alert"] as const;
 
 export type TelnyxSmsCategory = typeof TELNYX_SMS_CATEGORIES[number];
+
+export type TelnyxProviderReadiness = {
+  provider: "telnyx";
+  mode: "read_only_provider_preflight";
+  status: "blocked_configuration" | "blocked_provider" | "pending_campaign_review"
+    | "ready_for_number_assignment" | "pending_number_assignment" | "ready_for_owned_number_smoke";
+  providerApiChecked: boolean;
+  profile: {
+    reachable: boolean;
+    enabled: boolean;
+    nameMatches: boolean;
+    webhookMatches: boolean;
+    webhookApiV2: boolean;
+    helpSettingsReachable: boolean;
+    helpResponseConfigured: boolean;
+  };
+  campaign: {
+    reachable: boolean;
+    status: string | null;
+    active: boolean;
+    rejectedOrSuspended: boolean;
+    mno: { approved: number; review: number; rejected: number; other: number; total: number };
+  };
+  number: {
+    reachable: boolean;
+    smsCapable: boolean;
+    profileAssigned: boolean;
+    campaignAssigned: boolean;
+    assignmentStatus: string | null;
+  };
+  blockers: string[];
+  secretValuesExposed: false;
+};
+
+export type TelnyxSmsSendResult = {
+  status: "sent" | "partial" | "replayed" | "blocked";
+  persistence: "d1_sms_delivery_attempts";
+  recipientCount: number;
+  segmentCountPerRecipient: number;
+  totalSegmentCount: number;
+  queuedCount: number;
+  failedCount: number;
+  suppressedCount: number;
+  replayedCount: number;
+  emergencyOverrideApplied: boolean;
+  attempts: Array<{ id: string; status: "queued" | "failed" | "suppressed" | "replayed" }>;
+  secretValuesExposed: false;
+};
 
 export const TELNYX_SMS_CATEGORY_LABELS: Record<TelnyxSmsCategory, string> = {
   call_sheet: "Call sheets",
@@ -162,7 +210,7 @@ const providerStatuses: Record<IntegrationKey, ProviderDryRunStatus> = {
       "instagram_manage_insights",
     ],
     secretsPolicy: "worker_only",
-    nextStep: "Create the Meta app, connect one owned Facebook Page and linked Instagram professional account, and complete the read-only scope review.",
+    nextStep: "Create the Meta app, connect an owned Facebook Page, and complete the read-only scope review. A linked Instagram professional account is optional.",
     complianceNotes: [
       "Publishing remains in the Social application; Film never posts or schedules provider-side content in v1.",
       "Advertising, messaging, moderation, and publishing permissions are excluded from v1.",
@@ -176,8 +224,8 @@ const providerStatuses: Record<IntegrationKey, ProviderDryRunStatus> = {
     capabilities: ["drive_metadata_import"],
     requiredScopes: ["drive.metadata.readonly"],
     secretsPolicy: "worker_only",
-    nextStep: "Create OAuth app, consent copy, and least-privilege scope review.",
-    complianceNotes: ["Drive content and Calendar require separate incremental consent; native Film docs remain canonical."],
+    nextStep: "Complete owner consent in testing, then restricted-scope verification before public Google access.",
+    complianceNotes: ["Drive content and Calendar require separate incremental consent; native Film docs remain canonical.", "Drive metadata is a restricted Google scope. Testing grants expire after seven days; public access requires a separate verification and security-assessment review."],
   },
   resend: {
     key: "resend",
@@ -250,11 +298,7 @@ export function createGoogleDriveSyncDryRunStatus(input: GoogleDriveSyncDryRunIn
     });
   }
 
-  const requiredScopes = [
-    "drive.metadata.readonly",
-    ...(includeDocsExport ? ["drive.readonly", "documents.readonly"] : []),
-    ...(includeCalendarSync ? ["calendar.events.readonly"] : []),
-  ];
+  const requiredScopes = googleOAuthScopes(input).map(scope => scope.slice(GOOGLE_SCOPE_PREFIX.length));
   const blockers = [
     "Configure the Google OAuth client secrets and explicit live-mode gate.",
     "Complete Google consent review and connect this workspace.",
@@ -373,3 +417,15 @@ function cloneStatus(value: ProviderDryRunStatus): ProviderDryRunStatus {
       : undefined,
   };
 }
+export type GoogleProviderConnection = {
+  provider: "google";
+  status: "active" | "disconnected" | "error";
+  scopes: string[];
+  hasRefreshToken: boolean;
+  tokenExpiresAt: string | null;
+  rootFolderId: string | null;
+  connectedAt: string;
+  disconnectedAt: string | null;
+  updatedAt: string;
+  reauthorizationRequired?: boolean;
+};

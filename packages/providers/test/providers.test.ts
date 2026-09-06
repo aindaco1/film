@@ -170,8 +170,7 @@ describe("provider dry-run statuses", () => {
       webhookPolicy: "not_configured",
       secretsPolicy: "worker_only",
     });
-    expect(status.requiredScopes).toContain("drive.metadata.readonly");
-    expect(status.requiredScopes).toContain("documents.readonly");
+    expect(status.requiredScopes).toEqual(["drive.readonly", "calendar.events.readonly"]);
     expect(status.requiredScopes).toContain("calendar.events.readonly");
     expect(status.plannedActions.map((action) => action.id)).toEqual([
       "link_root_folder",

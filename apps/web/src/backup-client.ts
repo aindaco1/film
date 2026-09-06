@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { BackupPlanningExport } from "@film/schema";
 import { copyBytesToArrayBuffer } from "./binary-buffer";
 import { parseWorkerJsonResponse as parseJsonResponse, type Fetcher } from "./worker-client";
@@ -97,7 +98,7 @@ type PlanningExportDryRunResponse = {
 export async function runBackupDryRun(
   workerUrl: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<BackupDryRunResult> {
   const response = await fetcher(`${workerUrl}/api/backups/dry-run`, {
     method: "POST",
@@ -123,7 +124,7 @@ export async function storeBackupObject(
   createdAt: string,
   bytes: Uint8Array,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<BackupObjectStoreResult> {
   const sha256 = await sha256HexBytes(bytes);
   const response = await fetcher(`${workerUrl}/api/backups/r2/upload-object`, {
@@ -158,7 +159,7 @@ export async function exportStoredBackupManifest(
   workspaceId: string,
   csrfToken: string,
   limit = 25,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredBackupExportManifest> {
   return parseJsonResponse<StoredBackupExportManifest>(
     await fetcher(`${workerUrl}/api/backups/r2/export-manifest`, {
@@ -179,7 +180,7 @@ export async function createStoredBackupObjectDownloadPlan(
   workspaceId: string,
   restorePointId: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<BackupObjectDownloadPlanResult> {
   const response = await fetcher(`${workerUrl}/api/backups/r2/object-download-plan`, {
     method: "POST",
@@ -215,7 +216,7 @@ export async function downloadStoredBackupObject(
   backupDownloadPlanId: string,
   backupDownloadToken: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredBackupDownload> {
   const params = new URLSearchParams({
     workspaceId,
@@ -251,7 +252,7 @@ export async function runPlanningExportDryRun(
   workspaceId: string,
   csrfToken: string,
   limitOrFetcher: number | Fetcher = 1000,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<BackupPlanningExport> {
   const limit = typeof limitOrFetcher === "number" ? limitOrFetcher : 1000;
   const request = typeof limitOrFetcher === "function" ? limitOrFetcher : fetcher;

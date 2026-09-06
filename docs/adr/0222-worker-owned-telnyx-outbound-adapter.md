@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Implemented behind a disabled production gate.
+Implemented and enabled in production September 5, 2026 after controlled owned-number delivery and opt-out acceptance. The test recipient remains revoked.
 
 ## Context
 
@@ -18,7 +18,9 @@ The Worker decrypts E.164 values only after every recipient passes policy. A det
 
 Signed outbound Telnyx events atomically update the matching attempt and redacted audit evidence. A daily scheduled job deletes terminal delivery attempts and Telnyx event metadata after the explicitly configured 30–730 day period; pending attempts and consent evidence are not deleted by this job.
 
-Live readiness requires `SMS_MODE=live`, API/profile/sender configuration, encrypted identity keys, signed webhook configuration, approved quiet hours, an explicit retention period, and the retention cron. Production keeps `SMS_MODE=disabled` until account verification, dedicated number, 10DLC campaign, disclosure, policy approval, recipient enrollment, and owned-number send/STOP/delivery smoke are complete.
+The September 2026 activation pass adds a final consent/member/suppression recheck before each dispatch and a route-level signed-webhook prerequisite. Redacted events are stored before shared delivery reconciliation, which also runs after the provider response associates its message ID. Reconciliation updates attempt and audit evidence together, tolerates early/reordered/duplicate callbacks, and preserves STOP suppression. Failed reconciliation returns a retryable webhook error even when the event was already stored. Worker and browser reuse one provider send-result contract, including suppressed-recipient counts.
+
+Live readiness requires `SMS_MODE=live`, API/profile/sender configuration, encrypted identity keys, signed webhook configuration, approved quiet hours, an explicit retention period, and the retention cron. Production kept `SMS_MODE=disabled` through account verification, dedicated number, 10DLC campaign, disclosure, policy approval, and sender provisioning, then enabled it for the approved owned-number send/STOP/delivery smoke. One message was delivered and a new request after STOP was blocked before the provider.
 
 ## Consequences
 

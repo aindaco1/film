@@ -1,8 +1,13 @@
+import { workerFetch } from "./workspace-mode";
 import type { IntegrationKey } from "@film/schema";
 import type {
+  GoogleOAuthRequestedCapabilities,
+  GoogleProviderConnection,
+  GoogleDriveManifest,
   GoogleDriveSyncDryRunStatus,
   ProviderDryRunStatus,
   TelnyxSmsCategory,
+  TelnyxSmsSendResult,
 } from "@film/providers";
 import { postWorkerJsonRequest, type Fetcher } from "./worker-client";
 
@@ -71,38 +76,7 @@ type ProviderRuntimeReadinessResponse = {
   error?: string;
 };
 
-export type TelnyxProviderReadiness = {
-  provider: "telnyx";
-  mode: "read_only_provider_preflight";
-  status:
-    | "blocked_configuration"
-    | "blocked_provider"
-    | "pending_campaign_review"
-    | "ready_for_number_assignment"
-    | "pending_number_assignment"
-    | "ready_for_owned_number_smoke";
-  providerApiChecked: boolean;
-  profile: {
-    reachable: boolean;
-    enabled: boolean;
-    nameMatches: boolean;
-    webhookMatches: boolean;
-    webhookApiV2: boolean;
-  };
-  campaign: {
-    reachable: boolean;
-    status: string | null;
-    active: boolean;
-    rejectedOrSuspended: boolean;
-    mno: { approved: number; review: number; rejected: number; other: number; total: number };
-  };
-  number: {
-    reachable: boolean;
-    smsCapable: boolean;
-    profileAssigned: boolean;
-    campaignAssigned: boolean;
-    assignmentStatus: string | null;
-  };
+export type TelnyxProviderReadiness = import("@film/providers").TelnyxProviderReadiness & {
   configured: {
     apiKey: boolean;
     messagingProfile: boolean;
@@ -117,8 +91,6 @@ export type TelnyxProviderReadiness = {
   };
   activationGates: { webhookLive: boolean; sendLive: boolean };
   readyForOwnedNumberSmoke: boolean;
-  blockers: string[];
-  secretValuesExposed: false;
 };
 
 type TelnyxProviderReadinessResponse = {
@@ -187,19 +159,7 @@ export type SmsSendRequest = {
   emergencyReasonCode: "immediate_safety" | "location_emergency" | null;
 };
 
-export type SmsSendResult = {
-  status: "sent" | "partial" | "replayed" | "blocked";
-  persistence: "d1_sms_delivery_attempts";
-  recipientCount: number;
-  segmentCountPerRecipient: number;
-  totalSegmentCount: number;
-  queuedCount: number;
-  failedCount: number;
-  replayedCount: number;
-  emergencyOverrideApplied: boolean;
-  attempts: Array<{ id: string; status: "queued" | "failed" | "replayed" }>;
-  secretValuesExposed: false;
-};
+export type SmsSendResult = TelnyxSmsSendResult;
 
 type SmsSendResponse = {
   ok?: boolean;
@@ -264,11 +224,9 @@ type StripeSummaryResponse = {
   error?: string;
 };
 
-export type GoogleDriveSyncDryRunRequest = {
+export type GoogleDriveSyncDryRunRequest = GoogleOAuthRequestedCapabilities & {
   workspaceId: string;
   rootFolderId?: string;
-  includeDocsExport?: boolean;
-  includeCalendarSync?: boolean;
 };
 
 export type GoogleOAuthRuntimeReadiness = {
@@ -291,34 +249,12 @@ export type GoogleOAuthRuntimeReadiness = {
   dataBoundary: "drive_metadata_and_explicit_file_content";
 };
 
-export type GoogleProviderConnection = {
-  provider: "google";
-  status: "active" | "disconnected" | "error";
-  scopes: string[];
-  hasRefreshToken: boolean;
-  tokenExpiresAt: string | null;
-  rootFolderId: string | null;
-  connectedAt: string;
-  disconnectedAt: string | null;
-  updatedAt: string;
-};
+export type { GoogleProviderConnection } from "@film/providers";
 
-export type GoogleDriveManifestFile = {
-  id: string;
-  name: string;
-  mimeType: string;
-  modifiedTime: string | null;
-  sizeBytes: number | null;
-  webViewLink: string | null;
-};
+export type { GoogleDriveManifestFile } from "@film/providers";
 
 export type GoogleDriveManifestResult = {
-  manifest: {
-    rootFolderId: string;
-    files: GoogleDriveManifestFile[];
-    nextPageToken: string | null;
-    truncated: boolean;
-  };
+  manifest: GoogleDriveManifest;
   tokenRefreshed: boolean;
   persistence: string;
   connectionPersistence: string;
@@ -487,7 +423,7 @@ export async function runProviderDryRun(
   workerUrl: string,
   key: IntegrationKey,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProviderDryRunStatus & { auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, `/api/providers/${key}/dry-run`, csrfToken);
   const body = (await response.json()) as ProviderDryRunResponse;
@@ -504,7 +440,7 @@ export async function checkProviderRuntimeReadiness(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<ProviderRuntimeReadiness & { persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/runtime-readiness", csrfToken, { workspaceId });
   const body = (await response.json()) as ProviderRuntimeReadinessResponse;
@@ -522,7 +458,7 @@ export async function checkTelnyxProviderStatus(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<TelnyxProviderReadiness & { persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(
     fetcher,
@@ -547,7 +483,7 @@ export async function fetchSmsConsentManifest(
   csrfToken: string,
   workspaceId: string,
   limit = 100,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<SmsConsentManifest> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/consent/manifest", csrfToken, { workspaceId, limit });
   const body = (await response.json()) as SmsConsentManifestResponse;
@@ -568,7 +504,7 @@ export async function commitSmsSelfConsent(
   workerUrl: string,
   csrfToken: string,
   request: SmsSelfConsentRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<SmsConsentMutationResult> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/consent/commit", csrfToken, {
       ...request,
@@ -595,7 +531,7 @@ export async function sendSmsBatch(
   workerUrl: string,
   csrfToken: string,
   request: SmsSendRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<SmsSendResult> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/sms/send", csrfToken, request);
   const body = (await response.json()) as SmsSendResponse;
@@ -609,7 +545,7 @@ export async function checkStripeSummaryReadiness(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StripeSummaryReadiness & { persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/stripe/summary-readiness", csrfToken, { workspaceId });
   const body = (await response.json()) as StripeSummaryReadinessResponse;
@@ -628,7 +564,7 @@ export async function fetchStripeSummary(
   csrfToken: string,
   workspaceId: string,
   projectId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StripeSummaryResult & { persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/stripe/summary", csrfToken, { workspaceId, projectId });
   const body = (await response.json()) as StripeSummaryResponse;
@@ -646,7 +582,7 @@ export async function runGoogleDriveSyncDryRun(
   workerUrl: string,
   csrfToken: string,
   request: GoogleDriveSyncDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<GoogleDriveSyncDryRunStatus & { auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/google/drive-sync-dry-run", csrfToken, request);
   const body = (await response.json()) as GoogleDriveSyncDryRunResponse;
@@ -663,7 +599,7 @@ export async function checkGoogleConnection(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<GoogleConnectionStatus> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/google/connection", csrfToken, { workspaceId });
   const body = (await response.json()) as GoogleConnectionStatusResponse;
@@ -682,8 +618,8 @@ export async function startGoogleOAuth(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  options: { includeDocsExport?: boolean; includeCalendarSync?: boolean } = {},
-  fetcher: Fetcher = fetch,
+  options: GoogleOAuthRequestedCapabilities = {},
+  fetcher: Fetcher = workerFetch,
 ): Promise<{
   authorizationUrl: string;
   scopes: string[];
@@ -709,7 +645,7 @@ export async function disconnectGoogle(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<{
   connection: GoogleProviderConnection;
   providerRevoked: boolean;
@@ -733,7 +669,7 @@ export async function fetchGoogleDriveManifest(
   workerUrl: string,
   csrfToken: string,
   request: { workspaceId: string; rootFolderId?: string; pageToken?: string },
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<GoogleDriveManifestResult> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/google/drive-manifest", csrfToken, request);
   const body = (await response.json()) as GoogleDriveManifestResponse;
@@ -754,7 +690,7 @@ export async function checkMetaConnection(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<MetaConnectionStatus> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/connection", csrfToken, { workspaceId });
   const body = (await response.json()) as MetaConnectionStatusResponse;
@@ -773,7 +709,7 @@ export async function startMetaOAuth(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<{ authorizationUrl: string; scopes: string[]; expiresAt: string; persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/oauth/start", csrfToken, { workspaceId });
   const body = (await response.json()) as MetaOAuthStartResponse;
@@ -793,7 +729,7 @@ export async function fetchMetaPageCandidates(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<{ pages: MetaPageCandidate[]; persistence: string; connectionPersistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/pages", csrfToken, { workspaceId });
   const body = (await response.json()) as MetaPageCandidatesResponse;
@@ -813,7 +749,7 @@ export async function selectMetaPage(
   csrfToken: string,
   workspaceId: string,
   pageId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<{ connection: MetaProviderConnection; persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/select-page", csrfToken, { workspaceId, pageId });
   const body = (await response.json()) as MetaPageSelectionResponse;
@@ -827,7 +763,7 @@ export async function fetchMetaAnalytics(
   workerUrl: string,
   csrfToken: string,
   request: { workspaceId: string; since: string; until: string },
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<MetaAnalyticsResult & { persistence: string; connectionPersistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/analytics", csrfToken, request);
   const body = (await response.json()) as MetaAnalyticsResponse;
@@ -846,7 +782,7 @@ export async function disconnectMeta(
   workerUrl: string,
   csrfToken: string,
   workspaceId: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<{ connection: MetaProviderConnection; providerRevoked: boolean; persistence: string; auditPersistence: string | null }> {
   const response = await providerPost(fetcher, workerUrl, "/api/providers/meta/disconnect", csrfToken, { workspaceId });
   const body = (await response.json()) as MetaDisconnectResponse;

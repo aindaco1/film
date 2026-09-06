@@ -1,3 +1,33 @@
+import { integrationRuntimeStatus, emptyIntegrationResults, captureIntegrationContext, type IntegrationResults } from "./integration-state";
+import { updateIntegrationRuntime } from "./integration-runtime-view";
+import { createIntegrationViewLoader } from "./integration-view-loader";
+import { createProductionDocumentsLoader, isProductionDocumentsSection } from "./production-documents-loader";
+import { createProductionResourcesLoader, isProductionResourcesSection } from "./production-resources-loader";
+import type { ProductionResourcesSection, ProductionResourcesViewState } from "./production-resources-state";
+import { renderCreateDisclosure } from "./create-disclosure";
+import type { ProductionDocumentsSection, ProductionDocumentsViewState } from "./production-documents-state";
+import type {
+  BackupDryRunState,
+  BackupExportState,
+  RestoreGateState,
+  RestoreApprovalState,
+  RestoreCommitAttemptState,
+  RestoreApplicationPreflightState,
+  RestoreApplicationCommitState,
+  RestoreAttachmentPackagePreflightState,
+  RestoreAttachmentPackageVerificationState,
+  RestoreAttachmentObjectPlanState,
+  RestoreAttachmentObjectCommitPreflightState,
+  RestoreAttachmentObjectCommitState,
+  RestorePlanningDryRunState,
+  RestorePlanningCommitState,
+} from "./backup-state";
+import { icon } from "./icons";
+import { createBackupWorkspaceLoader } from "./backup-workspace-loader";
+import { formatBytes, escapeAttribute } from "./presentation-format";
+import { createRestoreSnapshotRecords, formatRestoreRecordSummary, formatRestorePlanningCommitSummary } from "./restore-records";
+import { registerOfflineShell } from "./offline-shell";
+import { DEMO_MODE, workerFetch, workspaceStorageKey } from "./workspace-mode";
 import {
   addProductionShootDay,
   addManualScreenplayElementOccurrence,
@@ -74,7 +104,6 @@ import {
   updateProductionLocation,
   updateProductionShot,
   updateProductionTalent,
-  summarizeProductionReport,
   updateProductionReport,
   updateProductionReportSceneResult,
   updateProductionScheduleAssumptions,
@@ -90,7 +119,6 @@ import {
   type ProductionBudgetScenario,
   type ProductionCastDayStatus,
   type ProductionCallSheet,
-  type ProductionCallSheetManifest,
   type ProductionDailyReport,
   type ProductionLocation,
   type ProductionLocationManifest,
@@ -122,44 +150,8 @@ import {
   type WorkspaceRole,
   type WorkspaceData,
 } from "@film/schema";
-import {
-  createEncryptedBackupZipBundle,
-  decryptEncryptedBackupBundle,
-  decryptEncryptedBackupZipBundle,
-  summarizeRestorePreview,
-  type EncryptedBackupBundle,
-  type RestorePreviewSummary,
-} from "@film/backup";
-import {
-  commitRestoreAttachmentObject,
-  runRestoreApprovalDryRun,
-  runRestoreApplicationCommit,
-  runRestoreApplicationDryRun,
-  runRestoreAttachmentObjectCommitPreflight,
-  runRestoreAttachmentPackageDryRun,
-  runRestoreAttachmentPackageVerificationDryRun,
-  runRestoreAttachmentObjectPlanDryRun,
-  runRestoreCommitDryRun,
-  runRestoreCommitStorageDryRun,
-  runRestorePlanningCommit,
-  runRestorePlanningDryRun,
-  type RestoreApplicationCommitResult,
-  type RestoreApplicationDryRunResult,
-  type RestoreAttachmentPackageDryRunResult,
-  type RestoreAttachmentPackageManifestRequest,
-  type RestoreAttachmentPackageVerificationDryRunResult,
-  type RestoreAttachmentObjectCommitPreflightResult,
-  type RestoreAttachmentObjectCommitResult,
-  type RestoreAttachmentObjectPlanDryRunResult,
-  type RestoreApprovalDryRunResult,
-  type RestoreCommitDryRunResult,
-  type RestoreCommitStorageDryRunResult,
-  type RestorePlanningCommitResult,
-  type RestorePlanningDryRunResult,
-  type RestorePlanningPreviewDetail,
-  type RestorePlanningTableSummary,
-  type RestoreCoreRecordRequest,
-} from "./restore-client";
+import type { EncryptedBackupBundle, RestorePreviewSummary } from "@film/backup";
+import type { RestoreApplicationCommitResult, RestoreApplicationDryRunResult, RestoreAttachmentPackageDryRunResult, RestoreAttachmentPackageManifestRequest, RestoreAttachmentPackageVerificationDryRunResult, RestoreAttachmentObjectCommitPreflightResult, RestoreAttachmentObjectCommitResult, RestoreAttachmentObjectPlanDryRunResult, RestoreApprovalDryRunResult, RestoreCommitDryRunResult, RestoreCommitStorageDryRunResult, RestorePlanningCommitResult, RestorePlanningDryRunResult } from "./restore-client";
 import {
   logoutSession,
   readSessionMetadata,
@@ -170,18 +162,8 @@ import {
 import { readCanonicalWorkspaceSnapshot } from "./workspace-client";
 import { reconcileCanonicalWorkspace } from "./workspace-sync";
 import { saveCanonicalDocumentMarkdown } from "./document-client";
+import type { BackupDryRunRestorePoint } from "./backup-client";
 import {
-  createStoredBackupObjectDownloadPlan,
-  downloadStoredBackupObject,
-  exportStoredBackupManifest,
-  runBackupDryRun,
-  runPlanningExportDryRun,
-  storeBackupObject,
-  type BackupDryRunRestorePoint,
-} from "./backup-client";
-import {
-  applyNotionImport,
-  previewScreenplayFiles,
   type AppliedNotionImportSummary,
   type NotionExportFile,
   type NotionImportPreview,
@@ -189,20 +171,14 @@ import {
   type ScreenplayImportPreview,
 } from "@film/importers";
 import {
-  TELNYX_SMS_CATEGORIES,
-  TELNYX_SMS_CATEGORY_LABELS,
-  TELNYX_SMS_CONSENT_DISCLOSURE,
   TELNYX_SMS_DISCLOSURE_VERSION,
   isTelnyxSmsCategory,
-  type GoogleDriveSyncDryRunStatus,
-  type ProviderDryRunStatus,
 } from "@film/providers";
 import { filterProjectsBySearch } from "./project-search";
 import {
   expenseCategoryLabel,
   escapeHtml,
   formatDocStatus,
-  formatProductionMinutes,
   formatShortDateTime,
   formatTaskStatus,
   formatWorkspaceMemberStatus,
@@ -210,17 +186,13 @@ import {
   productionValueLabel,
   shortHash,
 } from "./presentation-format";
-import { budgetTopSheetForProject } from "./project-summary";
+import { budgetTopSheetForProject, localBackupSummary, productionSummaryForProject, taskSummaryForProject } from "./project-summary";
+import { renderOperationsGrid, renderOverviewBottom, renderProductionOverview } from "./project-overview";
 import { copyBytesToArrayBuffer } from "./binary-buffer";
 import { SCREENPLAY_ELEMENT_LABELS } from "./screenplay-element-format";
 import type { LocalHandoffPlanningRow } from "./local-handoff-export";
 import type { ProductionShotExportRow } from "./production-resource-export";
 import {
-  createNotionManifest,
-  createNotionZipManifest,
-  openNotionZip,
-  readNotionImportFiles,
-  readNotionZipImportFiles,
   type BrowserNotionImportFile,
   type BrowserImportFile,
 } from "./import-preview";
@@ -239,38 +211,7 @@ import {
   type AttachmentUploadIntent,
   type AttachmentStoreResult,
 } from "./attachment-upload";
-import {
-  checkMetaConnection,
-  checkGoogleConnection,
-  checkProviderRuntimeReadiness,
-  checkStripeSummaryReadiness,
-  checkTelnyxProviderStatus,
-  commitSmsSelfConsent,
-  disconnectMeta,
-  disconnectGoogle,
-  fetchMetaAnalytics,
-  fetchMetaPageCandidates,
-  fetchGoogleDriveManifest,
-  fetchSmsConsentManifest,
-  fetchStripeSummary,
-  runGoogleDriveSyncDryRun,
-  runProviderDryRun,
-  sendSmsBatch,
-  selectMetaPage,
-  startMetaOAuth,
-  startGoogleOAuth,
-  type GoogleConnectionStatus,
-  type GoogleDriveManifestResult,
-  type MetaAnalyticsResult,
-  type MetaConnectionStatus,
-  type MetaPageCandidate,
-  type ProviderRuntimeReadiness,
-  type SmsConsentManifest,
-  type SmsConsentCategory,
-  type StripeSummaryResult,
-  type StripeSummaryReadiness,
-  type TelnyxProviderReadiness,
-} from "./provider-client";
+import type { SmsConsentCategory } from "./provider-client";
 import { exportWorkerAuditEventManifest, type WorkerAuditEventManifest } from "./audit-client";
 import {
   acceptWorkspaceInvite,
@@ -468,59 +409,7 @@ type NotionImportSource = {
   manifest: NotionExportFile[];
   readFiles: (allowedPaths: ReadonlySet<string>) => Promise<BrowserNotionImportFile[]>;
 };
-type ProviderPreviewState = ProviderDryRunStatus & {
-  checkedAt: string;
-  auditPersistence: string | null;
-};
-type ProviderRuntimeReadinessState = ProviderRuntimeReadiness & {
-  checkedAt: string;
-  persistence: string;
-  auditPersistence: string | null;
-};
-type GoogleDriveSyncState = GoogleDriveSyncDryRunStatus & {
-  checkedAt: string;
-  auditPersistence: string | null;
-};
-type GoogleConnectionState = GoogleConnectionStatus & {
-  checkedAt: string;
-};
-type GoogleDriveManifestState = GoogleDriveManifestResult & {
-  checkedAt: string;
-};
-type MetaConnectionState = MetaConnectionStatus & {
-  checkedAt: string;
-};
-type MetaPageCandidatesState = {
-  pages: MetaPageCandidate[];
-  persistence: string;
-  connectionPersistence: string;
-  auditPersistence: string | null;
-  checkedAt: string;
-};
-type MetaAnalyticsState = MetaAnalyticsResult & {
-  persistence: string;
-  connectionPersistence: string;
-  auditPersistence: string | null;
-  checkedAt: string;
-};
-type StripeSummaryState = StripeSummaryReadiness & {
-  persistence: string;
-  auditPersistence: string | null;
-  checkedAt: string;
-};
-type StripeSummaryResultState = StripeSummaryResult & {
-  persistence: string;
-  auditPersistence: string | null;
-  checkedAt: string;
-};
-type SmsConsentManifestState = SmsConsentManifest & {
-  checkedAt: string;
-};
-type TelnyxProviderReadinessState = TelnyxProviderReadiness & {
-  persistence: string;
-  auditPersistence: string | null;
-  checkedAt: string;
-};
+
 type WorkerAuditManifestState = {
   checkedAt: string;
   persistence: string;
@@ -565,242 +454,6 @@ type ScreenplayImportState = ScreenplayImportPreview & {
   breakdownsCreated: number;
   scenesParsed: number;
   elementsSuggested: number;
-};
-type BackupDryRunState = {
-  checkedAt: string;
-  persistence: string;
-  storagePersistence: string | null;
-  retentionPolicy: string;
-  restorePointId: string;
-  restorePointLabel: string;
-  snapshotRef: string;
-  objectKey: string | null;
-  sizeBytes: number | null;
-};
-type BackupExportState = {
-  rowCount: number;
-  truncated: boolean;
-  persistence: string;
-  checkedAt: string;
-};
-type RestoreGateState = {
-  checkedAt: string;
-  commitStatus: string;
-  restoreMode: string;
-  destructiveWrite: boolean;
-  preRestoreBackupRequired: boolean;
-  preRestoreBackupId: string | null;
-  preRestoreBackupVerified: boolean;
-  preRestoreBackupPersistence: string;
-  preRestoreBackupBlocker: string | null;
-  authorizationPolicy: string;
-  auditPersistence: string | null;
-};
-type RestoreApprovalState = {
-  checkedAt: string;
-  approvalId: string | null;
-  approvalStatus: string;
-  approvalPersistence: string;
-  approvalBlockers: string[];
-  commitStatus: string;
-  destructiveWrite: boolean;
-  preRestoreBackupId: string | null;
-  preRestoreBackupVerified: boolean;
-  preRestoreBackupPersistence: string;
-  preRestoreBackupBlocker: string | null;
-  auditPersistence: string | null;
-};
-type RestoreCommitAttemptState = {
-  checkedAt: string;
-  approvalId: string;
-  approvalStatus: string;
-  approvalPersistence: string;
-  commitAttemptId: string | null;
-  commitAttemptStatus: string;
-  commitAttemptPersistence: string;
-  commitStatus: string;
-  restoreMode: string;
-  destructiveWrite: boolean;
-  preRestoreBackupId: string | null;
-  preRestoreBackupVerified: boolean;
-  preRestoreBackupPersistence: string;
-  preRestoreBackupBlocker: string | null;
-  auditPersistence: string | null;
-};
-type RestoreApplicationPreflightState = {
-  checkedAt: string;
-  approvalId: string;
-  approvalStatus: string;
-  approvalPersistence: string;
-  commitAttemptId: string | null;
-  commitAttemptStatus: string;
-  commitAttemptPersistence: string;
-  applicationPreflightId: string | null;
-  applicationPreflightStatus: string;
-  applicationPreflightPersistence: string;
-  commitStatus: string;
-  restoreMode: string;
-  destructiveWrite: boolean;
-  preRestoreBackupId: string | null;
-  preRestoreBackupVerified: boolean;
-  preRestoreBackupPersistence: string;
-  preRestoreBackupBlocker: string | null;
-  rollbackGuidance: {
-    blockers?: string[];
-    requiredBeforeApply?: string[];
-    previewCounts?: Record<string, number>;
-    applicationTablePlan?: RestoreApplicationDryRunResult["rollbackGuidance"]["applicationTablePlan"];
-  };
-  auditPersistence: string | null;
-};
-type RestoreApplicationCommitState = {
-  checkedAt: string;
-  applicationCommitId: string;
-  applicationCommitStatus: string;
-  applicationCommitPersistence: string;
-  restoreMode: string;
-  commitStatus: string;
-  destructiveWrite: boolean;
-  recordSummary: Record<string, number>;
-  result: Record<string, unknown>;
-  unsupportedRestoreDomains: string[];
-  auditPersistence: string | null;
-};
-type RestoreAttachmentPackagePreflightState = {
-  checkedAt: string;
-  restoreMode: string;
-  commitPolicy: string;
-  destructiveWrite: boolean;
-  canRestoreBytes: boolean;
-  authorizationPolicy: string;
-  attachmentPackagePreflightId: string | null;
-  attachmentPackagePreflightStatus: string;
-  attachmentPackagePreflightPersistence: string;
-  metadataRecordCount: number;
-  totalSourceBytes: number;
-  blockers: string[];
-  auditPersistence: string | null;
-};
-type RestoreAttachmentPackageVerificationState = {
-  checkedAt: string;
-  restoreMode: string;
-  commitPolicy: string;
-  destructiveWrite: boolean;
-  canRestoreBytes: boolean;
-  authorizationPolicy: string;
-  attachmentPackagePreflightId: string;
-  attachmentPackagePreflightPersistence: string;
-  attachmentPackageVerificationId: string | null;
-  attachmentPackageVerificationStatus: string;
-  attachmentPackageVerificationPersistence: string;
-  packageSha256: string;
-  manifestSha256: string;
-  packageManifest: {
-    workspaceId: string;
-    objectCount: number;
-    totalSourceBytes: number;
-  };
-  blockers: string[];
-  auditPersistence: string | null;
-};
-type RestoreAttachmentObjectPlanState = {
-  checkedAt: string;
-  restoreMode: string;
-  commitPolicy: string;
-  destructiveWrite: boolean;
-  canRestoreBytes: boolean;
-  authorizationPolicy: string;
-  attachmentPackageVerificationId: string;
-  attachmentPackageVerificationPersistence: string;
-  attachmentObjectPlanId: string | null;
-  attachmentObjectPlanStatus: string;
-  attachmentObjectPlanPersistence: string;
-  objectCount: number;
-  totalSourceBytes: number;
-  blockedDestinationCount: number;
-  destinationPolicy: string;
-  overwritePolicy: string;
-  byteSourcePolicy: string;
-  sourceVerificationStatus: string;
-  objects: RestoreAttachmentObjectPlanDryRunResult["result"]["objects"];
-  blockers: string[];
-  auditPersistence: string | null;
-};
-type RestoreAttachmentObjectCommitPreflightState = {
-  checkedAt: string;
-  restoreMode: string;
-  commitPolicy: string;
-  destructiveWrite: boolean;
-  canRestoreBytes: boolean;
-  readyForByteCommit: boolean;
-  authorizationPolicy: string;
-  attachmentPackageVerificationId: string;
-  attachmentPackageVerificationPersistence: string;
-  attachmentObjectPlanId: string;
-  attachmentObjectPlanStatus: string;
-  attachmentObjectPlanPersistence: string;
-  attachmentObjectCommitPreflightId: string | null;
-  attachmentObjectCommitPreflightStatus: string;
-  attachmentObjectCommitPreflightPersistence: string;
-  packageSha256: string;
-  manifestSha256: string;
-  objectCount: number;
-  totalSourceBytes: number;
-  readyDestinationCount: number;
-  blockedDestinationCount: number;
-  destinationPolicy: string;
-  overwritePolicy: string;
-  byteSourcePolicy: string;
-  sourceVerificationStatus: string;
-  objects: RestoreAttachmentObjectCommitPreflightResult["result"]["objects"];
-  blockers: string[];
-  auditPersistence: string | null;
-};
-type RestoreAttachmentObjectCommitState = {
-  checkedAt: string;
-  committedCount: number;
-  idempotentCount: number;
-  failedCount: number;
-  totalBytes: number;
-  commits: RestoreAttachmentObjectCommitResult["commit"][];
-};
-type RestorePlanningDryRunState = {
-  checkedAt: string;
-  ok: boolean;
-  persistence: string;
-  auditPersistence: string | null;
-  restoreMode: string;
-  commitPolicy: string;
-  destructiveWrite: boolean;
-  authorizationPolicy: string;
-  planningPreviewId: string | null;
-  planningPreviewStatus: string;
-  planningPreviewPersistence: string;
-  acceptedCount: number;
-  rejectedCount: number;
-  createPreviewCount: number;
-  idempotentCount: number;
-  updatePreviewCount: number;
-  accepted: RestorePlanningDryRunResult["accepted"];
-  createPreview: string[];
-  idempotent: string[];
-  updatePreview: string[];
-  tableSummary: RestorePlanningTableSummary[];
-  updatePreviewDetails: RestorePlanningPreviewDetail[];
-  rejected: RestorePlanningDryRunResult["rejected"];
-};
-type RestorePlanningCommitState = {
-  checkedAt: string;
-  planningPreviewId: string;
-  planningCommitId: string;
-  planningCommitStatus: string;
-  planningCommitPersistence: string;
-  restoreMode: string;
-  commitStatus: string;
-  destructiveWrite: boolean;
-  result: RestorePlanningCommitResult["result"];
-  unsupportedRestoreDomains: string[];
-  auditPersistence: string | null;
 };
 type AuthState = {
   email: string;
@@ -1248,7 +901,7 @@ type PlanningExportViewState = BackupPlanningExport & {
   checkedAt: string;
 };
 
-const UI_KEY = "film.ui.v1";
+const UI_KEY = workspaceStorageKey("film.ui.v1");
 const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? "http://127.0.0.1:8787";
 const OPTIONAL_WORKER_TIMEOUT_MS = 3_000;
 const WORKSPACE_SECTIONS: WorkspaceSection[] = [
@@ -1345,21 +998,13 @@ const PERMISSION_SCOPES: Array<{ id: PermissionScope; label: string }> = [
   { id: "task", label: "Specific task" },
   { id: "document", label: "Specific document" },
 ];
-const INTEGRATION_DEFINITIONS: Array<{ key: IntegrationKey; label: string }> = [
-  { key: "pool", label: "Pool" },
-  { key: "store", label: "Store" },
-  { key: "stripe", label: "Stripe" },
-  { key: "social", label: "Meta insights" },
-  { key: "google", label: "Google" },
-  { key: "resend", label: "Resend" },
-  { key: "sms", label: "Telnyx SMS" },
-];
+
 const OWNER_TRANSFER_ENTITY_TYPES: OwnerTransferEntityType[] = ["project", "task", "document", "person", "equipment", "expense"];
 const RECORD_COMMENT_ENTITY_TYPES: RecordCommentEntityType[] = ["project", "task", "document"];
 const LOCAL_TASK_STATUSES: Array<FilmProject["openTasks"][number]["status"]> = ["overdue", "pending", "ready"];
 const PROJECT_PHASES: FilmProject["phase"][] = ["Development", "Pre-Production", "Production", "Post-Production"];
 const PROJECT_TYPES = ["Feature Film", "Short Film", "Documentary", "Series", "Commercial", "Music Video"] as const;
-const AUTH_SESSION_STORAGE_KEY = "film.auth-session.v1";
+const AUTH_SESSION_STORAGE_KEY = workspaceStorageKey("film.auth-session.v1");
 const PLANNING_KINDS: Array<NotionPlanningRecord["kind"]> = [
   "location",
   "opportunity",
@@ -1397,7 +1042,6 @@ const SCREENPLAY_ELEMENT_CATEGORIES: ScreenplayElementCategory[] = [
   "equipment",
   "other",
 ];
-const TIMELINE_MONTH_LABELS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
 
 const rootElement = document.querySelector<HTMLDivElement>("#app");
 
@@ -1406,8 +1050,13 @@ if (!rootElement) {
 }
 
 const root = rootElement;
+const backupWorkspaceLoader = createBackupWorkspaceLoader();
+const integrationViewLoader = createIntegrationViewLoader();
+const productionDocumentsLoader = createProductionDocumentsLoader();
+const productionResourcesLoader = createProductionResourcesLoader();
 
-const localMirror = await loadLocalMirror(seedWorkspace);
+const initialWorkspace = DEMO_MODE ? (await import("./demo-portfolio")).createDemoPortfolio() : seedWorkspace;
+const localMirror = await loadLocalMirror(initialWorkspace);
 const state: {
   workspace: WorkspaceData;
   ui: UiState;
@@ -1431,18 +1080,6 @@ const state: {
   notionImport: NotionImportState | null;
   planningRows: LocalPlanningRecord[];
   planningExportView: PlanningExportViewState | null;
-  providerPreview: ProviderPreviewState | null;
-  providerRuntimeReadiness: ProviderRuntimeReadinessState | null;
-  googleConnection: GoogleConnectionState | null;
-  googleDriveManifest: GoogleDriveManifestState | null;
-  googleDriveSync: GoogleDriveSyncState | null;
-  metaConnection: MetaConnectionState | null;
-  metaPageCandidates: MetaPageCandidatesState | null;
-  metaAnalytics: MetaAnalyticsState | null;
-  stripeSummary: StripeSummaryState | null;
-  stripeSummaryResult: StripeSummaryResultState | null;
-  smsConsentManifest: SmsConsentManifestState | null;
-  telnyxProviderReadiness: TelnyxProviderReadinessState | null;
   workerAuditManifest: WorkerAuditManifestState | null;
   workerAuditActionPrefix: string;
   screenplayImport: ScreenplayImportState | null;
@@ -1488,7 +1125,7 @@ const state: {
   recordPermissionManifest: RecordPermissionManifestState | null;
   recordPermissionHistory: RecordPermissionHistoryState | null;
   recordPermissionRevokingId: string | null;
-} = {
+} & IntegrationResults = {
   workspace: normalizeContextualWorkspaceData(localMirror.workspace),
   ui: loadUi(),
   operations: localMirror.operations,
@@ -1511,18 +1148,7 @@ const state: {
   notionImport: null,
   planningRows: collectLocalPlanningRows(localMirror.operations),
   planningExportView: null,
-  providerPreview: null,
-  providerRuntimeReadiness: null,
-  googleConnection: null,
-  googleDriveManifest: null,
-  googleDriveSync: null,
-  metaConnection: null,
-  metaPageCandidates: null,
-  metaAnalytics: null,
-  stripeSummary: null,
-  stripeSummaryResult: null,
-  smsConsentManifest: null,
-  telnyxProviderReadiness: null,
+  ...emptyIntegrationResults(),
   workerAuditManifest: null,
   workerAuditActionPrefix: "",
   screenplayImport: null,
@@ -1754,13 +1380,13 @@ const state: {
 
 render();
 registerServiceWorker();
-void initializeAuthenticatedWorkspace();
+if (!DEMO_MODE) void initializeAuthenticatedWorkspace();
 
 function loadUi(): UiState {
   const saved = localStorage.getItem(UI_KEY);
   const fallback: UiState = {
-    selectedProjectId: seedWorkspace.projects[0]?.id ?? "",
-    selectedDocId: seedWorkspace.projects[0]?.docs[0]?.id ?? null,
+    selectedProjectId: localMirror.workspace.projects[0]?.id ?? "",
+    selectedDocId: localMirror.workspace.projects[0]?.docs[0]?.id ?? null,
     selectedScreenplayId: null,
     selectedScreenplayBaseId: null,
     selectedScreenplaySceneId: null,
@@ -1776,7 +1402,7 @@ function loadUi(): UiState {
     screenplaySceneOrder: "script",
     screenplaySearch: "",
     viewMode: "list",
-    workspaceSection: "slate",
+    workspaceSection: DEMO_MODE ? "projects" : "slate",
     planningKindFilter: "all",
     inspectorTab: "details",
     inspectorView: "overview",
@@ -1946,14 +1572,6 @@ function planningKindCounts(records: Array<{ kind: NotionPlanningRecord["kind"] 
     .filter(([, count]) => count > 0);
 }
 
-function renderCreateDisclosure(label: string, form: string): string {
-  return `
-    <details class="create-disclosure">
-      <summary>${icon("plus")} <span>${escapeHtml(label)}</span> ${icon("chevron")}</summary>
-      <div class="create-disclosure-body">${form}</div>
-    </details>
-  `;
-}
 
 function renderInlineSaveButton(label: string, disabled = false): string {
   return `<button class="icon-button contextual-save-button" type="submit" title="${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}" ${disabled ? "disabled" : ""}>${icon("save")}</button>`;
@@ -2123,12 +1741,13 @@ function render(): void {
   const filteredProjects = filterProjects(state.workspace.projects, state.ui.filter);
 
   root.innerHTML = `
+    <a class="skip-link" href="#main-content">Skip to workspace</a>
     <div class="app-shell">
       ${renderSidebar()}
       <section class="workspace-shell" aria-label="Workspace">
         ${renderTopbar()}
         ${renderMobileWorkspaceNav()}
-        <main class="main-panel">
+        <main class="main-panel" id="main-content" tabindex="-1">
           <section class="content-column">
             ${renderWorkspaceSection(filteredProjects, selectedProject)}
           </section>
@@ -2140,15 +1759,44 @@ function render(): void {
     ${state.ui.toast ? `<div class="toast" role="status">${escapeHtml(state.ui.toast)}</div>` : ""}
   `;
 
-  applyAccessibleControlNames();
+  applyAccessibleControlSemantics();
   bindEvents();
+  const productionResourcesContainer = root.querySelector<HTMLElement>("[data-production-resources]");
+  if (productionResourcesContainer && isProductionResourcesSection(state.ui.workspaceSection)) {
+    productionResourcesLoader.mount(productionResourcesContainer, productionResourcesViewState(state.ui.workspaceSection, selectedProject), bindProductionResourcesEvents);
+  }
+  const productionDocumentsContainer = root.querySelector<HTMLElement>("[data-production-documents]");
+  if (productionDocumentsContainer && isProductionDocumentsSection(state.ui.workspaceSection)) {
+    productionDocumentsLoader.mount(productionDocumentsContainer, productionDocumentsViewState(state.ui.workspaceSection, selectedProject), bindProductionDocumentsEvents);
+  }
+  const backupContainer = root.querySelector<HTMLElement>("[data-backup-workspace]");
+  if (backupContainer) backupWorkspaceLoader.mount(backupContainer, state, bindBackupEvents);
+  const integrationContainer = root.querySelector<HTMLElement>("[data-integration-view]");
+  if (integrationContainer) integrationViewLoader.mount(integrationContainer, {
+    demo: DEMO_MODE,
+    providerPreview: state.providerPreview,
+    providerRuntimeReadiness: state.providerRuntimeReadiness,
+    providerRuntimeCheck: state.providerRuntimeCheck,
+    googleConnection: state.googleConnection,
+    googleDriveManifest: state.googleDriveManifest,
+    googleDriveSync: state.googleDriveSync,
+    metaConnection: state.metaConnection,
+    metaPageCandidates: state.metaPageCandidates,
+    metaAnalytics: state.metaAnalytics,
+    stripeSummary: state.stripeSummary,
+    stripeSummaryResult: state.stripeSummaryResult,
+    smsConsentManifest: state.smsConsentManifest,
+    telnyxProviderReadiness: state.telnyxProviderReadiness,
+    signedIn: Boolean(state.auth.session),
+    canManageSmsConsent: canManageSmsConsent(),
+  }, bindIntegrationEvents);
+  root.querySelector<HTMLDialogElement>(".project-create-dialog")?.showModal();
 }
 
 function renderProjectCreateDialog(): string {
   if (!state.ui.projectCreateOpen) return "";
   return `
-    <div class="dialog-backdrop" data-action="project-create-backdrop">
-      <section class="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-create-title">
+      <dialog class="project-create-dialog" data-action="project-create-backdrop" aria-labelledby="project-create-title">
         <div class="dialog-head">
           <div>
             <h2 id="project-create-title">Create project</h2>
@@ -2171,14 +1819,20 @@ function renderProjectCreateDialog(): string {
             <button type="submit">${icon("plus")} Create project</button>
           </div>
         </form>
-      </section>
-    </div>
+      </dialog>
   `;
 }
 
-function applyAccessibleControlNames(): void {
-  root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea").forEach((control) => {
-    if (control.getAttribute("aria-label")) return;
+function applyAccessibleControlSemantics(scope: ParentNode = root): void {
+  scope.querySelectorAll<HTMLElement>(".production-resource-usage-list").forEach((list) => {
+    list.tabIndex = 0;
+    list.setAttribute("aria-label", list.previousElementSibling?.textContent?.trim() || "Production usage");
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-tab], [data-project-surface], [data-permission-scope], [data-change-request-kind], [data-action='project-select']").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.classList.contains("is-active") || button.classList.contains("is-selected")));
+  });
+  scope.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea").forEach((control) => {
+    if (control.getAttribute("aria-label") || control.getAttribute("aria-labelledby") || control.labels?.length) return;
 
     const placeholder = control.getAttribute("placeholder");
     const name = control.getAttribute("name");
@@ -2226,6 +1880,41 @@ function accessibleControlLabel(name: string | null, type: string): string | nul
   return labels[name] ?? name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
+function productionResourcesViewState(section: ProductionResourcesSection, project: FilmProject): ProductionResourcesViewState {
+  const breakdown = selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id));
+  if (section === "shots") {
+    const shots = filteredProductionShotsForProject(project.id);
+    return { section, project, breakdown, rows: shots.map(shot => ({ shot, manifest: productionShotManifest(shot) })),
+      selectedId: selectedProductionShot(project.id, shots)?.id ?? null, sceneFilter: state.ui.productionShotSceneFilter };
+  }
+  const callSheet = selectedProductionCallSheet(project.id);
+  if (section === "locations") {
+    const location = selectedProductionLocation(project.id);
+    return { section, project, breakdown, callSheet, records: productionLocationsForProject(project.id), location,
+      manifest: location ? productionLocationManifest(location) : null,
+      locationRows: planningPanelRowsForProject(project).filter(row => row.kind === "location").slice(0, 12)
+        .map(row => ({ title: row.title, projectLabel: row.projectLabel, fieldSummary: planningFieldKeySummary(row.fields), sourceLabel: row.sourceLabel })) };
+  }
+  const talent = selectedProductionTalent(project.id);
+  return { section, project, breakdown, callSheet, records: productionTalentForProject(project.id), talent,
+    manifest: talent ? productionTalentManifest(talent) : null };
+}
+
+function productionDocumentsViewState(section: ProductionDocumentsSection, project: FilmProject): ProductionDocumentsViewState {
+  if (section === "reports") {
+    const report = selectedProductionReport(project.id);
+    return { section, project, reports: productionReportsForProject(project.id), report,
+      source: report ? productionReportSource(report) : null, sourceOptions: productionReportSourceOptions(project.id) };
+  }
+  const callSheets = productionCallSheetsForProject(project.id);
+  if (section === "sides") {
+    return { section, project, callSheets, sides: selectedProductionSides(project.id), latestBreakdown: screenplayBreakdownsForProject(project.id)[0] ?? null };
+  }
+  const callSheet = selectedProductionCallSheet(project.id);
+  return { section, project, callSheets, callSheet,
+    source: callSheet ? productionCallSheetSource(callSheet) : null, sourceOptions: productionCallSheetSourceOptions(project.id) };
+}
+
 function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject: FilmProject): string {
   switch (state.ui.workspaceSection) {
     case "projects":
@@ -2235,17 +1924,13 @@ function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject
     case "schedule":
       return renderScheduleWorkspace(selectedProject);
     case "shots":
-      return renderShotsWorkspace(selectedProject);
-    case "call-sheets":
-      return renderCallSheetsWorkspace(selectedProject);
-    case "sides":
-      return renderSidesWorkspace(selectedProject);
-    case "reports":
-      return renderProductionReportsWorkspace(selectedProject);
     case "locations":
-      return renderLocationsWorkspace(selectedProject);
     case "talent":
-      return renderTalentWorkspace(selectedProject);
+      return `<div data-production-resources></div>`;
+    case "call-sheets":
+    case "sides":
+    case "reports":
+      return `<div data-production-documents></div>`;
     case "tasks":
       return renderTasksWorkspace(selectedProject);
     case "docs":
@@ -2259,7 +1944,7 @@ function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject
     case "planning":
       return renderPlanningWorkspace();
     case "backups":
-      return renderBackupsWorkspace();
+      return '<div data-backup-workspace></div>';
     case "slate":
     default:
       return renderSlateWorkspace(selectedProject);
@@ -2269,9 +1954,9 @@ function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject
 function renderSlateWorkspace(selectedProject: FilmProject): string {
   return `
     ${renderSlateHeader(selectedProject)}
-    ${renderTimeline(selectedProject)}
-    ${renderOperationsGrid(selectedProject)}
-    ${renderBottomGrid(selectedProject)}
+    ${renderProductionOverview(selectedProject, state.workspace)}
+    ${renderOperationsGrid(selectedProject, state.ui.selectedDocId)}
+    ${renderOverviewBottom(selectedProject, state.workspace)}
     ${renderPlanningPanel(selectedProject)}
   `;
 }
@@ -3498,74 +3183,6 @@ function productionBudgetScenarioForSchedule(scheduleId: string): ProductionBudg
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
 }
 
-function renderShotsWorkspace(project: FilmProject): string {
-  const breakdown = selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id));
-  const shots = filteredProductionShotsForProject(project.id);
-  const selected = selectedProductionShot(project.id, shots);
-  const manifest = selected ? productionShotManifest(selected) : null;
-  const sceneFilter = state.ui.productionShotSceneFilter;
-  const filterScene = breakdown?.scenes.find((scene) => scene.id === sceneFilter) ?? null;
-  return `
-    <div class="slate-head shots-workspace-head">
-      <div>
-        <h1>Shots</h1>
-        <p>${escapeHtml(project.title)} - ${shots.length} ${filterScene ? `shots for scene ${escapeHtml(filterScene.sceneNumber ?? String(filterScene.ordinal))}` : "shots across all scenes"}</p>
-      </div>
-      <div class="view-controls" aria-label="Shot list controls">
-        ${breakdown ? `
-          <label class="compact-select-label">
-            <span>Scene filter</span>
-            <select data-action="production-shot-scene-filter" aria-label="Shot scene filter">
-              <option value="all" ${sceneFilter ? "" : "selected"}>All scenes</option>
-              ${breakdown.scenes.map((scene) => `<option value="${escapeAttribute(scene.id)}" ${scene.id === sceneFilter ? "selected" : ""}>${escapeHtml(scene.sceneNumber ?? String(scene.ordinal))} - ${escapeHtml(scene.heading)}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
-        <button type="button" data-action="production-shots-markdown-export" ${shots.length ? "" : "disabled"}>${icon("doc")} Export list</button>
-        <button type="button" data-action="production-shots-csv-export" ${shots.length ? "" : "disabled"}>${icon("list")} Export CSV</button>
-      </div>
-    </div>
-    <section class="shots-workspace-grid" aria-label="Shots workspace">
-      <section class="panel production-shot-create-panel" aria-labelledby="production-shot-create-title">
-        <div class="section-head row">
-          <div><h2 id="production-shot-create-title">Add Shot</h2><p>${breakdown ? escapeHtml(breakdown.revision.title) : "No screenplay source"}</p></div>
-        </div>
-        ${breakdown?.scenes.length ? `
-          <form class="production-shot-create-form" data-action="production-shot-create">
-            <label><span>Scene</span><select name="sceneId" required>${breakdown.scenes.map((scene) => `<option value="${escapeAttribute(scene.id)}" ${scene.id === sceneFilter ? "selected" : ""}>${escapeHtml(scene.sceneNumber ?? String(scene.ordinal))} - ${escapeHtml(scene.heading)}</option>`).join("")}</select></label>
-            <label><span>Description</span><input name="description" maxlength="500" placeholder="Shot action or purpose" required /></label>
-            <button class="primary-action" type="submit">${icon("plus")} Add shot</button>
-          </form>
-        ` : `<div class="empty-inline">Import a screenplay before adding scene-linked shots.</div>`}
-      </section>
-      <section class="panel production-shot-roster-panel" aria-labelledby="production-shot-roster-title">
-        <div class="section-head row">
-          <div><h2 id="production-shot-roster-title">Shot List</h2><p>${shots.length} visible shots - ${shots.reduce((total, shot) => total + shot.estimatedMinutes, 0)} estimated setup minutes</p></div>
-        </div>
-        <div class="production-shot-roster" tabindex="0" aria-label="Production shot list">
-          <div class="production-shot-row production-shot-row-head"><span>Order</span><span>Shot</span><span>Description</span><span>Status</span><span>Scene</span><span>Estimate</span></div>
-          ${shots.length ? shots.map((shot) => {
-            const shotManifest = productionShotManifest(shot);
-            return `
-              <button class="production-shot-row ${shot.id === selected?.id ? "is-active" : ""}" type="button" data-action="production-shot-row-select" data-shot-id="${escapeAttribute(shot.id)}">
-                <span>${shot.ordinal}</span>
-                <strong>${escapeHtml(shot.shotNumber || "-")}</strong>
-                <span>${escapeHtml(shot.description)}</span>
-                <span>${escapeHtml(productionValueLabel(shot.status))}</span>
-                <span>${escapeHtml(shotManifest.scene?.sceneNumber ?? String(shotManifest.scene?.ordinal ?? "Missing"))}</span>
-                <span>${shot.estimatedMinutes ? `${shot.estimatedMinutes} min` : "Not set"}</span>
-              </button>
-            `;
-          }).join("") : `<div class="empty-inline">No shots in this scene view.</div>`}
-        </div>
-      </section>
-      ${selected && manifest ? renderProductionShotEditor(project, selected, manifest) : `
-        <section class="panel production-shot-empty-panel"><div class="empty-inline">Add or select a shot to edit its camera and setup decisions.</div></section>
-      `}
-      ${selected && manifest ? renderProductionShotUsage(selected, manifest) : ""}
-    </section>
-  `;
-}
 
 function productionShotsForProject(projectId: string): ProductionShot[] {
   const breakdowns = screenplayBreakdownsForProject(projectId);
@@ -3606,213 +3223,8 @@ function productionShotManifest(shot: ProductionShot): ProductionShotManifest {
   );
 }
 
-function renderProductionShotEditor(project: FilmProject, shot: ProductionShot, manifest: ProductionShotManifest): string {
-  const sourceWarning = manifest.sourceMissing
-    ? "The linked screenplay breakdown or scene is missing. Derived production use may be incomplete."
-    : manifest.sourceChanged
-      ? "The linked screenplay breakdown changed after this shot was created. Review the shot against the current scene."
-      : "";
-  const sceneLabel = manifest.scene
-    ? `Scene ${manifest.scene.sceneNumber ?? manifest.scene.ordinal} - ${manifest.scene.heading}`
-    : "Source scene missing";
-  return `
-    <section class="panel production-shot-editor-panel" aria-labelledby="production-shot-editor-title">
-      <div class="section-head row">
-        <div><h2 id="production-shot-editor-title">Shot Details</h2><p>${escapeHtml(sceneLabel)}</p></div>
-        <div class="production-shot-order-controls" aria-label="Shot order controls">
-          <button class="icon-button" type="button" data-action="production-shot-reorder" data-direction="-1" title="Move shot up" aria-label="Move shot up">${icon("arrow-up")}</button>
-          <button class="icon-button" type="button" data-action="production-shot-reorder" data-direction="1" title="Move shot down" aria-label="Move shot down">${icon("arrow-down")}</button>
-        </div>
-      </div>
-      ${sourceWarning ? `<div class="call-sheet-source-warning" role="status">${escapeHtml(sourceWarning)}</div>` : ""}
-      <form class="production-shot-editor-form" data-action="production-shot-update">
-        <fieldset>
-          <label><span>Shot</span><input name="shotNumber" value="${escapeAttribute(shot.shotNumber)}" maxlength="40" /></label>
-          <label><span>Status</span><select name="status">${renderProductionShotStatusOptions(shot.status)}</select></label>
-          <label><span>Setup minutes</span><input name="estimatedMinutes" type="number" min="0" max="1440" step="1" value="${shot.estimatedMinutes}" /></label>
-          <label class="production-shot-field-wide"><span>Description</span><textarea name="description" maxlength="500" rows="2" required>${escapeHtml(shot.description)}</textarea></label>
-          <label><span>Size</span><input name="shotSize" value="${escapeAttribute(shot.shotSize)}" maxlength="100" placeholder="Wide, close-up, insert" /></label>
-          <label><span>Angle</span><input name="angle" value="${escapeAttribute(shot.angle)}" maxlength="100" placeholder="Eye-level, low, overhead" /></label>
-          <label><span>Movement</span><input name="movement" value="${escapeAttribute(shot.movement)}" maxlength="200" placeholder="Static, handheld, dolly" /></label>
-          <label><span>Lens</span><input name="lens" value="${escapeAttribute(shot.lens)}" maxlength="100" /></label>
-          <label><span>Camera / support</span><input name="cameraSupport" value="${escapeAttribute(shot.cameraSupport)}" maxlength="200" /></label>
-          <label><span>Frame rate</span><input name="frameRate" value="${escapeAttribute(shot.frameRate)}" maxlength="100" /></label>
-          <label><span>Setup group</span><input name="setupGroup" value="${escapeAttribute(shot.setupGroup)}" maxlength="100" /></label>
-          <label class="production-shot-field-wide"><span>Sound</span><textarea name="audioNotes" maxlength="1000" rows="2">${escapeHtml(shot.audioNotes)}</textarea></label>
-          <label class="production-shot-field-wide"><span>Lighting</span><textarea name="lightingNotes" maxlength="1000" rows="2">${escapeHtml(shot.lightingNotes)}</textarea></label>
-          <label class="production-shot-field-wide"><span>Notes</span><textarea name="notes" maxlength="2000" rows="3">${escapeHtml(shot.notes)}</textarea></label>
-          <div class="production-resource-documents production-shot-field-wide"><span>Project documents</span><div>${renderProjectDocumentReferenceCheckboxes(project, shot.documentIds)}</div></div>
-          <button class="primary-action" type="submit">${icon("check")} Save shot</button>
-        </fieldset>
-      </form>
-    </section>
-  `;
-}
 
-function renderProductionShotStatusOptions(selected: ProductionShotStatus): string {
-  return (["planned", "ready", "captured", "omitted"] as ProductionShotStatus[])
-    .map((status) => `<option value="${status}" ${status === selected ? "selected" : ""}>${productionValueLabel(status)}</option>`)
-    .join("");
-}
 
-function renderProductionShotUsage(shot: ProductionShot, manifest: ProductionShotManifest): string {
-  return `
-    <section class="panel production-shot-usage-panel" aria-labelledby="production-shot-usage-title">
-      <div class="section-head row">
-        <div><h2 id="production-shot-usage-title">Production Use</h2><p>Derived from the linked scene, stripboards, and call sheets.</p></div>
-        <div class="production-resource-usage-counts" aria-label="Shot production use counts">
-          <span><strong>${manifest.scene ? 1 : 0}</strong> Scene</span>
-          <span><strong>${manifest.scheduleUses.length}</strong> Schedule days</span>
-          <span><strong>${manifest.callSheetUses.length}</strong> Call sheets</span>
-        </div>
-      </div>
-      <div class="production-shot-usage-grid">
-        <div><h3>Scene</h3><ul class="line-list production-resource-usage-list">${manifest.scene ? `<li><strong>${escapeHtml(manifest.scene.sceneNumber ?? String(manifest.scene.ordinal))}</strong><span>${escapeHtml(manifest.scene.heading)}</span><small>${escapeHtml(manifest.scene.timeOfDay ?? "TBD")}</small></li>` : `<li><span>Source scene missing.</span></li>`}</ul></div>
-        <div><h3>Schedule days</h3><ul class="line-list production-resource-usage-list">${manifest.scheduleUses.length ? manifest.scheduleUses.map((use) => `<li><strong>Day ${use.dayOrdinal}</strong><span>${escapeHtml(use.scheduleTitle)}</span><small>${escapeHtml(productionUnitLabel(use.unit))} - ${escapeHtml(use.date ?? "Undated")} - ${escapeHtml(use.scheduleStatus)}</small></li>`).join("") : `<li><span>No scheduled use.</span></li>`}</ul></div>
-        <div><h3>Call sheets</h3><ul class="line-list production-resource-usage-list">${manifest.callSheetUses.length ? manifest.callSheetUses.map((use) => `<li><strong>Day ${use.dayOrdinal}</strong><span>${escapeHtml(use.title)}</span><small>${escapeHtml(productionUnitLabel(use.unit))} - ${escapeHtml(use.date ?? "Undated")} - ${escapeHtml(use.status)}</small></li>`).join("") : `<li><span>No generated call-sheet use.</span></li>`}</ul></div>
-        <div><h3>Source</h3><ul class="line-list production-resource-usage-list"><li><strong>Scene link</strong><span>Order ${shot.ordinal}</span><small>Local/private breakdown; source text is not copied</small></li></ul></div>
-      </div>
-    </section>
-  `;
-}
-
-function renderCallSheetsWorkspace(project: FilmProject): string {
-  const legacyCallSheet = project.callSheet;
-  const callSheets = productionCallSheetsForProject(project.id);
-  const callSheet = selectedProductionCallSheet(project.id);
-  const source = callSheet ? productionCallSheetSource(callSheet) : null;
-  const manifest = callSheet && source ? buildProductionCallSheetManifest(callSheet, source.breakdown) : null;
-  const sourceChanged = Boolean(callSheet && source && callSheet.sourceScheduleUpdatedAt !== source.schedule.updatedAt);
-  const sourceOptions = productionCallSheetSourceOptions(project.id);
-  const crewRows = project.people.slice(0, 10);
-  const gearRows = project.equipment.slice(0, 8);
-  const docRows = project.docs.slice(0, 8);
-  const locationLabel = callSheet?.primaryLocation || legacyCallSheet.location;
-  const dayNumber = callSheet?.dayOrdinal ?? legacyCallSheet.dayNumber;
-  const totalDays = callSheet?.totalShootDays ?? legacyCallSheet.totalDays;
-
-  return `
-    <div class="slate-head call-sheets-workspace-head">
-      <div>
-        <h1>Call Sheets</h1>
-        <p>${escapeHtml(project.title)} - day ${dayNumber} of ${totalDays} - ${escapeHtml(locationLabel || "Location TBD")}</p>
-      </div>
-      <div class="view-controls" aria-label="Call sheet controls">
-        ${callSheets.length ? `
-          <label class="compact-select-label">
-            <span>Call sheet</span>
-            <select data-action="call-sheet-select" aria-label="Selected call sheet">
-              ${callSheets.map((candidate) => `<option value="${escapeAttribute(candidate.id)}" ${candidate.id === callSheet?.id ? "selected" : ""}>${escapeHtml(candidate.title)} - ${escapeHtml(candidate.status)}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
-        ${callSheet ? `<button type="button" data-action="call-sheet-status-toggle">${icon(callSheet.status === "final" ? "unlock" : "check")} ${callSheet.status === "final" ? "Reopen" : "Finalize"}</button>` : ""}
-        <button type="button" data-action="export-call-sheet">${icon("doc")} Export call sheet</button>
-      </div>
-    </div>
-    <section class="call-sheets-workspace-grid" aria-label="Call Sheets workspace">
-      ${renderProductionCallSheetGenerator(sourceOptions)}
-      <section class="panel call-sheet-overview-panel ${callSheet ? "call-sheet-editor-panel" : ""}" aria-labelledby="call-sheet-overview-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="call-sheet-overview-title">Upcoming Call Sheet</h2>
-            <p>${callSheet ? `${escapeHtml(callSheet.status)} local sheet from ${escapeHtml(source?.schedule.title ?? "schedule")}${sourceChanged ? " - source schedule changed" : ""}` : "Legacy read-only project metadata"}</p>
-          </div>
-        </div>
-        ${callSheet && manifest
-          ? renderProductionCallSheetEditor(callSheet, manifest, sourceChanged)
-          : renderLegacyCallSheetOverview(legacyCallSheet)}
-      </section>
-      ${callSheet && manifest ? renderProductionCallSheetScenePanel(callSheet, manifest) : ""}
-      ${callSheet && manifest ? renderProductionCallSheetCastPanel(callSheet, manifest) : ""}
-      <section class="panel call-sheet-list-panel" aria-labelledby="call-sheet-crew-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="call-sheet-crew-title">Crew Snapshot</h2>
-            <p>${crewRows.length} visible people</p>
-          </div>
-        </div>
-        <div class="call-sheet-table" aria-label="Call sheet crew" tabindex="0">
-          <div class="call-sheet-table-row call-sheet-table-head">
-            <span>Initials</span>
-            <span>Name</span>
-            <span>Role</span>
-          </div>
-          ${
-            crewRows.length
-              ? crewRows
-                .map(
-                  (person) => `
-                    <div class="call-sheet-table-row">
-                      <span><span class="file-token ${escapeAttribute(person.initials)}">${escapeHtml(person.initials)}</span></span>
-                      <span>${escapeHtml(person.name)}</span>
-                      <span>${escapeHtml(person.role)}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-              : `<div class="empty-inline">No crew rows for this project.</div>`
-          }
-        </div>
-      </section>
-      <section class="panel call-sheet-list-panel" aria-labelledby="call-sheet-gear-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="call-sheet-gear-title">Gear Pull</h2>
-            <p>${gearRows.length} visible equipment rows</p>
-          </div>
-        </div>
-        <div class="call-sheet-table" aria-label="Call sheet gear" tabindex="0">
-          <div class="call-sheet-table-row call-sheet-table-head">
-            <span>Type</span>
-            <span>Item</span>
-            <span>Status</span>
-          </div>
-          ${
-            gearRows.length
-              ? gearRows
-                .map(
-                  (item) => `
-                    <div class="call-sheet-table-row">
-                      <span><span class="file-token EQ">EQ</span></span>
-                      <span>${escapeHtml(item.name)}</span>
-                      <span>${escapeHtml(item.status)}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-              : `<div class="empty-inline">No equipment rows for this project.</div>`
-          }
-        </div>
-      </section>
-      <section class="panel call-sheet-docs-panel" aria-labelledby="call-sheet-docs-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="call-sheet-docs-title">Attachments To Review</h2>
-            <p>${docRows.length} visible docs</p>
-          </div>
-        </div>
-        <ul class="line-list call-sheet-doc-list">
-          ${
-            docRows.length
-              ? docRows
-                .map(
-                  (doc) => `
-                    <li>
-                      <span class="file-token ${escapeAttribute(doc.type)}">${escapeHtml(doc.type)}</span>
-                      <span>${escapeHtml(doc.name)}</span>
-                      <strong>${escapeHtml(formatDocStatus(doc))}</strong>
-                    </li>
-                  `,
-                )
-                .join("")
-              : `<li><span>No docs attached to this project.</span></li>`
-          }
-        </ul>
-      </section>
-    </section>
-  `;
-}
 
 function productionCallSheetsForProject(projectId: string): ProductionCallSheet[] {
   return state.workspace.productionCallSheets
@@ -3864,262 +3276,6 @@ function productionCallSheetSourceOptions(projectId: string): Array<{
   }));
 }
 
-function renderProductionCallSheetGenerator(sourceOptions: Array<{ value: string; label: string }>): string {
-  return `
-    <section class="panel call-sheet-generator-panel" aria-labelledby="call-sheet-generator-title">
-      <div class="section-head row">
-        <div>
-          <h2 id="call-sheet-generator-title">Generate from schedule</h2>
-          <p>Snapshots one assigned shoot day; crew, gear, and docs remain linked to the project.</p>
-        </div>
-      </div>
-      ${sourceOptions.length ? `
-        <form class="call-sheet-generator-form" data-action="call-sheet-create">
-          <label>
-            <span>Schedule day</span>
-            <select name="sourceRef" required>
-              ${sourceOptions.map((option) => `<option value="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
-            </select>
-          </label>
-          <button type="submit">${icon("plus")} Generate call sheet</button>
-        </form>
-      ` : `<div class="empty-inline">Assign scenes to another schedule day to generate a new call sheet.</div>`}
-    </section>
-  `;
-}
-
-function renderProductionCallSheetEditor(
-  callSheet: ProductionCallSheet,
-  manifest: ProductionCallSheetManifest,
-  sourceChanged: boolean,
-): string {
-  const dateParts = productionCallSheetDateParts(callSheet.date);
-  const disabled = callSheet.status === "final" ? "disabled" : "";
-  return `
-    ${sourceChanged ? `
-      <div class="call-sheet-source-warning call-sheet-source-sync-warning" role="status">
-        <span>The source schedule changed after this sheet was generated. This snapshot still contains ${productionCallSheetStripCount(callSheet)} original strips.</span>
-        ${callSheet.status === "draft" ? `<button type="button" data-action="call-sheet-sync">${icon("sync")} Sync schedule</button>` : ""}
-      </div>
-    ` : ""}
-    <div class="call-sheet-workspace-card">
-      <div class="call-date"><strong>${escapeHtml(dateParts.day)}</strong><span>${escapeHtml(dateParts.month)}</span></div>
-      <div>
-        <p><strong>Call:</strong> ${escapeHtml(callSheet.callTime)}</p>
-        <p><strong>Wrap:</strong> ${escapeHtml(callSheet.estimatedWrapTime)}</p>
-        <p>${escapeHtml(callSheet.primaryLocation || "Location TBD")}</p>
-        <small>${productionUnitLabel(callSheet.unit)} - ${productionCallSheetStripCount(callSheet)} strips - ${manifest.castCalls.length} cast calls - ${manifest.locations.length} locations</small>
-      </div>
-    </div>
-    <form class="call-sheet-editor-form" data-action="call-sheet-update">
-      <fieldset ${disabled}>
-        <label class="call-sheet-field-wide"><span>Title</span><input name="title" value="${escapeAttribute(callSheet.title)}" maxlength="120" required></label>
-        <label><span>Date</span><input name="date" type="date" value="${escapeAttribute(callSheet.date ?? "")}"></label>
-        <label><span>General call</span><input name="callTime" type="time" value="${escapeAttribute(callSheet.callTime)}" required></label>
-        <label><span>Estimated wrap</span><input name="estimatedWrapTime" type="time" value="${escapeAttribute(callSheet.estimatedWrapTime)}" required></label>
-        <label class="call-sheet-field-wide"><span>Primary location</span><input name="primaryLocation" value="${escapeAttribute(callSheet.primaryLocation)}" maxlength="200"></label>
-        <label class="call-sheet-field-wide"><span>Parking / access</span><textarea name="parkingInstructions" maxlength="1000" rows="2">${escapeHtml(callSheet.parkingInstructions)}</textarea></label>
-        <label class="call-sheet-field-wide"><span>Nearest hospital</span><input name="nearestHospital" value="${escapeAttribute(callSheet.nearestHospital)}" maxlength="200"></label>
-        <label class="call-sheet-field-wide"><span>Weather notes</span><textarea name="weatherNotes" maxlength="500" rows="2">${escapeHtml(callSheet.weatherNotes)}</textarea></label>
-        <label class="call-sheet-field-wide"><span>General notes</span><textarea name="generalNotes" maxlength="2000" rows="3">${escapeHtml(callSheet.generalNotes)}</textarea></label>
-        <label class="call-sheet-field-wide"><span>Safety notes</span><textarea name="safetyNotes" maxlength="2000" rows="3">${escapeHtml(callSheet.safetyNotes)}</textarea></label>
-        <button type="submit">${icon("check")} Save details</button>
-      </fieldset>
-    </form>
-    ${callSheet.status === "final" ? `<p class="form-note">Final sheets are read-only. Reopen this sheet to edit it.</p>` : ""}
-  `;
-}
-
-function renderLegacyCallSheetOverview(callSheet: FilmProject["callSheet"]): string {
-  return `
-    <div class="call-sheet-workspace-card">
-      <div class="call-date"><strong>${escapeHtml(callSheet.day)}</strong><span>${escapeHtml(callSheet.month)}</span></div>
-      <div>
-        <p><strong>Call:</strong> ${escapeHtml(callSheet.callTime)}</p>
-        <p><strong>Wrap:</strong> ${escapeHtml(callSheet.wrapTime)}</p>
-        <p>${escapeHtml(callSheet.location)}</p>
-        <small>${callSheet.scenes} scenes - ${escapeHtml(callSheet.pages)} pages - ${callSheet.people} people - ${escapeHtml(callSheet.weather)}</small>
-      </div>
-    </div>
-  `;
-}
-
-function renderProductionCallSheetScenePanel(callSheet: ProductionCallSheet, manifest: ProductionCallSheetManifest): string {
-  return `
-    <section class="panel call-sheet-scenes-panel" aria-labelledby="call-sheet-scenes-title">
-      <div class="section-head row">
-        <div><h2 id="call-sheet-scenes-title">Scenes</h2><p>${productionCallSheetStripCount(callSheet)} scheduled strips from ${manifest.scenes.length} source scenes</p></div>
-      </div>
-      <div class="call-sheet-scene-table" tabindex="0" aria-label="Call sheet scenes">
-        <div class="call-sheet-scene-row call-sheet-table-head"><span>Scene</span><span>Heading</span><span>Location</span><span>Time</span></div>
-        ${manifest.scenes.map((scene) => {
-          const parts = (callSheet.sceneParts ?? []).filter((part) => part.sceneId === scene.id);
-          const sceneLabel = parts.length
-            ? parts.map((part) => `${scene.sceneNumber ?? scene.ordinal}${part.label}`).join(", ")
-            : scene.sceneNumber ?? String(scene.ordinal);
-          const partRange = parts.length ? ` - ${parts.map((part) => `lines ${part.sourceStartLine}-${part.sourceEndLine}`).join(", ")}` : "";
-          return `
-          <div class="call-sheet-scene-row">
-            <span>${escapeHtml(sceneLabel)}</span>
-            <span>${escapeHtml(scene.heading)}${escapeHtml(partRange)}</span>
-            <span>${escapeHtml(scene.location ?? "TBD")}</span>
-            <span>${escapeHtml(scene.timeOfDay ?? "TBD")}</span>
-          </div>
-        `; }).join("")}
-      </div>
-      ${manifest.missingSceneIds.length ? `<p class="form-note">${manifest.missingSceneIds.length} source scenes are no longer available in this screenplay revision.</p>` : ""}
-    </section>
-  `;
-}
-
-function productionCallSheetStripCount(callSheet: ProductionCallSheet): number {
-  const splitSceneIds = new Set((callSheet.sceneParts ?? []).map((part) => part.sceneId));
-  return callSheet.sceneIds.filter((sceneId) => !splitSceneIds.has(sceneId)).length + (callSheet.sceneParts?.length ?? 0);
-}
-
-function renderProductionCallSheetCastPanel(callSheet: ProductionCallSheet, manifest: ProductionCallSheetManifest): string {
-  const disabled = callSheet.status === "final" ? "disabled" : "";
-  return `
-    <section class="panel call-sheet-cast-panel" aria-labelledby="call-sheet-cast-title">
-      <div class="section-head row">
-        <div><h2 id="call-sheet-cast-title">Cast Calls</h2><p>${manifest.castCalls.length} reviewed cast requirements</p></div>
-      </div>
-      <div class="call-sheet-cast-list" tabindex="0" aria-label="Call sheet cast calls">
-        ${manifest.castCalls.length ? manifest.castCalls.map((castCall) => `
-          <form class="call-sheet-cast-row" data-action="call-sheet-cast-update" data-element-id="${escapeAttribute(castCall.elementId)}">
-            <strong>${escapeHtml(castCall.name)}</strong>
-            <label><span>Performer</span><input name="performerName" value="${escapeAttribute(castCall.performerName ?? "")}" maxlength="200" ${disabled}></label>
-            <span>${castCall.sceneIds.length} scene${castCall.sceneIds.length === 1 ? "" : "s"}</span>
-            <label><span>Call</span><input name="callTime" type="time" value="${escapeAttribute(castCall.callTime)}" ${disabled}></label>
-            <label><span>Notes</span><input name="notes" value="${escapeAttribute(castCall.notes)}" maxlength="500" ${disabled}></label>
-            <button type="submit" title="Save cast call" ${disabled}>${icon("check")}<span class="sr-only">Save ${escapeHtml(castCall.name)} call</span></button>
-          </form>
-        `).join("") : `<div class="empty-inline">No reviewed cast requirements for these scenes.</div>`}
-      </div>
-    </section>
-  `;
-}
-
-function productionCallSheetDateParts(date: string | null): { day: string; month: string } {
-  if (!date) return { day: "--", month: "TBD" };
-  const parsed = new Date(`${date}T00:00:00`);
-  return {
-    day: String(parsed.getDate()).padStart(2, "0"),
-    month: parsed.toLocaleDateString("en-US", { month: "short" }).toUpperCase(),
-  };
-}
-
-function renderSidesWorkspace(project: FilmProject): string {
-  const callSheets = productionCallSheetsForProject(project.id);
-  const sides = selectedProductionSides(project.id);
-  const latestBreakdown = screenplayBreakdownsForProject(project.id)[0] ?? null;
-  const scheduleChanged = Boolean(sides && sides.callSheet.sourceScheduleUpdatedAt !== sides.schedule.updatedAt);
-  const newerRevisionAvailable = Boolean(sides && latestBreakdown
-    && latestBreakdown.id !== sides.breakdown.id
-    && latestBreakdown.revision.importedAt > sides.breakdown.revision.importedAt);
-  return `
-    <div class="slate-head sides-workspace-head">
-      <div>
-        <h1>Sides</h1>
-        <p>${escapeHtml(project.title)} - ${sides ? `${escapeHtml(sides.callSheet.title)} - ${sides.manifest.scenes.length} source scenes` : "no schedule-linked call sheet selected"}</p>
-      </div>
-      <div class="view-controls" aria-label="Sides controls">
-        ${callSheets.length ? `
-          <label class="compact-select-label">
-            <span>Call sheet</span>
-            <select data-action="call-sheet-select" aria-label="Selected sides call sheet">
-              ${callSheets.map((candidate) => `<option value="${escapeAttribute(candidate.id)}" ${candidate.id === sides?.callSheet.id ? "selected" : ""}>${escapeHtml(candidate.title)} - ${escapeHtml(candidate.status)}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
-        <button type="button" data-action="production-sides-markdown-export" ${sides ? "" : "disabled"}>${icon("doc")} Source .md</button>
-        <button type="button" data-action="production-sides-html-export" ${sides ? "" : "disabled"}>${icon("doc")} Print HTML</button>
-      </div>
-    </div>
-    <section class="sides-workspace-grid" aria-label="Sides workspace">
-      ${sides ? `
-        <section class="panel sides-summary-panel" aria-labelledby="sides-summary-title">
-          <div class="section-head row">
-            <div>
-              <h2 id="sides-summary-title">${escapeHtml(sides.callSheet.title)}</h2>
-              <p>${escapeHtml(sides.manifest.screenplayTitle)} - revision imported ${escapeHtml(formatShortDateTime(sides.breakdown.revision.importedAt))}</p>
-            </div>
-            <span class="status-chip ${sides.callSheet.status === "final" ? "confirmed" : "suggested"}">${escapeHtml(sides.callSheet.status)}</span>
-          </div>
-          <div class="sides-summary-grid" aria-label="Sides source summary">
-            <span><strong>${sides.callSheet.dayOrdinal}</strong><small>${escapeHtml(productionUnitLabel(sides.callSheet.unit))}</small></span>
-            <span><strong>${sides.manifest.scenes.length}</strong><small>Scene strips</small></span>
-            <span><strong>${sides.callSheet.castCalls.length}</strong><small>Cast calls</small></span>
-            <span><strong>${sides.manifest.missingSceneIds.length}</strong><small>Missing</small></span>
-          </div>
-          <p class="sides-source-policy">Local source text. Source exports include the screenplay text shown below and exclude provider, contact, attachment-byte, and Worker-private data.</p>
-          ${scheduleChanged ? `<div class="call-sheet-source-warning" role="status">The source schedule changed after this call sheet was generated. Sides remain pinned to its ${productionCallSheetStripCount(sides.callSheet)}-strip snapshot.</div>` : ""}
-          ${newerRevisionAvailable ? `<div class="call-sheet-source-warning" role="status">A newer screenplay revision is available. These sides remain pinned to ${escapeHtml(sides.manifest.screenplayTitle)}.</div>` : ""}
-          ${sides.manifest.missingSceneIds.length ? `<div class="call-sheet-source-warning" role="status">${sides.manifest.missingSceneIds.length} call-sheet scene${sides.manifest.missingSceneIds.length === 1 ? " is" : "s are"} missing from the pinned screenplay source.</div>` : ""}
-        </section>
-        ${sides.manifest.scenes.map((scene) => {
-          const sourceId = scene.schedulePartId ?? scene.id;
-          return `
-          <article class="panel sides-scene" aria-labelledby="sides-scene-${escapeAttribute(sourceId)}">
-            <header class="sides-scene-head">
-              <div>
-                <span class="sides-scene-number">Scene ${escapeHtml(scene.sceneNumber ?? String(scene.ordinal))}${scene.schedulePartLabel ? ` - Part ${escapeHtml(scene.schedulePartLabel)}` : ""}</span>
-                <h2 id="sides-scene-${escapeAttribute(sourceId)}">${escapeHtml(scene.heading)}</h2>
-                <p>${escapeHtml(scene.location ?? "Location TBD")} - ${escapeHtml(scene.timeOfDay ?? "Time TBD")} - source lines ${scene.sourceStartLine}-${scene.sourceEndLine}</p>
-              </div>
-              <div class="sides-cast" aria-label="Scene cast">
-                ${scene.castCalls.length ? scene.castCalls.map((castCall) => `<span>${escapeHtml(castCall.name)}${castCall.performerName ? ` - ${escapeHtml(castCall.performerName)}` : ""}</span>`).join("") : `<span>No reviewed cast</span>`}
-              </div>
-            </header>
-            <pre class="sides-source-text">${escapeHtml(scene.sourceText || "Source text is empty for this scene.")}</pre>
-          </article>
-        `; }).join("")}
-      ` : `
-        <section class="panel sides-empty-panel" aria-labelledby="sides-empty-title">
-          <div class="section-head"><div><h2 id="sides-empty-title">No sides source</h2><p>Generate a call sheet from an assigned schedule day to establish a stable scene snapshot.</p></div></div>
-          <button type="button" data-workspace-section="call-sheets">${icon("call-sheet")} Open Call Sheets</button>
-        </section>
-      `}
-    </section>
-  `;
-}
-
-function renderProductionReportsWorkspace(project: FilmProject): string {
-  const reports = productionReportsForProject(project.id);
-  const report = selectedProductionReport(project.id);
-  const source = report ? productionReportSource(report) : null;
-  const manifest = source ? buildProductionCallSheetManifest(source.callSheet, source.breakdown) : null;
-  const summary = report ? summarizeProductionReport(report) : null;
-  const sourceChanged = Boolean(report && source && report.sourceCallSheetUpdatedAt !== source.callSheet.updatedAt);
-  const sourceOptions = productionReportSourceOptions(project.id);
-  return `
-    <div class="slate-head production-reports-workspace-head">
-      <div>
-        <h1>Production Reports</h1>
-        <p>${escapeHtml(project.title)} - local daily progress, actual timings, and handoff exports</p>
-      </div>
-      <div class="view-controls" aria-label="Production report controls">
-        ${reports.length ? `
-          <label class="compact-select-label"><span>Report</span>
-            <select data-action="production-report-select" aria-label="Selected production report">
-              ${reports.map((candidate) => `<option value="${escapeAttribute(candidate.id)}" ${candidate.id === report?.id ? "selected" : ""}>${escapeHtml(candidate.title)} - ${escapeHtml(candidate.status)}</option>`).join("")}
-            </select>
-          </label>
-        ` : ""}
-        ${report ? `<button type="button" data-action="production-report-status-toggle">${icon(report.status === "final" ? "unlock" : "check")} ${report.status === "final" ? "Reopen" : "Finalize"}</button>` : ""}
-        <button type="button" data-action="production-report-export" ${report && manifest ? "" : "disabled"}>${icon("doc")} Export report</button>
-        <button type="button" data-action="production-report-csv-export" ${report && manifest ? "" : "disabled"}>${icon("list")} Export scene CSV</button>
-      </div>
-    </div>
-    <section class="production-reports-workspace-grid" aria-label="Production Reports workspace">
-      ${renderProductionReportGenerator(sourceOptions)}
-      ${report && manifest && summary
-        ? `${renderProductionReportEditor(report, summary, sourceChanged)}${renderProductionReportScenes(report, manifest)}`
-        : `<section class="panel production-report-empty"><div class="empty-inline">Generate a call sheet first, then create its daily production report here.</div></section>`}
-    </section>
-  `;
-}
-
 function productionReportsForProject(projectId: string): ProductionDailyReport[] {
   return state.workspace.productionReports
     .filter((report) => report.projectId === projectId)
@@ -4148,202 +3304,6 @@ function productionReportSourceOptions(projectId: string): Array<{ value: string
   }]);
 }
 
-function renderProductionReportGenerator(sourceOptions: Array<{ value: string; label: string }>): string {
-  return `
-    <section class="panel production-report-generator-panel" aria-labelledby="production-report-generator-title">
-      <div class="section-head row"><div><h2 id="production-report-generator-title">Create daily report</h2><p>One report per generated call sheet; no expense-ledger duplication.</p></div></div>
-      ${sourceOptions.length ? `
-        <form class="production-report-generator-form" data-action="production-report-create">
-          <label><span>Call sheet</span><select name="callSheetId" required>${sourceOptions.map((option) => `<option value="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label>
-          <button type="submit">${icon("plus")} Create report</button>
-        </form>
-      ` : `<div class="empty-inline">Every generated call sheet already has a report, or no call sheet is available yet.</div>`}
-    </section>
-  `;
-}
-
-function renderProductionReportEditor(
-  report: ProductionDailyReport,
-  summary: ReturnType<typeof summarizeProductionReport>,
-  sourceChanged: boolean,
-): string {
-  const disabled = report.status === "final" ? "disabled" : "";
-  return `
-    <section class="panel production-report-editor-panel" aria-labelledby="production-report-editor-title">
-      <div class="section-head row">
-        <div><h2 id="production-report-editor-title">Daily Production Report</h2><p>${escapeHtml(report.status)} - day ${report.dayOrdinal} - ${escapeHtml(productionUnitLabel(report.unit))}${sourceChanged ? " - source call sheet changed" : ""}</p></div>
-      </div>
-      ${sourceChanged ? `<div class="call-sheet-source-warning" role="status">The source call sheet changed after this report was created. Planned scene results remain attached to the original snapshot.</div>` : ""}
-      <div class="production-report-summary" aria-label="Daily report summary">
-        <span><strong>${summary.completedSceneCount}/${summary.plannedSceneCount}</strong><small>Scenes completed</small></span>
-        <span><strong>${summary.completionPercent}%</strong><small>Completion</small></span>
-        <span><strong>${formatProductionMinutes(summary.grossDayMinutes)}</strong><small>Gross day</small></span>
-        <span><strong>${formatProductionMinutes(summary.workingMinutes)}</strong><small>Working time</small></span>
-        <span><strong>${report.setupCount}</strong><small>Setups</small></span>
-        <span><strong>${report.takeCount}</strong><small>Takes</small></span>
-      </div>
-      <form class="production-report-editor-form" data-action="production-report-update">
-        <fieldset ${disabled}>
-          <label class="production-report-field-wide"><span>Title</span><input name="title" value="${escapeAttribute(report.title)}" maxlength="120" required></label>
-          <label><span>Date</span><input name="date" type="date" value="${escapeAttribute(report.date ?? "")}"></label>
-          <label class="production-report-field-wide"><span>Primary location</span><input name="primaryLocation" value="${escapeAttribute(report.primaryLocation)}" maxlength="200"></label>
-          ${renderProductionReportTimeField("Actual crew call", "actualCrewCallTime", report.actualCrewCallTime)}
-          ${renderProductionReportTimeField("First shot", "firstShotTime", report.firstShotTime)}
-          ${renderProductionReportTimeField("Meal start", "mealStartTime", report.mealStartTime)}
-          ${renderProductionReportTimeField("Meal end", "mealEndTime", report.mealEndTime)}
-          ${renderProductionReportTimeField("Camera wrap", "cameraWrapTime", report.cameraWrapTime)}
-          ${renderProductionReportTimeField("Crew wrap", "crewWrapTime", report.crewWrapTime)}
-          ${renderProductionReportNumberField("Crew", "crewCount", report.crewCount, 1000)}
-          ${renderProductionReportNumberField("Cast", "castCount", report.castCount, 1000)}
-          ${renderProductionReportNumberField("Background", "backgroundCount", report.backgroundCount, 10000)}
-          ${renderProductionReportNumberField("Meals", "mealCount", report.mealCount, 10000)}
-          ${renderProductionReportNumberField("Setups", "setupCount", report.setupCount, 10000)}
-          ${renderProductionReportNumberField("Takes", "takeCount", report.takeCount, 100000)}
-          ${renderProductionReportNumberField("Recorded minutes", "footageMinutes", report.footageMinutes, 1000000)}
-          <label class="production-report-field-wide"><span>Actual weather</span><textarea name="weatherActual" maxlength="500" rows="2">${escapeHtml(report.weatherActual)}</textarea></label>
-          <label class="production-report-field-wide"><span>Delay notes</span><textarea name="delayNotes" maxlength="2000" rows="3">${escapeHtml(report.delayNotes)}</textarea></label>
-          <label class="production-report-field-wide"><span>Production notes</span><textarea name="productionNotes" maxlength="4000" rows="4">${escapeHtml(report.productionNotes)}</textarea></label>
-          <label class="production-report-field-wide"><span>Safety / incident notes</span><textarea name="safetyIncidentNotes" maxlength="4000" rows="4">${escapeHtml(report.safetyIncidentNotes)}</textarea></label>
-          <label class="production-report-field-wide"><span>Tomorrow / pickup notes</span><textarea name="tomorrowNotes" maxlength="2000" rows="3">${escapeHtml(report.tomorrowNotes)}</textarea></label>
-          <button type="submit">${icon("check")} Save report details</button>
-        </fieldset>
-      </form>
-      ${report.status === "final" ? `<p class="form-note">Final reports are read-only. Reopen this report to edit it.</p>` : ""}
-    </section>
-  `;
-}
-
-function renderProductionReportTimeField(label: string, name: string, value: string | null): string {
-  return `<label><span>${escapeHtml(label)}</span><input name="${escapeAttribute(name)}" type="time" value="${escapeAttribute(value ?? "")}"></label>`;
-}
-
-function renderProductionReportNumberField(label: string, name: string, value: number, maximum: number): string {
-  return `<label><span>${escapeHtml(label)}</span><input name="${escapeAttribute(name)}" type="number" min="0" max="${maximum}" step="1" value="${value}"></label>`;
-}
-
-function renderProductionReportScenes(report: ProductionDailyReport, manifest: ProductionCallSheetManifest): string {
-  const sceneById = new Map(manifest.scenes.map((scene) => [scene.id, scene]));
-  const disabled = report.status === "final" ? "disabled" : "";
-  const statuses: ProductionReportSceneStatus[] = ["planned", "completed", "partial", "held"];
-  return `
-    <section class="panel production-report-scenes-panel" aria-labelledby="production-report-scenes-title">
-      <div class="section-head row"><div><h2 id="production-report-scenes-title">Scene Results</h2><p>Planned, completed, partial, or held</p></div></div>
-      <div class="production-report-scene-list" tabindex="0" aria-label="Daily production scene results">
-        ${report.sceneResults.map((result) => {
-          const scene = sceneById.get(result.sceneId);
-          return `
-            <form class="production-report-scene-row" data-action="production-report-scene-update" data-scene-id="${escapeAttribute(result.sceneId)}">
-              <strong>${escapeHtml(scene?.sceneNumber ?? String(scene?.ordinal ?? "?"))}</strong>
-              <span>${escapeHtml(scene?.heading ?? "Source scene missing")}</span>
-              <label><span>Status</span><select name="status" ${disabled}>${statuses.map((status) => `<option value="${status}" ${status === result.status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
-              <label><span>Notes</span><input name="notes" value="${escapeAttribute(result.notes)}" maxlength="1000" ${disabled}></label>
-              <button type="submit" title="Save scene result" ${disabled}>${icon("check")}<span class="sr-only">Save scene ${escapeHtml(scene?.sceneNumber ?? "result")}</span></button>
-            </form>
-          `;
-        }).join("")}
-      </div>
-    </section>
-  `;
-}
-
-function renderLocationsWorkspace(project: FilmProject): string {
-  const records = productionLocationsForProject(project.id);
-  const location = selectedProductionLocation(project.id);
-  const manifest = location ? productionLocationManifest(location) : null;
-  const candidateBreakdown = selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id));
-  const linkedElementIds = new Set(records.map((record) => record.screenplayElementId).filter(Boolean));
-  const candidateElements = candidateBreakdown?.elements
-    .filter((element) => element.category === "location" && element.reviewState !== "dismissed" && !linkedElementIds.has(element.id))
-    .sort((left, right) => left.name.localeCompare(right.name)) ?? [];
-  const locationRows = planningPanelRowsForProject(project).filter((row) => row.kind === "location").slice(0, 12);
-  const callSheet = selectedProductionCallSheet(project.id);
-  const confirmedCount = records.filter((record) => record.status === "confirmed").length;
-
-  return `
-    <div class="slate-head locations-workspace-head">
-      <div>
-        <h1>Locations</h1>
-        <p>${escapeHtml(project.title)} - ${records.length} scouting records - ${confirmedCount} confirmed</p>
-      </div>
-      <div class="view-controls" aria-label="Location controls">
-        <button type="button" data-action="production-location-export" ${location && manifest ? "" : "disabled"}>${icon("doc")} Export brief</button>
-      </div>
-    </div>
-    <section class="locations-workspace-grid ${location ? "" : "is-empty"}" aria-label="Locations workspace">
-      <section class="panel location-create-panel" aria-labelledby="location-create-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="location-create-title">Scouting Records</h2>
-            <p>${records.length} local/private records</p>
-          </div>
-        </div>
-        <div class="production-record-list" aria-label="Scouting records">
-          ${records.length ? records.map((record) => `
-            <button type="button" class="production-record-row ${record.id === location?.id ? "is-selected" : ""}" data-action="production-location-row-select" data-location-id="${escapeAttribute(record.id)}">
-              <span>${escapeHtml(record.name)}</span>
-              <small>${escapeHtml(productionValueLabel(record.status))} - ${escapeHtml(productionValueLabel(record.permitStatus))}</small>
-            </button>
-          `).join("") : `<div class="empty-inline">No scouting records.</div>`}
-        </div>
-        ${renderCreateDisclosure("Add scouting record", `
-          <form class="production-resource-create-form" data-action="production-location-create">
-            <label>
-              <span>Screenplay location</span>
-              <select name="screenplayElementId">
-                <option value="">Manual candidate</option>
-                ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
-              </select>
-            </label>
-            <label>
-              <span>Manual name</span>
-              <input name="name" maxlength="200" placeholder="Required for manual candidates" />
-            </label>
-            <button class="primary-action" type="submit">${icon("plus")} Add record</button>
-          </form>
-        `)}
-        ${candidateBreakdown ? `<p class="production-resource-source-note">${candidateElements.length} unlinked location elements in ${escapeHtml(candidateBreakdown.revision.title)}.</p>` : `<p class="production-resource-source-note">Import a screenplay to link scenes, or start with a manual scouting candidate.</p>`}
-      </section>
-      ${location && manifest ? renderProductionLocationEditor(project, location, manifest, callSheet) : `
-        <section class="panel location-empty-panel">
-          <div class="empty-inline">Add a scouting record to capture logistics, permits, schedule usage, and location documents.</div>
-        </section>
-      `}
-      ${location && manifest ? renderProductionLocationUsage(location, manifest) : ""}
-      <section class="panel location-planning-panel" aria-labelledby="location-planning-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="location-planning-title">Imported Locations</h2>
-            <p>${locationRows.length} source rows retained for review; scouting records stay local.</p>
-          </div>
-        </div>
-        <div class="location-table" aria-label="Imported location rows" tabindex="0">
-          <div class="location-table-row location-table-head">
-            <span>Location</span>
-            <span>Project</span>
-            <span>Fields</span>
-            <span>Source</span>
-          </div>
-          ${
-            locationRows.length
-              ? locationRows
-                .map(
-                  (row) => `
-                    <div class="location-table-row">
-                      <span>${escapeHtml(row.title)}</span>
-                      <span>${escapeHtml(row.projectLabel)}</span>
-                      <span>${escapeHtml(planningFieldKeySummary(row.fields))}</span>
-                      <span>${escapeHtml(row.sourceLabel)}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-              : `<div class="empty-inline">No imported location rows for this project yet.</div>`
-          }
-        </div>
-      </section>
-    </section>
-  `;
-}
 
 function productionLocationsForProject(projectId: string): ProductionLocation[] {
   return state.workspace.productionLocations
@@ -4368,192 +3328,9 @@ function productionLocationManifest(location: ProductionLocation): ProductionLoc
   );
 }
 
-function renderProductionLocationEditor(
-  project: FilmProject,
-  location: ProductionLocation,
-  manifest: ProductionLocationManifest,
-  callSheet: ProductionCallSheet | null,
-): string {
-  const sourceWarning = manifest.sourceMissing
-    ? "The linked screenplay breakdown is missing. Derived scene and schedule usage may be incomplete."
-    : manifest.sourceChanged
-      ? "The linked screenplay breakdown changed after this record was created. Review derived usage before handoff."
-      : "";
-  const canApply = location.status === "confirmed" && callSheet?.status === "draft";
-  const applyNote = !callSheet
-    ? "Generate a call sheet before applying location logistics."
-    : callSheet.status === "final"
-      ? `${callSheet.title} is final; reopen it before applying logistics.`
-      : location.status !== "confirmed"
-        ? "Confirm this location before applying it to a call sheet."
-        : `Apply this logistics snapshot to ${callSheet.title}.`;
-  return `
-    <section class="panel production-location-editor-panel" aria-labelledby="production-location-editor-title">
-      <div class="section-head row">
-        <div>
-          <h2 id="production-location-editor-title">Scouting Details</h2>
-          <p>${escapeHtml(productionValueLabel(location.status))} - permit ${escapeHtml(productionValueLabel(location.permitStatus))}</p>
-        </div>
-      </div>
-      ${sourceWarning ? `<div class="call-sheet-source-warning" role="status">${escapeHtml(sourceWarning)}</div>` : ""}
-      <form class="production-resource-editor-form" data-action="production-location-update">
-        <fieldset>
-          <label class="production-resource-field-wide"><span>Name</span><input name="name" value="${escapeAttribute(location.name)}" maxlength="200" required /></label>
-          <label><span>Status</span><select name="status">${renderProductionLocationStatusOptions(location.status)}</select></label>
-          <label><span>Permit</span><select name="permitStatus">${renderProductionLocationPermitOptions(location.permitStatus)}</select></label>
-          <label class="production-resource-field-wide"><span>Address</span><input name="address" value="${escapeAttribute(location.address)}" maxlength="500" /></label>
-          <label><span>Contact name</span><input name="contactName" value="${escapeAttribute(location.contactName)}" maxlength="200" /></label>
-          <label><span>Contact details</span><input name="contactDetails" value="${escapeAttribute(location.contactDetails)}" maxlength="500" autocomplete="off" /></label>
-          <label class="production-resource-field-wide"><span>Permit notes</span><textarea name="permitNotes" maxlength="1000" rows="2">${escapeHtml(location.permitNotes)}</textarea></label>
-          <label class="production-resource-field-wide"><span>Parking, access, and load-in</span><textarea name="parkingAccess" maxlength="2000" rows="3">${escapeHtml(location.parkingAccess)}</textarea></label>
-          <label><span>Power</span><textarea name="powerNotes" maxlength="1000" rows="2">${escapeHtml(location.powerNotes)}</textarea></label>
-          <label><span>Sound</span><textarea name="soundNotes" maxlength="1000" rows="2">${escapeHtml(location.soundNotes)}</textarea></label>
-          <label><span>Restrooms</span><textarea name="restroomNotes" maxlength="1000" rows="2">${escapeHtml(location.restroomNotes)}</textarea></label>
-          <label><span>Accessibility</span><textarea name="accessibilityNotes" maxlength="1000" rows="2">${escapeHtml(location.accessibilityNotes)}</textarea></label>
-          <label class="production-resource-field-wide"><span>Nearest hospital</span><input name="nearestHospital" value="${escapeAttribute(location.nearestHospital)}" maxlength="500" /></label>
-          <label><span>Manual weather notes</span><textarea name="weatherNotes" maxlength="1000" rows="2">${escapeHtml(location.weatherNotes)}</textarea></label>
-          <label><span>Safety notes</span><textarea name="safetyNotes" maxlength="2000" rows="2">${escapeHtml(location.safetyNotes)}</textarea></label>
-          <label class="production-resource-field-wide"><span>General notes</span><textarea name="generalNotes" maxlength="2000" rows="3">${escapeHtml(location.generalNotes)}</textarea></label>
-          <div class="production-resource-documents production-resource-field-wide">
-            <span>Project documents</span>
-            <div>${renderProjectDocumentReferenceCheckboxes(project, location.documentIds)}</div>
-          </div>
-          <button class="primary-action" type="submit">${icon("check")} Save scouting record</button>
-        </fieldset>
-      </form>
-      <div class="production-resource-call-sheet-action">
-        <div><strong>Call sheet logistics</strong><small>${escapeHtml(applyNote)}</small></div>
-        <button type="button" data-action="production-location-apply-call-sheet" ${canApply ? "" : "disabled"}>${icon("call-sheet")} Apply</button>
-      </div>
-    </section>
-  `;
-}
 
-function renderProductionLocationUsage(location: ProductionLocation, manifest: ProductionLocationManifest): string {
-  return renderProductionResourceUsage({
-    panelId: "production-location-usage",
-    ariaLabel: "Location usage counts",
-    manifest,
-    sourceKind: location.screenplayElementId ? "Screenplay element" : "Manual match",
-    sourceName: location.name,
-    sourceDetail: location.screenplayBreakdownId ? "Local/private breakdown" : "No linked breakdown",
-  });
-}
 
-function renderProductionResourceUsage(options: {
-  panelId: string;
-  ariaLabel: string;
-  manifest: {
-    scenes: ProductionLocationManifest["scenes"];
-    scheduleUses: ProductionLocationManifest["scheduleUses"];
-    availability: ProductionAvailabilityWindow[];
-  };
-  sourceKind: string;
-  sourceName: string;
-  sourceDetail: string;
-}): string {
-  const { manifest } = options;
-  return `
-    <section class="panel production-resource-usage-panel" aria-labelledby="${escapeAttribute(options.panelId)}-title">
-      <div class="section-head row">
-        <div><h2 id="${escapeAttribute(options.panelId)}-title">Production Usage</h2><p>Derived from the linked breakdown, stripboards, and availability windows.</p></div>
-        <div class="production-resource-usage-counts" aria-label="${escapeAttribute(options.ariaLabel)}">
-          <span><strong>${manifest.scenes.length}</strong> Scenes</span>
-          <span><strong>${manifest.scheduleUses.length}</strong> Schedule days</span>
-          <span><strong>${manifest.availability.length}</strong> Windows</span>
-        </div>
-      </div>
-      <div class="production-resource-usage-grid">
-        <div>
-          <h3>Scenes</h3>
-          <ul class="line-list production-resource-usage-list">
-            ${manifest.scenes.length ? manifest.scenes.map((scene) => `<li><strong>${escapeHtml(scene.sceneNumber ?? String(scene.ordinal))}</strong><span>${escapeHtml(scene.heading)}</span><small>${escapeHtml(scene.timeOfDay ?? "TBD")}</small></li>`).join("") : `<li><span>No linked scenes.</span></li>`}
-          </ul>
-        </div>
-        <div>
-          <h3>Schedule days</h3>
-          <ul class="line-list production-resource-usage-list">
-            ${manifest.scheduleUses.length ? manifest.scheduleUses.map((use) => `<li><strong>Day ${use.dayOrdinal}</strong><span>${escapeHtml(use.scheduleTitle)}</span><small>${escapeHtml(productionUnitLabel(use.unit))} - ${escapeHtml(use.date ?? "Undated")} - ${use.sceneIds.length} scenes - ${escapeHtml(use.scheduleStatus)}</small></li>`).join("") : `<li><span>No scheduled use.</span></li>`}
-          </ul>
-        </div>
-        <div>
-          <h3>Availability</h3>
-          <ul class="line-list production-resource-usage-list">
-            ${manifest.availability.length ? manifest.availability.map((window) => `<li><strong>${escapeHtml(productionValueLabel(window.status))}</strong><span>${escapeHtml(window.startDate)} through ${escapeHtml(window.endDate)}</span><small>${escapeHtml(window.notes || "No notes")}</small></li>`).join("") : `<li><span>No linked availability windows. Add them in Schedule.</span></li>`}
-          </ul>
-        </div>
-        <div>
-          <h3>Source</h3>
-          <ul class="line-list production-resource-usage-list">
-            <li><strong>${escapeHtml(options.sourceKind)}</strong><span>${escapeHtml(options.sourceName)}</span><small>${escapeHtml(options.sourceDetail)}</small></li>
-          </ul>
-        </div>
-      </div>
-    </section>
-  `;
-}
 
-function renderTalentWorkspace(project: FilmProject): string {
-  const records = productionTalentForProject(project.id);
-  const talent = selectedProductionTalent(project.id);
-  const manifest = talent ? productionTalentManifest(talent) : null;
-  const breakdown = selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id));
-  const linkedElementIds = new Set(records.map((record) => record.screenplayElementId).filter(Boolean));
-  const candidateElements = breakdown?.elements
-    .filter((element) => element.category === "cast" && element.reviewState !== "dismissed" && !linkedElementIds.has(element.id))
-    .sort((left, right) => left.name.localeCompare(right.name)) ?? [];
-  const callSheet = selectedProductionCallSheet(project.id);
-  const castCount = records.filter((record) => record.status === "cast").length;
-  return `
-    <div class="slate-head talent-workspace-head">
-      <div>
-        <h1>Talent</h1>
-        <p>${escapeHtml(project.title)} - ${records.length} character records - ${castCount} cast</p>
-      </div>
-      <div class="view-controls" aria-label="Talent controls">
-        <button type="button" data-action="production-talent-export" ${talent && manifest ? "" : "disabled"}>${icon("doc")} Export brief</button>
-      </div>
-    </div>
-    <section class="talent-workspace-grid" aria-label="Talent workspace">
-      <section class="panel talent-create-panel" aria-labelledby="talent-create-title">
-        <div class="section-head row"><div><h2 id="talent-create-title">Casting Roster</h2><p>${records.length} local/private records</p></div></div>
-        <div class="production-record-list" aria-label="Talent casting roster">
-          ${records.length ? records.map((record) => `
-            <button type="button" class="production-record-row ${record.id === talent?.id ? "is-selected" : ""}" data-action="production-talent-row-select" data-talent-id="${escapeAttribute(record.id)}">
-              <span>${escapeHtml(record.characterName)}${record.performerName ? ` - ${escapeHtml(record.performerName)}` : ""}</span>
-              <small>${escapeHtml(productionValueLabel(record.status))} - paperwork ${escapeHtml(productionValueLabel(record.paperworkStatus))}</small>
-            </button>
-          `).join("") : `<div class="empty-inline">No talent records.</div>`}
-        </div>
-        ${renderCreateDisclosure("Add character record", `
-          <form class="production-resource-create-form" data-action="production-talent-create">
-            <label>
-              <span>Screenplay character</span>
-              <select name="screenplayElementId">
-                <option value="">Manual character</option>
-                ${candidateElements.map((element) => `<option value="${escapeAttribute(element.id)}">${escapeHtml(element.name)}</option>`).join("")}
-              </select>
-            </label>
-            <label><span>Manual character</span><input name="characterName" maxlength="200" placeholder="Required for manual records" /></label>
-            <button class="primary-action" type="submit">${icon("plus")} Add record</button>
-          </form>
-        `)}
-        ${breakdown ? `<p class="production-resource-source-note">${candidateElements.length} unlinked cast elements in ${escapeHtml(breakdown.revision.title)}.</p>` : `<p class="production-resource-source-note">Import a screenplay to link scenes, or start with a manual character.</p>`}
-      </section>
-      ${talent && manifest ? renderProductionTalentEditor(project, talent, manifest, callSheet) : `
-        <section class="panel talent-empty-panel"><div class="empty-inline">Add a character record to track casting, entered terms, readiness, schedule usage, and documents.</div></section>
-      `}
-      ${talent && manifest ? renderProductionResourceUsage({
-        panelId: "production-talent-usage",
-        ariaLabel: "Talent usage counts",
-        manifest,
-        sourceKind: talent.screenplayElementId ? "Screenplay element" : "Manual match",
-        sourceName: talent.characterName,
-        sourceDetail: talent.screenplayBreakdownId ? "Local/private breakdown" : "No linked breakdown",
-      }) : ""}
-    </section>
-  `;
-}
 
 function productionTalentForProject(projectId: string): ProductionTalent[] {
   return state.workspace.productionTalent
@@ -4578,98 +3355,12 @@ function productionTalentManifest(talent: ProductionTalent): ProductionTalentMan
   );
 }
 
-function renderProductionTalentEditor(
-  project: FilmProject,
-  talent: ProductionTalent,
-  manifest: ProductionTalentManifest,
-  callSheet: ProductionCallSheet | null,
-): string {
-  const sourceWarning = manifest.sourceMissing
-    ? "The linked screenplay breakdown is missing. Derived scene and schedule use may be incomplete."
-    : manifest.sourceChanged
-      ? "The linked screenplay breakdown changed after this record was created. Review derived usage before handoff."
-      : "";
-  const callRequiresCharacter = Boolean(callSheet && talent.screenplayElementId && callSheet.castCalls.some((call) => call.elementId === talent.screenplayElementId));
-  const canApply = talent.status === "cast" && Boolean(talent.performerName) && callSheet?.status === "draft" && callRequiresCharacter;
-  const applyNote = !callSheet
-    ? "Generate a call sheet before applying performer details."
-    : callSheet.status === "final"
-      ? `${callSheet.title} is final; reopen it before applying performer details.`
-      : talent.status !== "cast"
-        ? "Mark this record Cast before applying it to a call sheet."
-        : !talent.performerName
-          ? "Enter a performer name before call-sheet use."
-          : !talent.screenplayElementId
-            ? "Link a screenplay character before call-sheet use."
-            : !callRequiresCharacter
-              ? `${callSheet.title} does not require this character.`
-              : `Apply ${talent.performerName} to ${callSheet.title}.`;
-  return `
-    <section class="panel production-talent-editor-panel" aria-labelledby="production-talent-editor-title">
-      <div class="section-head row"><div><h2 id="production-talent-editor-title">Casting Details</h2><p>${escapeHtml(productionValueLabel(talent.status))} - paperwork ${escapeHtml(productionValueLabel(talent.paperworkStatus))}</p></div></div>
-      ${sourceWarning ? `<div class="call-sheet-source-warning" role="status">${escapeHtml(sourceWarning)}</div>` : ""}
-      <form class="production-resource-editor-form" data-action="production-talent-update">
-        <fieldset>
-          <label><span>Character</span><input name="characterName" value="${escapeAttribute(talent.characterName)}" maxlength="200" required /></label>
-          <label><span>Performer</span><input name="performerName" value="${escapeAttribute(talent.performerName)}" maxlength="200" /></label>
-          <label><span>Status</span><select name="status">${renderProductionTalentStatusOptions(talent.status)}</select></label>
-          <label><span>Paperwork</span><select name="paperworkStatus">${renderProductionTalentPaperworkOptions(talent.paperworkStatus)}</select></label>
-          <label><span>Direct contact</span><input name="contactName" value="${escapeAttribute(talent.contactName)}" maxlength="200" /></label>
-          <label><span>Contact details</span><input name="contactDetails" value="${escapeAttribute(talent.contactDetails)}" maxlength="500" autocomplete="off" /></label>
-          <label><span>Representative</span><input name="representativeName" value="${escapeAttribute(talent.representativeName)}" maxlength="200" /></label>
-          <label><span>Representative details</span><input name="representativeDetails" value="${escapeAttribute(talent.representativeDetails)}" maxlength="500" autocomplete="off" /></label>
-          <label><span>Entered rate basis</span><select name="rateBasis">${renderProductionTalentRateBasisOptions(talent.rateBasis)}</select></label>
-          <label><span>Entered amount</span><input name="agreedRate" type="number" min="0" max="1000000000" step="0.01" value="${(talent.agreedRateCents / 100).toFixed(2)}" /></label>
-          <label class="production-resource-field-wide"><span>Deal notes</span><textarea name="dealNotes" maxlength="2000" rows="3">${escapeHtml(talent.dealNotes)}</textarea></label>
-          <label><span>Travel / lodging</span><textarea name="travelNotes" maxlength="1000" rows="2">${escapeHtml(talent.travelNotes)}</textarea></label>
-          <label><span>Dietary</span><textarea name="dietaryNotes" maxlength="1000" rows="2">${escapeHtml(talent.dietaryNotes)}</textarea></label>
-          <label><span>Accessibility</span><textarea name="accessibilityNotes" maxlength="1000" rows="2">${escapeHtml(talent.accessibilityNotes)}</textarea></label>
-          <label><span>Wardrobe / fitting</span><textarea name="wardrobeNotes" maxlength="1000" rows="2">${escapeHtml(talent.wardrobeNotes)}</textarea></label>
-          <label class="production-resource-field-wide"><span>General notes</span><textarea name="generalNotes" maxlength="2000" rows="3">${escapeHtml(talent.generalNotes)}</textarea></label>
-          <div class="production-resource-documents production-resource-field-wide"><span>Project documents</span><div>${renderProjectDocumentReferenceCheckboxes(project, talent.documentIds)}</div></div>
-          <button class="primary-action" type="submit">${icon("check")} Save talent record</button>
-        </fieldset>
-      </form>
-      <div class="production-resource-call-sheet-action">
-        <div><strong>Call sheet performer</strong><small>${escapeHtml(applyNote)}</small></div>
-        <button type="button" data-action="production-talent-apply-call-sheet" ${canApply ? "" : "disabled"}>${icon("call-sheet")} Apply</button>
-      </div>
-    </section>
-  `;
-}
 
-function renderProductionTalentStatusOptions(selected: ProductionTalentStatus): string {
-  return (["prospect", "contacted", "auditioning", "offered", "cast", "released"] as ProductionTalentStatus[])
-    .map((status) => `<option value="${status}" ${status === selected ? "selected" : ""}>${productionValueLabel(status)}</option>`).join("");
-}
 
-function renderProductionTalentPaperworkOptions(selected: ProductionTalentPaperworkStatus): string {
-  return (["not_started", "requested", "partial", "complete"] as ProductionTalentPaperworkStatus[])
-    .map((status) => `<option value="${status}" ${status === selected ? "selected" : ""}>${productionValueLabel(status)}</option>`).join("");
-}
 
-function renderProductionTalentRateBasisOptions(selected: ProductionTalentRateBasis): string {
-  return (["not_set", "unpaid", "flat", "day", "week", "deferred", "other"] as ProductionTalentRateBasis[])
-    .map((basis) => `<option value="${basis}" ${basis === selected ? "selected" : ""}>${productionValueLabel(basis)}</option>`).join("");
-}
 
-function renderProductionLocationStatusOptions(selected: ProductionLocationStatus): string {
-  return (["scouting", "hold", "confirmed", "released"] as ProductionLocationStatus[])
-    .map((status) => `<option value="${status}" ${status === selected ? "selected" : ""}>${productionValueLabel(status)}</option>`)
-    .join("");
-}
 
-function renderProductionLocationPermitOptions(selected: ProductionLocationPermitStatus): string {
-  return (["unknown", "not_required", "planned", "submitted", "approved"] as ProductionLocationPermitStatus[])
-    .map((status) => `<option value="${status}" ${status === selected ? "selected" : ""}>${productionValueLabel(status)}</option>`)
-    .join("");
-}
 
-function renderProjectDocumentReferenceCheckboxes(project: FilmProject, selectedIds: string[]): string {
-  return project.docs.length ? project.docs.map((doc) => `
-    <label><input type="checkbox" name="documentId" value="${escapeAttribute(doc.id)}" ${selectedIds.includes(doc.id) ? "checked" : ""} /> <span>${escapeHtml(doc.name)}</span></label>
-  `).join("") : `<small>No project documents available.</small>`;
-}
 
 function renderPlanningWorkspace(): string {
   const allRows = planningPanelRowsForWorkspace();
@@ -4754,6 +3445,7 @@ function renderPlanningWorkspace(): string {
 }
 
 function renderTasksWorkspace(project: FilmProject): string {
+  const tasks = taskSummaryForProject(project);
   const statusCounts = {
     overdue: project.openTasks.filter((task) => task.status === "overdue").length,
     pending: project.openTasks.filter((task) => task.status === "pending").length,
@@ -4774,7 +3466,7 @@ function renderTasksWorkspace(project: FilmProject): string {
       <div class="section-head row">
         <div>
           <h2 id="tasks-workspace-title">Open Tasks</h2>
-          <p>${project.tasks.done} of ${project.tasks.total} completed</p>
+          <p>${tasks.done} of ${tasks.total} completed</p>
         </div>
       </div>
       <div class="task-status-strip" aria-label="Task status coverage">
@@ -5000,7 +3692,7 @@ function renderExpensesWorkspace(project: FilmProject): string {
     <div class="slate-head expenses-workspace-head">
       <div>
         <h1>Expenses</h1>
-        <p>${escapeHtml(project.title)} - ${formatCurrency(project.spentBudget)} spent of ${formatCurrency(project.totalBudget)}</p>
+        <p>${escapeHtml(project.title)} - ${formatCurrency(budget.spent)} spent of ${formatCurrency(budget.totalBudget)}</p>
       </div>
       <div class="view-controls" aria-label="Expense controls">
         <button type="button" data-action="export-budget-top-sheet">${icon("doc")} Export budget</button>
@@ -5017,11 +3709,11 @@ function renderExpensesWorkspace(project: FilmProject): string {
         <div class="budget-summary-cards">
           <div>
             <span>Total</span>
-            <strong>${formatCurrency(project.totalBudget)}</strong>
+            <strong>${formatCurrency(budget.totalBudget)}</strong>
           </div>
           <div>
             <span>Spent</span>
-            <strong>${formatCurrency(project.spentBudget)}</strong>
+            <strong>${formatCurrency(budget.spent)}</strong>
           </div>
           <div>
             <span>Remaining</span>
@@ -5097,419 +3789,6 @@ function renderExpensesWorkspace(project: FilmProject): string {
   `;
 }
 
-function renderBackupRestoreWorkflow(): string {
-  return `
-    <section class="panel backup-restore-workflow" aria-labelledby="backup-restore-workflow-title">
-                <div class="section-head row"><div><h2 id="backup-restore-workflow-title">Restore Workflow</h2><p>Preview, verify, and apply one restore in order.</p></div></div>
-                ${
-                  state.backupDryRun
-                    ? `
-                      <div class="provider-preview" role="status">
-                        <strong>Worker restore point</strong>
-                        <span>${escapeHtml(state.backupDryRun.persistence.replaceAll("_", " "))}</span>
-                        ${
-                          state.backupDryRun.storagePersistence
-                            ? `<span>${escapeHtml(state.backupDryRun.storagePersistence.replaceAll("_", " "))}${state.backupDryRun.sizeBytes ? ` - ${formatBytes(state.backupDryRun.sizeBytes)}` : ""}</span>`
-                            : ""
-                        }
-                        <span>${escapeHtml(state.backupDryRun.retentionPolicy.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.backupDryRun.restorePointLabel)}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.backupExport
-                    ? `
-                      <div class="provider-preview" role="status">
-                        <strong>Stored backup manifest</strong>
-                        <span>${state.backupExport.rowCount} stored restore points - ${state.backupExport.truncated ? "truncated" : "complete"}</span>
-                        <small>${escapeHtml(state.backupExport.persistence.replaceAll("_", " "))}</small>
-                      </div>
-                    `
-                    : ""
-                }
-                <div class="backup-workflow-actions">
-                <label class="restore-row">
-                  <span>Restore point</span>
-                  <select data-action="restore-select">
-                    ${state.workspace.restorePoints
-                      .map((point) => `<option value="${point.id}">${escapeHtml(point.label)}</option>`)
-                      .join("")}
-                  </select>
-                  <button type="button" data-action="restore">Restore</button>
-                </label>
-                <button class="secondary-button full-width" type="button" data-action="backup-r2-manifest">${icon("backup")} Stored backups</button>
-                <button class="secondary-button full-width" type="button" data-action="backup-r2-preview">${icon("backup")} Preview stored backup</button>
-                <button class="secondary-button full-width" type="button" data-action="restore-file-preview">${icon("backup")} Preview encrypted backup</button>
-                </div>
-                <div class="restore-stage-actions">
-                ${
-                  state.restorePreview
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-gate-check">${icon("check")} Check restore gate</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreGate
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-approval-record">${icon("check")} Record approval</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreApproval?.approvalId && state.restoreApproval.approvalStatus === "approved_pending_commit"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-commit-storage-check">${icon("check")} Check commit storage</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restoreCommitAttempt?.commitAttemptId && state.restoreCommitAttempt.commitAttemptStatus === "blocked_until_restore_apply"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-preflight-check">${icon("check")} Check application preflight</button>`
-                    : ""
-                }
-                ${
-                  state.restoreSnapshot
-                    && state.restorePreview
-                    && state.restoreApplicationPreflight?.applicationPreflightId
-                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-application-commit">${icon("check")} Apply snapshot records</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview?.applicationPlan.attachmentPackagePlan.packageRequired
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-check">${icon("check")} Check attachment package</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
-                    && state.attachmentExport?.packageDownload?.sha256
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-package-verify">${icon("check")} Verify package manifest</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight?.attachmentPackagePreflightId
-                    && !state.attachmentExport?.packageDownload
-                    ? `<small class="restore-action-note">Download package in Imports before package verification.</small>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackageVerification?.attachmentPackageVerificationId
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-plan">${icon("check")} Plan attachment object restore</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectPlan?.attachmentObjectPlanId
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit-preflight">${icon("check")} Check attachment commit preflight</button>`
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommitPreflight?.readyForByteCommit
-                    && state.restoreAttachmentObjectCommitPreflight.attachmentObjectCommitPreflightId
-                    && state.attachmentExport?.packageDownload?.blob
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-attachment-objects-commit">${icon("backup")} Restore attachment bytes</button>`
-                    : ""
-                }
-                ${
-                  state.restorePreview && state.restorePlanningRecords.length > 0
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-check">${icon("check")} Check planning restore</button>`
-                    : ""
-                }
-                ${
-                  state.restorePlanningRecords.length > 0
-                    && state.restorePlanningDryRun?.planningPreviewId
-                    && state.restorePlanningDryRun.planningPreviewStatus === "preview_only"
-                    && state.restorePlanningDryRun.rejectedCount === 0
-                    && state.restoreApplicationPreflight?.applicationPreflightId
-                    && state.restoreApplicationPreflight.applicationPreflightStatus === "blocked_until_restore_apply_implementation"
-                    ? `<button class="secondary-button full-width" type="button" data-action="restore-planning-commit">${icon("check")} Apply planning rows</button>`
-                    : ""
-                }
-                </div>
-                <div class="restore-workflow-results">
-                ${
-                  state.restorePreview
-                    ? renderRestorePreview(state.restorePreview)
-                    : ""
-                }
-                ${
-                  state.restorePlanningDryRun
-                    ? renderRestorePlanningDryRun(state.restorePlanningDryRun, state.restorePlanningRecords)
-                    : ""
-                }
-                ${
-                  state.restorePlanningCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Planning commit</strong>
-                        <span>${escapeHtml(state.restorePlanningCommit.planningCommitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restorePlanningCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restorePlanningCommit.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${escapeHtml(formatRestorePlanningCommitSummary(state.restorePlanningCommit.result))}</span>
-                        <small>${escapeHtml(state.restorePlanningCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restorePlanningCommit.planningCommitPersistence.replaceAll("_", " "))}${state.restorePlanningCommit.auditPersistence ? ` - ${escapeHtml(state.restorePlanningCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        <small>${escapeHtml(shortHash(state.restorePlanningCommit.planningCommitId))}</small>
-                        ${
-                          state.restorePlanningCommit.unsupportedRestoreDomains.length
-                            ? `<small>Still blocked: ${escapeHtml(state.restorePlanningCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackagePreflight
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Attachment package preflight</strong>
-                        <span>${state.restoreAttachmentPackagePreflight.metadataRecordCount} metadata records - ${formatBytes(state.restoreAttachmentPackagePreflight.totalSourceBytes)}</span>
-                        <span>${state.restoreAttachmentPackagePreflight.canRestoreBytes ? "Byte restore ready" : "Byte restore blocked"} - ${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightStatus.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightPersistence.replaceAll("_", " "))}${state.restoreAttachmentPackagePreflight.auditPersistence ? ` - ${escapeHtml(state.restoreAttachmentPackagePreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId
-                            ? `<small>${escapeHtml(shortHash(state.restoreAttachmentPackagePreflight.attachmentPackagePreflightId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreAttachmentPackagePreflight.blockers.length
-                            ? `<small>${escapeHtml(state.restoreAttachmentPackagePreflight.blockers.slice(0, 2).join(" "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentPackageVerification
-                    ? renderRestoreAttachmentPackageVerification(state.restoreAttachmentPackageVerification)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectPlan
-                    ? renderRestoreAttachmentObjectPlan(state.restoreAttachmentObjectPlan)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommitPreflight
-                    ? renderRestoreAttachmentObjectCommitPreflight(state.restoreAttachmentObjectCommitPreflight)
-                    : ""
-                }
-                ${
-                  state.restoreAttachmentObjectCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Attachment byte restore</strong>
-                        <span>${state.restoreAttachmentObjectCommit.committedCount} stored - ${state.restoreAttachmentObjectCommit.idempotentCount} idempotent - ${state.restoreAttachmentObjectCommit.failedCount} failed</span>
-                        <span>${formatBytes(state.restoreAttachmentObjectCommit.totalBytes)} committed through verified package objects</span>
-                        <small>New R2 objects only - destructive writes audited</small>
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreGate
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Restore gate</strong>
-                        <span>${escapeHtml(state.restoreGate.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreGate.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${state.restoreGate.preRestoreBackupRequired ? "pre-restore backup required" : "pre-restore backup not required"}</span>
-                        <span>Pre-restore backup: ${state.restoreGate.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreGate.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreGate.authorizationPolicy.replaceAll("_", " "))}${state.restoreGate.auditPersistence ? ` - ${escapeHtml(state.restoreGate.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreGate.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreGate.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApproval
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Restore approval</strong>
-                        <span>${escapeHtml(state.restoreApproval.approvalStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApproval.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApproval.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreApproval.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApproval.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreApproval.approvalPersistence.replaceAll("_", " "))}${state.restoreApproval.auditPersistence ? ` - ${escapeHtml(state.restoreApproval.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreApproval.approvalId
-                            ? `<small>${escapeHtml(shortHash(state.restoreApproval.approvalId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApproval.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreApproval.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApproval.approvalBlockers.length
-                            ? `<small>${escapeHtml(state.restoreApproval.approvalBlockers.join(" "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreCommitAttempt
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Commit storage</strong>
-                        <span>${escapeHtml(state.restoreCommitAttempt.commitAttemptStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreCommitAttempt.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreCommitAttempt.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreCommitAttempt.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreCommitAttempt.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreCommitAttempt.commitAttemptPersistence.replaceAll("_", " "))}${state.restoreCommitAttempt.auditPersistence ? ` - ${escapeHtml(state.restoreCommitAttempt.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreCommitAttempt.commitAttemptId
-                            ? `<small>${escapeHtml(shortHash(state.restoreCommitAttempt.commitAttemptId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreCommitAttempt.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreCommitAttempt.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApplicationPreflight
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Application preflight</strong>
-                        <span>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApplicationPreflight.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationPreflight.commitStatus.replaceAll("_", " "))}</span>
-                        <span>Pre-restore backup: ${state.restoreApplicationPreflight.preRestoreBackupVerified ? "verified" : "not verified"} - ${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupPersistence.replaceAll("_", " "))}</span>
-                        <small>${escapeHtml(state.restoreApplicationPreflight.applicationPreflightPersistence.replaceAll("_", " "))}${state.restoreApplicationPreflight.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationPreflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        ${
-                          state.restoreApplicationPreflight.applicationPreflightId
-                            ? `<small>${escapeHtml(shortHash(state.restoreApplicationPreflight.applicationPreflightId))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.blockers?.length
-                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.blockers.join(" "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply?.length
-                            ? `<small>Before apply: ${escapeHtml(state.restoreApplicationPreflight.rollbackGuidance.requiredBeforeApply.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan?.length
-                            ? `<small>Preflight table plan: ${state.restoreApplicationPreflight.rollbackGuidance.applicationTablePlan.length} tables</small>`
-                            : ""
-                        }
-                        ${
-                          state.restoreSnapshot && state.restorePreview
-                            ? renderRestoreSnapshotReviewTable(state.restoreSnapshot, state.restorePreview)
-                            : ""
-                        }
-                        ${
-                          state.restoreApplicationPreflight.preRestoreBackupBlocker
-                            ? `<small>${escapeHtml(state.restoreApplicationPreflight.preRestoreBackupBlocker)}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                ${
-                  state.restoreApplicationCommit
-                    ? `
-                      <div class="restore-preview" role="status">
-                        <strong>Application commit</strong>
-                        <span>${escapeHtml(state.restoreApplicationCommit.applicationCommitStatus.replaceAll("_", " "))}</span>
-                        <span>${state.restoreApplicationCommit.destructiveWrite ? "Destructive writes applied" : "No destructive writes"} - ${escapeHtml(state.restoreApplicationCommit.commitStatus.replaceAll("_", " "))}</span>
-                        <span>${escapeHtml(formatRestoreRecordSummary(state.restoreApplicationCommit.recordSummary))}</span>
-                        <small>${escapeHtml(state.restoreApplicationCommit.restoreMode.replaceAll("_", " "))} - ${escapeHtml(state.restoreApplicationCommit.applicationCommitPersistence.replaceAll("_", " "))}${state.restoreApplicationCommit.auditPersistence ? ` - ${escapeHtml(state.restoreApplicationCommit.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-                        <small>${escapeHtml(shortHash(state.restoreApplicationCommit.applicationCommitId))}</small>
-                        ${
-                          state.restoreApplicationCommit.unsupportedRestoreDomains.length
-                            ? `<small>Still blocked: ${escapeHtml(state.restoreApplicationCommit.unsupportedRestoreDomains.join(", ").replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-                </div>
-              </section>
-  `;
-}
-
-function renderBackupsWorkspace(): string {
-  const restorePoints = state.workspace.restorePoints.slice(0, 8);
-  const latestBackup = restorePoints[0];
-  const backupStatus = state.backupDryRun
-    ? `${state.backupDryRun.persistence.replaceAll("_", " ")} - ${state.backupDryRun.retentionPolicy.replaceAll("_", " ")}`
-    : "No Worker backup check in this session";
-  const manifestStatus = state.backupExport
-    ? `${state.backupExport.rowCount} stored restore points - ${state.backupExport.truncated ? "truncated" : "complete"}`
-    : "Stored backup manifest not loaded";
-  const restoreStatus = state.restorePreview
-    ? `${state.restorePreview.matchingProjectCount} matching projects - ${state.restorePreview.changedRecordCount} changed records`
-    : "No encrypted backup preview loaded";
-
-  return `
-    <div class="slate-head backups-workspace-head">
-      <div>
-        <h1>Backups</h1>
-        <p>${state.workspace.restorePoints.length} restore points - ${escapeHtml(state.workspace.backupPolicy)}</p>
-      </div>
-      <div class="view-controls" aria-label="Backup controls">
-        <button type="button" data-action="backup">${icon("backup")} Backup now</button>
-      </div>
-    </div>
-    <section class="backup-workspace-grid" aria-label="Backup workspace">
-      <section class="panel backup-workspace-panel" aria-labelledby="backup-restore-points-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="backup-restore-points-title">Restore Points</h2>
-            <p>Latest: ${escapeHtml(latestBackup?.label ?? "None")}</p>
-          </div>
-        </div>
-        <div class="backup-table" aria-label="Restore points" tabindex="0">
-          <div class="backup-table-row backup-table-head">
-            <span>Label</span>
-            <span>Created</span>
-            <span>Restore ID</span>
-          </div>
-          ${
-            restorePoints.length
-              ? restorePoints
-                .map(
-                  (point) => `
-                    <div class="backup-table-row">
-                      <span>${escapeHtml(point.label)}</span>
-                      <span>${escapeHtml(formatShortDateTime(point.createdAt))}</span>
-                      <span>${escapeHtml(shortHash(point.id))}</span>
-                    </div>
-                  `,
-                )
-                .join("")
-              : `<div class="empty-inline">No restore points yet.</div>`
-          }
-        </div>
-      </section>
-      <section class="panel backup-workspace-panel" aria-labelledby="backup-safety-title">
-        <div class="section-head row">
-          <div>
-            <h2 id="backup-safety-title">Safety State</h2>
-            <p>${countQueuedOperations(state.operations)} local operations queued</p>
-          </div>
-        </div>
-        <dl class="detail-list compact backup-safety-list">
-          <div><dt>Next backup</dt><dd>${escapeHtml(state.workspace.nextBackup)}</dd></div>
-          <div><dt>Worker backup</dt><dd>${escapeHtml(backupStatus)}</dd></div>
-          <div><dt>Stored manifest</dt><dd>${escapeHtml(manifestStatus)}</dd></div>
-          <div><dt>Restore preview</dt><dd>${escapeHtml(restoreStatus)}</dd></div>
-        </dl>
-      </section>
-    </section>
-    ${renderBackupRestoreWorkflow()}
-  `;
-}
-
 function renderSidebar(): string {
   return `
     <aside class="sidebar">
@@ -5522,7 +3801,7 @@ function renderSidebar(): string {
       </div>
       <div class="workspace-switch" aria-label="Current workspace">
         <span class="avatar">DW</span>
-        <span>Dust Wave</span>
+        <span>${escapeHtml(state.workspace.name)}</span>
       </div>
       <nav class="nav-group" aria-label="Workspace navigation">
         <p class="nav-label">Workspace</p>
@@ -5585,6 +3864,9 @@ function renderWorkspaceNavItem(item: WorkspaceNavItem, active = item.section ==
       class="nav-item ${active ? "is-active" : ""}"
       type="button"
       data-workspace-section="${item.section}"
+      aria-label="${escapeAttribute(item.label)}"
+      title="${escapeAttribute(item.label)}"
+      ${active ? 'aria-current="page"' : ""}
     >
       ${icon(item.glyph)}
       <span>${escapeHtml(item.label)}</span>
@@ -5593,6 +3875,7 @@ function renderWorkspaceNavItem(item: WorkspaceNavItem, active = item.section ==
 }
 
 function renderAuthPanel(): string {
+  if (DEMO_MODE) return `<section class="auth-panel demo-notice" aria-label="Demo portfolio"><strong>Demo portfolio</strong><p>Fictional data. Local only. Connected services are off.</p><a href="/">Return to workspace</a></section>`;
   if (state.auth.status === "signed_in" && state.auth.session) {
     return `
       <section class="auth-panel" aria-label="Session">
@@ -5697,24 +3980,27 @@ function renderAuthPanel(): string {
 function renderTopbar(): string {
   const queuedOperations = countQueuedOperations(state.operations);
   const syncLabel = queuedOperations > 0 ? `${queuedOperations} local ops queued` : "Synced locally";
-  const latestBackup = state.workspace.restorePoints[0];
-  const connectedIntegrationCount = state.workspace.integrations.filter((integration) => integration.mode === "connected").length;
-  const integrationSummary = connectedIntegrationCount > 0
-    ? `${connectedIntegrationCount} connected, ${INTEGRATION_DEFINITIONS.length - connectedIntegrationCount} dry-run`
-    : `${INTEGRATION_DEFINITIONS.length} dry-run`;
+  const backup = localBackupSummary(state.operations);
+  const integrationSummary = integrationRuntimeStatus(state, DEMO_MODE).summary;
 
   return `
     <header class="topbar">
       <div class="status-strip" aria-label="Runtime status">
-        <span class="status-chip success">${icon("check")} Offline ready</span>
+        <span class="status-chip success">${icon("check")} Local workspace</span>
         <button class="status-chip dry" data-action="integrations-open" type="button">
           ${icon("provider")}
           <span>Integrations</span>
-          <small>${escapeHtml(integrationSummary)}</small>
+          <small data-integration-summary>${escapeHtml(integrationSummary)}</small>
         </button>
       </div>
-      <button class="sync-state" data-action="sync-dry-run" title="Local mirror: ${escapeAttribute(state.storageSource)}" type="button">${icon("check")} ${escapeHtml(syncLabel)}</button>
-      <span class="backup-state" title="Manage backups in the Backups workspace">${icon("backup")} ${escapeHtml(latestBackup?.label ?? "No backup yet")}</span>
+      ${DEMO_MODE ? `<span class="sync-state">Local demo - sync off</span>` : `<button class="sync-state" data-action="sync-dry-run" title="Local mirror: ${escapeAttribute(state.storageSource)}" type="button">${icon("check")} ${escapeHtml(syncLabel)}</button>`}
+      <span class="backup-state" title="Latest encrypted export from this browser; download retention is not verified">${icon("backup")} ${backup.exportedAt ? `Exported ${escapeHtml(formatShortDateTime(backup.exportedAt))}` : "No local backup export"}</span>
+      <label class="appearance-picker">
+        <span>Appearance</span>
+        <select data-appearance data-action="appearance" aria-label="Appearance">
+          ${["system", "light", "dark"].map((value) => `<option value="${value}" ${value === (document.documentElement.dataset.appearancePreference ?? "system") ? "selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}
+        </select>
+      </label>
     </header>
   `;
 }
@@ -5724,7 +4010,7 @@ function renderSlateHeader(selectedProject: FilmProject): string {
     <div class="slate-head overview-workspace-head">
       <div>
         <h1>Overview</h1>
-        <p>${escapeHtml(selectedProject.title)} - ${escapeHtml(selectedProject.phase)} - ${selectedProject.progress}% complete</p>
+        <p>${escapeHtml(selectedProject.title)} - ${escapeHtml(selectedProject.type)} - ${escapeHtml(selectedProject.phase)}</p>
       </div>
     </div>
   `;
@@ -5748,6 +4034,7 @@ function renderProjectWorkspaceHeader(projectCount: number, selectedProject: Fil
         </span>
         <button type="button" data-action="export-project-directory">${icon("doc")} Export directory</button>
         <button type="button" data-action="create-project">${icon("plus")} Create project</button>
+        ${DEMO_MODE ? "" : `<a class="secondary-button" href="/?demo=portfolio">Demo portfolio</a>`}
       </div>
     </div>
   `;
@@ -5761,7 +4048,7 @@ function renderProjectList(projects: FilmProject[], selectedId: string): string 
         <div class="project-row table-head">
           <span>Project</span>
           <span>Phase</span>
-          <span>Progress</span>
+          <span>Type</span>
           <span>Shoot Dates</span>
           <span>Budget</span>
           <span>Tasks</span>
@@ -5777,16 +4064,18 @@ function renderProjectList(projects: FilmProject[], selectedId: string): string 
 }
 
 function renderProjectRow(project: FilmProject, selectedId: string): string {
-  const taskProgress = Math.round((project.tasks.done / project.tasks.total) * 100);
+  const tasks = taskSummaryForProject(project);
+  const production = productionSummaryForProject(project, state.workspace);
+  const budget = budgetTopSheetForProject(project);
 
   return `
     <button class="project-row ${project.id === selectedId ? "is-selected" : ""}" data-action="project-select" data-project-id="${project.id}" type="button">
-      <span class="project-title"><span class="status-dot ${project.color}"></span>${escapeHtml(project.title)}${project.starred ? icon("star") : ""}</span>
+      <span class="project-title"><span class="status-dot ${project.color}"></span><span class="project-title-name">${escapeHtml(project.title)}</span>${project.starred ? icon("star") : ""}</span>
       <span><span class="phase-badge ${project.phaseTone}">${escapeHtml(project.phase)}</span></span>
-      <span class="progress-cell"><span>${project.progress}%</span><span class="meter"><span style="width:${project.progress}%"></span></span></span>
-      <span>${escapeHtml(project.shootDates)}</span>
-      <span><strong>${formatCurrency(project.spentBudget)}</strong><small>of ${formatCurrency(project.totalBudget)}</small></span>
-      <span class="progress-cell"><span>${project.tasks.done} / ${project.tasks.total}</span><span class="meter small"><span style="width:${taskProgress}%"></span></span></span>
+      <span>${escapeHtml(project.type)}</span>
+      <span>${escapeHtml(production.shootDates)}</span>
+      <span title="${budget.spendSource}"><strong>${formatCurrency(budget.spent)}</strong><small>${budget.totalBudget ? `of ${formatCurrency(budget.totalBudget)}` : "Budget not set"}</small></span>
+      <span class="progress-cell"><span>${tasks.total ? `${tasks.done} / ${tasks.total} done` : "No tasks"}</span><span class="meter small"><span style="width:${tasks.percent}%"></span></span></span>
     </button>
   `;
 }
@@ -5796,7 +4085,10 @@ function renderProjectBoard(projects: FilmProject[], selectedId: string): string
     <section class="board-grid" aria-label="Project board">
       ${projects
         .map(
-          (project) => `
+          (project) => {
+            const tasks = taskSummaryForProject(project);
+            const production = productionSummaryForProject(project, state.workspace);
+            return `
             <button class="project-card ${project.id === selectedId ? "is-selected" : ""}" data-action="project-select" data-project-id="${project.id}" type="button">
               <span class="project-card-head">
                 <span class="status-dot ${project.color}"></span>
@@ -5804,154 +4096,13 @@ function renderProjectBoard(projects: FilmProject[], selectedId: string): string
                 ${project.starred ? icon("star") : ""}
               </span>
               <span class="phase-badge ${project.phaseTone}">${escapeHtml(project.phase)}</span>
-              <span class="meter"><span style="width:${project.progress}%"></span></span>
-              <span class="card-meta">${project.progress}% - ${escapeHtml(project.shootDates)}</span>
+              <span class="card-meta">${escapeHtml(project.type)}</span>
+              <span class="meter"><span style="width:${tasks.percent}%"></span></span>
+              <span class="card-meta">${tasks.done} / ${tasks.total} tasks done - ${escapeHtml(production.shootDates)}</span>
             </button>
-          `,
+          `; },
         )
         .join("")}
-    </section>
-  `;
-}
-
-function renderTimeline(project: FilmProject): string {
-  return `
-    <section class="panel timeline-panel" aria-labelledby="timeline-title">
-      <div class="section-head">
-        <div>
-          <h2 id="timeline-title">${escapeHtml(project.title)}</h2>
-          <p>Phase timeline</p>
-        </div>
-        <span class="today-marker">Today</span>
-      </div>
-      ${renderProjectTimeline(project)}
-    </section>
-  `;
-}
-
-function renderProjectTimeline(project: FilmProject): string {
-  return `
-    <div class="timeline">
-      <div class="timeline-months">
-        ${TIMELINE_MONTH_LABELS.map((month) => `<span>${month}</span>`).join("")}
-      </div>
-      <div class="timeline-lanes">
-        ${project.timeline.map((item, index) => `
-          <div class="timeline-bar ${item.tone}" style="left:${item.start}%; width:${item.width}%; top:${8 + index * 29}px">
-            ${escapeHtml(item.label)}
-          </div>
-        `).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderOperationsGrid(project: FilmProject): string {
-  return `
-    <section class="operations-grid">
-      ${renderTaskPanel(project)}
-      ${renderDocsPanel(project)}
-      ${renderPeoplePanel(project)}
-      ${renderEquipmentPanel(project)}
-    </section>
-  `;
-}
-
-function renderTaskPanel(project: FilmProject): string {
-  return `
-    <section class="panel compact-panel">
-      <div class="section-head row">
-        <h2>Tasks</h2>
-        <button type="button" data-workspace-section="tasks">View all</button>
-      </div>
-      <ul class="line-list">
-        ${project.openTasks
-          .map(
-            (task) => `
-              <li>
-                <span class="task-dot ${task.status}"></span>
-                <span>${escapeHtml(task.title)}</span>
-                <strong class="${task.status === "overdue" ? "danger" : ""}">${escapeHtml(task.due)}</strong>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
-    </section>
-  `;
-}
-
-function renderPeoplePanel(project: FilmProject): string {
-  return `
-    <section class="panel compact-panel">
-      <div class="section-head row">
-        <h2>People</h2>
-        <button type="button" data-workspace-section="people">View all</button>
-      </div>
-      <ul class="line-list">
-        ${project.people
-          .map(
-            (person) => `
-              <li>
-                <span class="file-token ${escapeAttribute(person.initials)}">${escapeHtml(person.initials)}</span>
-                <span>${escapeHtml(person.name)}</span>
-                <strong>${escapeHtml(person.role)}</strong>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
-    </section>
-  `;
-}
-
-function renderEquipmentPanel(project: FilmProject): string {
-  return `
-    <section class="panel compact-panel">
-      <div class="section-head row">
-        <h2>Equipment</h2>
-        <button type="button" data-workspace-section="equipment">View all</button>
-      </div>
-      <ul class="line-list">
-        ${project.equipment
-          .map(
-            (item) => `
-              <li>
-                <span class="file-token EQ">EQ</span>
-                <span>${escapeHtml(item.name)}</span>
-                <strong>${escapeHtml(item.status)}</strong>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
-    </section>
-  `;
-}
-
-function renderDocsPanel(project: FilmProject): string {
-  const selectedDoc = project.docs.find((doc) => doc.id === state.ui.selectedDocId) ?? project.docs[0] ?? null;
-  return `
-    <section class="panel compact-panel">
-      <div class="section-head row">
-        <h2>Docs</h2>
-        <button type="button" data-workspace-section="docs">View all</button>
-      </div>
-      <ul class="line-list">
-        ${project.docs
-          .map(
-            (doc) => `
-              <li>
-                <button class="doc-row-button ${doc.id === selectedDoc?.id ? "is-selected" : ""}" type="button" data-open-doc="${escapeAttribute(doc.id)}">
-                  <span class="file-token ${escapeAttribute(doc.type)}">${escapeHtml(doc.type)}</span>
-                  <span>${escapeHtml(doc.name)}</span>
-                  <strong>${escapeHtml(formatDocStatus(doc))}</strong>
-                </button>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
     </section>
   `;
 }
@@ -5977,442 +4128,6 @@ function renderDocumentEditor(doc: ProjectDoc): string {
         <button type="submit">${icon("check")} Save draft</button>
       </div>
     </form>
-  `;
-}
-
-function renderRestorePreview(preview: RestorePreviewSummary): string {
-  const changedRecords = preview.records.filter((record) => record.status === "changed").slice(0, 3);
-  const newRecords = preview.records.filter((record) => record.status === "new").slice(0, 2);
-  const visibleRecords = [...changedRecords, ...newRecords].slice(0, 4);
-
-  return `
-    <div class="restore-preview" role="status">
-      <strong>Restore preview</strong>
-      <span>${preview.incomingProjectCount} incoming projects - ${preview.currentProjectCount} current</span>
-      <span>${preview.matchingProjectCount} matching projects - ${preview.newProjectCount} new projects</span>
-      <span>${preview.changedRecordCount} changed records - ${preview.newRecordCount} new records - ${preview.fieldConflictCount} field conflicts</span>
-      ${renderRestoreApplicationPlan(preview.applicationPlan)}
-      ${
-        preview.planningRecordCount > 0
-          ? `<span>${preview.planningRecordCount} planning rows in encrypted backup - restore preview only</span>`
-          : ""
-      }
-      ${
-        preview.planningKindCounts.length
-          ? `<span>Planning kind coverage: ${escapeHtml(formatPlanningKindCounts(preview.planningKindCounts))}</span>`
-          : ""
-      }
-      ${
-        preview.planningRecordCount > 0
-          ? `<span>Planning table coverage: ${escapeHtml(formatPlanningTableCoverage(preview.planningTableCoverage))}</span>`
-          : ""
-      }
-      ${
-        preview.planningRecords.length
-          ? `
-            <ul class="restore-preview-records planning-preview-records">
-              ${preview.planningRecords.slice(0, 3).map((record) => renderPlanningPreviewRecord(record)).join("")}
-            </ul>
-          `
-          : ""
-      }
-      ${
-        visibleRecords.length
-          ? `
-            <ul class="restore-preview-records">
-              ${visibleRecords.map((record) => renderRestorePreviewRecord(record)).join("")}
-            </ul>
-          `
-          : `<small>${escapeHtml(preview.firstProjectTitle)} has no record conflicts.</small>`
-      }
-      ${
-        preview.warnings.length
-          ? `<small>${escapeHtml(preview.warnings.join(" "))}</small>`
-          : "<small>No restore warnings.</small>"
-      }
-    </div>
-  `;
-}
-
-function renderRestorePlanningDryRun(preview: RestorePlanningDryRunState, records: BackupPlanningRecord[]): string {
-  return `
-    <div class="restore-preview" role="status">
-      <strong>Planning restore preview</strong>
-      <span>${preview.createPreviewCount} creates - ${preview.updatePreviewCount} updates - ${preview.idempotentCount} idempotent - ${preview.rejectedCount} rejected</span>
-      <span>${preview.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(preview.commitPolicy.replaceAll("_", " "))}</span>
-      ${
-        preview.tableSummary.length
-          ? `<span>Planning D1 tables: ${escapeHtml(formatRestorePlanningTableSummary(preview.tableSummary))}</span>`
-          : ""
-      }
-      ${
-        preview.updatePreviewDetails.length
-          ? `<span>Planning update preview: ${escapeHtml(formatRestorePlanningUpdatePreview(preview.updatePreviewDetails))}</span>`
-          : ""
-      }
-      ${
-        preview.rejected.length
-          ? `<span>Rejected records: ${escapeHtml(formatRestorePlanningRejected(preview.rejected))}</span>`
-          : ""
-      }
-      ${renderRestorePlanningReviewTable(preview, records)}
-      ${
-        preview.planningPreviewId
-          ? `<small>${escapeHtml(shortHash(preview.planningPreviewId))} - ${escapeHtml(preview.planningPreviewStatus.replaceAll("_", " "))}</small>`
-          : ""
-      }
-      <small>${escapeHtml(preview.restoreMode.replaceAll("_", " "))} - ${escapeHtml(preview.persistence.replaceAll("_", " "))} - ${escapeHtml(preview.planningPreviewPersistence.replaceAll("_", " "))}${preview.auditPersistence ? ` - ${escapeHtml(preview.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function renderRestoreAttachmentPackageVerification(preview: RestoreAttachmentPackageVerificationState): string {
-  return `
-    <div class="restore-preview" role="status">
-      <strong>Attachment package verification</strong>
-      <span>${preview.packageManifest.objectCount} manifest objects - ${formatBytes(preview.packageManifest.totalSourceBytes)} source bytes</span>
-      <span>${preview.canRestoreBytes ? "Byte restore ready" : "Byte restore blocked"} - ${escapeHtml(preview.attachmentPackageVerificationStatus.replaceAll("_", " "))}</span>
-      <span>${preview.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(preview.commitPolicy.replaceAll("_", " "))}</span>
-      <small>Package ${escapeHtml(preview.packageSha256.slice(0, 12))} - manifest ${escapeHtml(preview.manifestSha256.slice(0, 12))}</small>
-      <small>${escapeHtml(preview.attachmentPackageVerificationPersistence.replaceAll("_", " "))}${preview.auditPersistence ? ` - ${escapeHtml(preview.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-      ${
-        preview.attachmentPackageVerificationId
-          ? `<small>${escapeHtml(shortHash(preview.attachmentPackageVerificationId))}</small>`
-          : ""
-      }
-      ${
-        preview.blockers.length
-          ? `<small>${escapeHtml(preview.blockers.slice(0, 2).join(" "))}</small>`
-          : ""
-      }
-    </div>
-  `;
-}
-
-function renderRestoreAttachmentObjectPlan(plan: RestoreAttachmentObjectPlanState): string {
-  return `
-    <div class="restore-preview" role="status">
-      <strong>Attachment object plan</strong>
-      <span>${plan.objectCount} objects - ${formatBytes(plan.totalSourceBytes)} source bytes - ${plan.blockedDestinationCount} destination writes blocked</span>
-      <span>${plan.canRestoreBytes ? "Byte restore ready" : "Byte restore blocked"} - ${escapeHtml(plan.attachmentObjectPlanStatus.replaceAll("_", " "))}</span>
-      <span>${plan.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(plan.commitPolicy.replaceAll("_", " "))}</span>
-      <span>${escapeHtml(plan.destinationPolicy.replaceAll("_", " "))} - ${escapeHtml(plan.overwritePolicy.replaceAll("_", " "))}</span>
-      <span>${escapeHtml(plan.byteSourcePolicy.replaceAll("_", " "))} - ${escapeHtml(plan.sourceVerificationStatus.replaceAll("_", " "))}</span>
-      ${
-        plan.objects.length
-          ? `
-            <ul class="restore-preview-records application-preview-records">
-              ${plan.objects.slice(0, 4).map((object) => `
-                <li>
-                  <b>${escapeHtml(object.name)}</b>
-                  <small>${escapeHtml(object.action.replaceAll("_", " "))} - ${formatBytes(object.sizeBytes)}</small>
-                  <small>${escapeHtml(object.destinationStatus.replaceAll("_", " "))} - ${escapeHtml(object.overwriteStatus.replaceAll("_", " "))}</small>
-                  <small>${escapeHtml(object.byteSourceStatus.replaceAll("_", " "))} - ${escapeHtml(object.sourceVerificationStatus.replaceAll("_", " "))}</small>
-                </li>
-              `).join("")}
-            </ul>
-          `
-          : ""
-      }
-      <small>${escapeHtml(plan.attachmentObjectPlanPersistence.replaceAll("_", " "))}${plan.auditPersistence ? ` - ${escapeHtml(plan.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-      ${
-        plan.attachmentObjectPlanId
-          ? `<small>${escapeHtml(shortHash(plan.attachmentObjectPlanId))}</small>`
-          : ""
-      }
-      ${
-        plan.blockers.length
-          ? `<small>${escapeHtml(plan.blockers.slice(0, 2).join(" "))}</small>`
-          : ""
-      }
-    </div>
-  `;
-}
-
-function renderRestoreAttachmentObjectCommitPreflight(preflight: RestoreAttachmentObjectCommitPreflightState): string {
-  return `
-    <div class="restore-preview" role="status">
-      <strong>Attachment commit preflight</strong>
-      <span>${preflight.objectCount} objects - ${formatBytes(preflight.totalSourceBytes)} source bytes</span>
-      <span>${preflight.readyDestinationCount} destinations ready - ${preflight.blockedDestinationCount} blocked</span>
-      <span>${preflight.readyForByteCommit ? "Byte commit handoff ready" : "Byte commit handoff blocked"} - ${escapeHtml(preflight.attachmentObjectCommitPreflightStatus.replaceAll("_", " "))}</span>
-      <span>${preflight.destructiveWrite ? "Destructive writes enabled" : "No destructive writes"} - ${escapeHtml(preflight.commitPolicy.replaceAll("_", " "))}</span>
-      <span>${escapeHtml(preflight.destinationPolicy.replaceAll("_", " "))} - ${escapeHtml(preflight.overwritePolicy.replaceAll("_", " "))}</span>
-      <span>${escapeHtml(preflight.byteSourcePolicy.replaceAll("_", " "))} - ${escapeHtml(preflight.sourceVerificationStatus.replaceAll("_", " "))}</span>
-      ${
-        preflight.objects.length
-          ? `
-            <ul class="restore-preview-records application-preview-records">
-              ${preflight.objects.slice(0, 4).map((object) => `
-                <li>
-                  <b>${escapeHtml(object.name)}</b>
-                  <small>${escapeHtml(object.action.replaceAll("_", " "))} - ${formatBytes(object.sizeBytes)}</small>
-                  <small>${escapeHtml(object.destinationStatus.replaceAll("_", " "))} - ${escapeHtml(object.overwriteStatus.replaceAll("_", " "))}</small>
-                  <small>${object.existingR2Object === null ? "R2 unchecked" : object.existingR2Object ? "R2 exists" : "R2 clear"} - ${object.existingStoredRecord ? "stored record exists" : "no stored record"}</small>
-                  ${object.blocker ? `<small>${escapeHtml(object.blocker)}</small>` : ""}
-                </li>
-              `).join("")}
-            </ul>
-          `
-          : ""
-      }
-      <small>${escapeHtml(preflight.attachmentObjectCommitPreflightPersistence.replaceAll("_", " "))}${preflight.auditPersistence ? ` - ${escapeHtml(preflight.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-      ${
-        preflight.attachmentObjectCommitPreflightId
-          ? `<small>${escapeHtml(shortHash(preflight.attachmentObjectCommitPreflightId))}</small>`
-          : ""
-      }
-      ${
-        preflight.blockers.length
-          ? `<small>${escapeHtml(preflight.blockers.slice(0, 2).join(" "))}</small>`
-          : ""
-      }
-    </div>
-  `;
-}
-
-function renderRestorePlanningReviewTable(preview: RestorePlanningDryRunState, records: BackupPlanningRecord[]): string {
-  if (records.length === 0) return "";
-
-  const tableByKind = new Map(preview.tableSummary.map((row) => [row.kind, row.tableName]));
-  const createIds = new Set(preview.createPreview);
-  const updateIds = new Set(preview.updatePreview);
-  const idempotentIds = new Set(preview.idempotent);
-  const rejectedByIndex = new Map(preview.rejected.map((item) => [item.index, item.reason]));
-  return `
-    <div class="planning-review" aria-label="Planning restore rows" tabindex="0">
-      <div class="planning-review-row planning-review-head">
-        <span>Action</span>
-        <span>Kind</span>
-        <span>Title</span>
-        <span>Project</span>
-        <span>Fields</span>
-      </div>
-      ${records.map((record, index) => {
-        const rejectedReason = rejectedByIndex.get(index);
-        const action = rejectedReason
-          ? `rejected: ${rejectedReason.replaceAll("_", " ")}`
-          : createIds.has(record.id)
-            ? "create"
-            : updateIds.has(record.id)
-              ? "update"
-              : idempotentIds.has(record.id)
-                ? "idempotent"
-                : "accepted";
-        const fieldKeys = Object.keys(record.fields)
-          .filter((key) => record.fields[key] !== null && record.fields[key] !== "")
-          .slice(0, 4);
-        return `
-          <div class="planning-review-row">
-            <span>${escapeHtml(action)}</span>
-            <span>${escapeHtml((tableByKind.get(record.kind) ?? record.kind).replaceAll("_", " "))}</span>
-            <span>${escapeHtml(record.title)}</span>
-            <span>${escapeHtml(record.projectId ?? "workspace")}</span>
-            <span>${escapeHtml(fieldKeys.length ? fieldKeys.join(", ") : "none")}</span>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function formatPlanningKindCounts(counts: RestorePreviewSummary["planningKindCounts"]): string {
-  return counts
-    .slice(0, 6)
-    .map((item) => `${item.count} ${item.kind.replaceAll("_", " ")}`)
-    .join(", ");
-}
-
-function formatPlanningTableCoverage(coverage: RestorePreviewSummary["planningTableCoverage"]): string {
-  return coverage
-    .map((item) => `${item.tableName.replaceAll("_", " ")} ${item.recordCount}`)
-    .join(", ");
-}
-
-function formatRestorePlanningTableSummary(summary: RestorePlanningTableSummary[]): string {
-  return summary
-    .slice(0, 5)
-    .map((row) => {
-      const table = row.tableName.replaceAll("_", " ");
-      return `${table} ${row.createPreviewCount} create/${row.idempotentCount} same/${row.updatePreviewCount} update/${row.rejectedCount} rejected`;
-    })
-    .join(", ");
-}
-
-function formatRestorePlanningUpdatePreview(details: RestorePlanningPreviewDetail[]): string {
-  return details
-    .slice(0, 3)
-    .map((detail) => {
-      const firstChange = detail.fieldChanges[0];
-      const field = firstChange ? ` - ${firstChange.field}` : "";
-      return `${detail.tableName.replaceAll("_", " ")} ${detail.title} (${detail.fieldChangeCount} changes${field})`;
-    })
-    .join(", ");
-}
-
-function formatRestorePlanningCommitSummary(result: RestorePlanningCommitResult["result"]): string {
-  return `${result.appliedCount} applied - ${result.skippedCount} skipped - ${result.createCount} creates - ${result.updateCount} updates`;
-}
-
-function formatRestorePlanningRejected(rejected: RestorePlanningDryRunResult["rejected"]): string {
-  return rejected
-    .slice(0, 3)
-    .map((item) => `row ${item.index + 1} ${item.reason.replaceAll("_", " ")}`)
-    .join(", ");
-}
-
-function renderRestoreApplicationPlan(plan: RestorePreviewSummary["applicationPlan"]): string {
-  return `
-    <span>${plan.updateRecordCount} updates planned - ${plan.createRecordCount} creates planned - ${plan.unchangedRecordCount} unchanged</span>
-    <span>Application operations: ${plan.operationCount} total - ${escapeHtml(plan.operationPolicy.replaceAll("_", " "))}</span>
-    <span>Application table plan: ${plan.tablePlan.length} tables</span>
-    ${
-      plan.attachmentPackagePlan.packageRequired
-        ? `<span>Attachment restore package: ${plan.attachmentPackagePlan.metadataRecordCount} metadata records - ${formatBytes(plan.attachmentPackagePlan.totalSourceBytes)} source bytes - ${escapeHtml(plan.attachmentPackagePlan.byteRestoreSupport.replaceAll("_", " "))}</span>`
-        : ""
-    }
-    <span>${plan.destructiveWrite ? "Destructive restore enabled" : "Restore application blocked"} - ${escapeHtml(plan.mode.replaceAll("_", " "))}</span>
-    ${
-      plan.tablePlan.length
-        ? `
-          <ul class="restore-preview-records application-preview-records">
-            ${plan.tablePlan.slice(0, 4).map((table) => renderRestoreApplicationTablePlan(table)).join("")}
-          </ul>
-        `
-        : ""
-    }
-    ${
-      plan.operationSamples.length
-        ? `
-          <ul class="restore-preview-records application-preview-records">
-            ${plan.operationSamples.slice(0, 4).map((operation) => renderRestoreApplicationOperation(operation)).join("")}
-          </ul>
-        `
-        : ""
-    }
-    ${
-      plan.blockers.length
-        ? `<small>${escapeHtml(plan.blockers.slice(0, 3).join(" "))}</small>`
-        : ""
-    }
-  `;
-}
-
-function renderRestoreApplicationTablePlan(table: RestorePreviewSummary["applicationPlan"]["tablePlan"][number]): string {
-  const detail = `${table.operationCount} ops - ${table.createCount} creates - ${table.updateCount} updates - ${table.skipCount} skips${table.previewOnlyCount ? ` - ${table.previewOnlyCount} preview only` : ""}`;
-  const blocker = table.blockers.length ? ` - ${table.blockers[0]}` : "";
-
-  return `
-    <li>
-      <b>${escapeHtml(table.tableName.replaceAll("_", " "))}</b>
-      <small>${escapeHtml(`${detail}${blocker}`)}</small>
-    </li>
-  `;
-}
-
-function renderRestoreApplicationOperation(operation: RestorePreviewSummary["applicationPlan"]["operationSamples"][number]): string {
-  const fieldDetail = operation.fieldConflictCount > 0
-    ? ` - ${operation.fieldConflictCount} field conflicts`
-    : "";
-  const blockerDetail = operation.blockers.length ? ` - ${operation.blockers[0]}` : "";
-  const detail = `${operation.action} ${operation.status.replaceAll("_", " ")}${fieldDetail}${blockerDetail}`;
-
-  return `
-    <li>
-      <b>${escapeHtml(operation.label)}</b>
-      <small>${escapeHtml(detail)}</small>
-    </li>
-  `;
-}
-
-function renderProviderProductionPolicy(policy: NonNullable<ProviderDryRunStatus["productionReadPolicy"]>): string {
-  return `
-    <span>Live reads: ${escapeHtml(policy.mode.replaceAll("_", " "))} - ${escapeHtml(policy.dataBoundary.replaceAll("_", " "))}</span>
-    <small>${policy.liveReadAllowed ? "Live reads allowed" : "Live reads blocked"} via ${escapeHtml(policy.source.replaceAll("_", " "))}</small>
-    ${
-      policy.blockers.length
-        ? `<small>${escapeHtml(policy.blockers.slice(0, 2).join(" "))}</small>`
-        : ""
-    }
-  `;
-}
-
-function renderPlanningPreviewRecord(record: RestorePreviewSummary["planningRecords"][number]): string {
-  const fieldDetail = record.fieldKeys.length
-    ? ` - ${record.fieldCount} fields: ${record.fieldKeys.join(", ")}`
-    : " - 0 fields";
-  const detail = `${record.kind.replaceAll("_", " ")}${record.sourcePath ? ` - ${record.sourcePath}` : ""}${fieldDetail}`;
-
-  return `
-    <li>
-      <b>${escapeHtml(record.title)}</b>
-      <small>${escapeHtml(detail)}</small>
-    </li>
-  `;
-}
-
-function renderRestorePreviewRecord(record: RestorePreviewSummary["records"][number]): string {
-  const changeLabels = record.fieldChanges
-    .slice(0, 2)
-    .map((change) => `${change.field}: ${change.currentValue} -> ${change.incomingValue}`);
-  const overflowCount = record.fieldChanges.length - changeLabels.length;
-  const detail = record.status === "new"
-    ? "New record in backup"
-    : `${changeLabels.join("; ")}${overflowCount > 0 ? `; +${overflowCount} more` : ""}`;
-
-  return `
-    <li>
-      <b>${escapeHtml(record.label)}</b>
-      <small>${escapeHtml(detail)}</small>
-    </li>
-  `;
-}
-
-function renderBottomGrid(project: FilmProject): string {
-  return `
-    <section class="bottom-grid">
-      <section class="panel expense-panel">
-        <div class="section-head row">
-          <h2>Expenses</h2>
-          <button type="button" data-workspace-section="expenses">View all</button>
-        </div>
-        <div class="expense-table">
-          ${project.expenses
-            .map(
-              (expense) => `
-                <div>
-                  <span>${escapeHtml(expenseCategoryLabel(expense))}</span>
-                  <span>${formatCurrency(expense.spent)}</span>
-                  <span>${formatCurrency(expense.budget)}</span>
-                  <span>${expense.percent}%</span>
-                  <span class="meter small"><span style="width:${expense.percent}%"></span></span>
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </section>
-      <section class="panel call-sheet-panel">
-        <div class="section-head row">
-          <h2>Upcoming Call Sheet</h2>
-        </div>
-        <div class="call-sheet">
-          <div class="call-date"><strong>${project.callSheet.day}</strong><span>${escapeHtml(project.callSheet.month)}</span></div>
-          <div>
-            <p><strong>Call:</strong> ${escapeHtml(project.callSheet.callTime)}</p>
-            <p><strong>Wrap:</strong> ${escapeHtml(project.callSheet.wrapTime)}</p>
-            <p>${escapeHtml(project.callSheet.location)}</p>
-            <small>Day ${project.callSheet.dayNumber} of ${project.callSheet.totalDays}</small>
-          </div>
-          <div>
-            <p>Scenes <strong>${project.callSheet.scenes}</strong></p>
-            <p>People <strong>${project.callSheet.people}</strong></p>
-            <p>Weather <strong>${escapeHtml(project.callSheet.weather)}</strong></p>
-            <button class="secondary-button" type="button" data-workspace-section="call-sheets">${icon("doc")} Open Call Sheet</button>
-          </div>
-        </div>
-      </section>
-    </section>
   `;
 }
 
@@ -6648,6 +4363,7 @@ function teamAssignmentFor(projectId: string, member: WorkspaceData["members"][n
 }
 
 function renderTeamEditGate(): string {
+  if (DEMO_MODE) return `<div class="team-edit-gate" role="note"><div><strong>Local demo</strong><small>No workspace accounts or access changes in this demo.</small></div></div>`;
   if (state.auth.session?.role === "owner" || state.auth.session?.role === "producer") return "";
   const signedIn = Boolean(state.auth.session);
   return `
@@ -7558,56 +5274,6 @@ function renderRecordCommentManifest(manifest: RecordCommentManifestState): stri
   `;
 }
 
-function renderStripeSummaryReadiness(readiness: StripeSummaryState): string {
-  const configuredCount = Object.values(readiness.configured).filter(Boolean).length;
-  return `
-    <div class="provider-preview" role="status">
-      <strong>Stripe summary readiness</strong>
-      <span>${escapeHtml(readiness.status.replaceAll("_", " "))} - ${escapeHtml(readiness.dataBoundary.replaceAll("_", " "))}</span>
-      <span>${configuredCount}/7 configured - direct Stripe reads ${readiness.directStripeReadAllowed ? "allowed" : "blocked"}</span>
-      <small>${escapeHtml(readiness.persistence.replaceAll("_", " "))}${readiness.auditPersistence ? ` - ${escapeHtml(readiness.auditPersistence.replaceAll("_", " "))}` : ""} - live summaries ${readiness.liveSummaryReadAllowed ? "allowed" : "blocked"}</small>
-      ${
-        readiness.blockers.length
-          ? `<small>${escapeHtml(readiness.blockers.slice(0, 2).join(" "))}</small>`
-          : readiness.liveSummaryReadAllowed
-            ? "<small>Configuration is ready for gated Pool/Store summary reads.</small>"
-            : "<small>Configuration is ready; set live mode before summary reads.</small>"
-      }
-      ${
-        readiness.complianceNotes.length
-          ? `<small>${escapeHtml(readiness.complianceNotes.slice(0, 1).join(" "))}</small>`
-          : ""
-      }
-      ${
-        readiness.liveSummaryReadAllowed
-          ? `<button class="secondary-button full-width" type="button" data-action="stripe-summary-fetch">${icon("provider")} Fetch summary aggregates</button>`
-          : ""
-      }
-    </div>
-  `;
-}
-
-function renderStripeSummaryResult(summary: StripeSummaryResultState): string {
-  const net = formatCurrency(Math.round(summary.totals.netAmountCents / 100));
-  const gross = formatCurrency(Math.round(summary.totals.grossAmountCents / 100));
-  const fees = formatCurrency(Math.round(summary.totals.feeAmountCents / 100));
-  return `
-    <div class="provider-preview" role="status">
-      <strong>Stripe summary aggregates</strong>
-      <span>${escapeHtml(summary.status.replaceAll("_", " "))} - ${escapeHtml(summary.projectId)}</span>
-      <span>Net ${escapeHtml(net)} - Gross ${escapeHtml(gross)} - Fees ${escapeHtml(fees)}</span>
-      <span>Payments ${summary.counts.paymentCount} - Failed ${summary.counts.paymentFailedCount} - Refunds ${summary.counts.refundCount}</span>
-      <small>${escapeHtml(summary.adapters.map((adapter) => `${adapter.source}:${adapter.status}(${adapter.mappedRefCount})`).join(" "))}</small>
-      <small>${escapeHtml(summary.persistence.replaceAll("_", " "))}${summary.auditPersistence ? ` - ${escapeHtml(summary.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-      ${
-        summary.warnings.length
-          ? `<small>${escapeHtml(summary.warnings.slice(0, 3).join(" "))}</small>`
-          : `<small>${escapeHtml(summary.dataBoundary.replaceAll("_", " "))}; direct Stripe reads remain blocked.</small>`
-      }
-    </div>
-  `;
-}
-
 function renderWorkerAuditManifest(manifest: WorkerAuditManifestState): string {
   return `
     <div class="provider-preview" role="status">
@@ -7892,7 +5558,7 @@ function renderInspector(project: FilmProject): string {
                     </select>
                   </label>
                   <label class="inspector-form-field">
-                    <span>Shoot dates</span>
+                    <span>Target shoot dates</span>
                     <input name="shootDates" value="${escapeAttribute(project.shootDates)}" autocomplete="off" />
                   </label>
                   <label class="inspector-form-field">
@@ -8429,33 +6095,7 @@ function renderInspector(project: FilmProject): string {
 		        </details>
               </section>
               </div>
-              <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
-                <div class="section-head row">
-                  <h3>Integrations</h3>
-                  <button type="button" data-action="provider-runtime-readiness">Runtime</button>
-                </div>
-                <div class="integration-picker" role="list" aria-label="Integration providers">
-                  ${INTEGRATION_DEFINITIONS.map((definition) => {
-                    const integration = state.workspace.integrations.find((item) => item.key === definition.key);
-                    const isSelected = state.providerPreview?.key === definition.key;
-                    return `
-                      <button
-                        class="integration-option ${isSelected ? "is-active" : ""}"
-                        type="button"
-                        role="listitem"
-                        data-integration="${definition.key}"
-                      >
-                        ${icon("provider")}
-                        <span>
-                          <strong>${escapeHtml(definition.label)}</strong>
-                          <small>${escapeHtml(integration?.mode ?? "dry-run")}</small>
-                        </span>
-                      </button>
-                    `;
-                  }).join("")}
-                </div>
-                ${state.providerRuntimeReadiness ? renderProviderRuntimeReadiness(state.providerRuntimeReadiness) : `<p class="empty-inline">Runtime gates not checked.</p>`}
-              </section>
+              ${state.ui.inspectorView === "integrations" ? `<div data-integration-view class="inspector-view-panel" data-inspector-view-panel="integrations"></div>` : ""}
               <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("imports")}>
                 <div class="section-head row"><h3>Imports</h3></div>
                 <div class="import-actions">
@@ -8580,99 +6220,6 @@ function renderInspector(project: FilmProject): string {
                     : ""
                 }
               </section>
-              ${
-                state.providerPreview
-                  ? `
-                    <section class="inspector-section inspector-view-panel" ${inspectorViewPanelAttributes("integrations")}>
-                      <div class="section-head row"><h3>${escapeHtml(state.providerPreview.label)}</h3><span class="section-kicker">Provider details</span></div>
-                      <div class="provider-preview" role="status">
-                        <strong>${escapeHtml(state.providerPreview.label)} dry run</strong>
-                        <span>${escapeHtml(state.providerPreview.status.replaceAll("_", " "))}</span>
-                        <span>${escapeHtml(state.providerPreview.capabilities.join(", "))}</span>
-                        <span>Scopes: ${escapeHtml(state.providerPreview.requiredScopes.join(", "))}</span>
-                        ${
-                          state.providerPreview.productionReadPolicy
-                            ? renderProviderProductionPolicy(state.providerPreview.productionReadPolicy)
-                            : ""
-                        }
-                        <small>${escapeHtml(state.providerPreview.nextStep)}</small>
-                        ${
-                          state.providerPreview.complianceNotes.length
-                            ? `<small>${escapeHtml(state.providerPreview.complianceNotes.join(" "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.providerPreview.auditPersistence
-                            ? `<small>${escapeHtml(state.providerPreview.auditPersistence.replaceAll("_", " "))}</small>`
-                            : ""
-                        }
-                        ${
-                          state.providerPreview.key === "google"
-                            ? `
-                              <button class="secondary-button full-width" type="button" data-action="google-connection-check">${icon("provider")} Check Google</button>
-                              <button class="secondary-button full-width" type="button" data-action="google-drive-sync-dry-run">${icon("provider")} Plan Drive sync</button>
-                            `
-                            : ""
-                        }
-                        ${
-                          state.providerPreview.key === "social"
-                            ? `<button class="secondary-button full-width" type="button" data-action="meta-connection-check">${icon("provider")} Check Meta</button>`
-                            : ""
-                        }
-                        ${
-                          state.providerPreview.key === "stripe"
-                            ? `<button class="secondary-button full-width" type="button" data-action="stripe-summary-readiness">${icon("provider")} Check Stripe summaries</button>`
-                            : ""
-                        }
-                        ${
-                          state.providerPreview.key === "sms"
-                            ? `${state.auth.session ? renderSmsConsentEnrollmentForm() : ""}
-                              ${canManageSmsConsent()
-                                ? `<button class="secondary-button full-width" type="button" data-action="telnyx-provider-readiness">${icon("provider")} Check Telnyx</button>
-                                  <button class="secondary-button full-width" type="button" data-action="sms-consent-manifest">${icon("provider")} Review consent records</button>`
-                                : ""}`
-                            : ""
-                        }
-                      </div>
-                      ${state.providerPreview.key === "google" && state.googleConnection ? renderGoogleConnection(state.googleConnection) : ""}
-                      ${state.providerPreview.key === "google" && state.googleDriveManifest ? renderGoogleDriveManifest(state.googleDriveManifest) : ""}
-                      ${state.providerPreview.key === "social" && state.metaConnection ? renderMetaConnection(state.metaConnection) : ""}
-                      ${state.providerPreview.key === "social" && state.metaPageCandidates ? renderMetaPageCandidates(state.metaPageCandidates) : ""}
-                      ${state.providerPreview.key === "social" && state.metaAnalytics ? renderMetaAnalytics(state.metaAnalytics) : ""}
-                      ${state.providerPreview.key === "sms" && state.telnyxProviderReadiness ? renderTelnyxProviderReadiness(state.telnyxProviderReadiness) : ""}
-                      ${state.providerPreview.key === "sms" && state.smsConsentManifest ? renderSmsConsentManifest(state.smsConsentManifest) : ""}
-                      ${
-                        state.googleDriveSync
-                          ? `
-                            <div class="provider-preview" role="status">
-                              <strong>Drive sync plan</strong>
-                              <span>${escapeHtml(state.googleDriveSync.syncMode.replaceAll("_", " "))} - ${state.googleDriveSync.rootFolderConfigured ? "root folder set" : "root folder missing"}</span>
-                              <span>Actions: ${escapeHtml(state.googleDriveSync.plannedActions.map((action) => action.label).join(", "))}</span>
-                              <span>Scopes: ${escapeHtml(state.googleDriveSync.requiredScopes.join(", "))}</span>
-                              <small>${escapeHtml(state.googleDriveSync.blockers.slice(0, 3).join(" "))}</small>
-                              ${
-                                state.googleDriveSync.auditPersistence
-                                  ? `<small>${escapeHtml(state.googleDriveSync.auditPersistence.replaceAll("_", " "))}</small>`
-                                  : ""
-                              }
-                            </div>
-                          `
-                          : ""
-                      }
-                      ${
-                        state.stripeSummary
-                          ? renderStripeSummaryReadiness(state.stripeSummary)
-                          : ""
-                      }
-                      ${
-                        state.stripeSummaryResult
-                          ? renderStripeSummaryResult(state.stripeSummaryResult)
-                          : ""
-                      }
-                    </section>
-                  `
-                  : ""
-              }
             </div>
           `
           : `
@@ -8722,25 +6269,336 @@ function renderInspector(project: FilmProject): string {
   `;
 }
 
-function bindEvents(): void {
-  root.querySelectorAll<HTMLButtonElement>("[data-workspace-section]").forEach((button) => {
+function navigateWorkspace(section: WorkspaceSection): void {
+  state.ui.workspaceSection = section;
+  state.ui.toast = null;
+  persistUi();
+  render();
+  const heading = root.querySelector<HTMLElement>(".content-column h1");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    heading.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function closeProjectCreateDialog(): void {
+  state.ui.projectCreateOpen = false;
+  render();
+  root.querySelector<HTMLButtonElement>("[data-action='create-project']")?.focus();
+}
+
+function bindProductionResourcesEvents(scope: HTMLElement): void {
+  applyAccessibleControlSemantics(scope);
+  scope.querySelector<HTMLSelectElement>("[data-action='production-shot-scene-filter']")?.addEventListener("change", (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    state.ui.productionShotSceneFilter = select.value === "all" ? null : select.value;
+    state.ui.selectedProductionShotId = null;
+    persistUi();
+    render();
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='production-shot-row-select']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedProductionShotId = button.dataset.shotId ?? null;
+      persistUi();
+      render();
+    });
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-shot-create']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createProductionShotRecord(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-shot-update']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateSelectedProductionShot(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='production-shot-reorder']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void reorderSelectedProductionShot(button.dataset.direction === "-1" ? -1 : 1);
+    });
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-shots-markdown-export']")?.addEventListener("click", () => {
+    void exportProductionShots("markdown");
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-shots-csv-export']")?.addEventListener("click", () => {
+    void exportProductionShots("csv");
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='production-location-row-select']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedProductionLocationId = button.dataset.locationId ?? null;
+      persistUi();
+      render();
+    });
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-location-create']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createProductionLocationRecord(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-location-update']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateSelectedProductionLocation(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-location-apply-call-sheet']")?.addEventListener("click", () => {
+    void applySelectedProductionLocationToCallSheet();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-location-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionLocation();
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='production-talent-row-select']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedProductionTalentId = button.dataset.talentId ?? null;
+      persistUi();
+      render();
+    });
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-talent-create']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createProductionTalentRecord(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-talent-update']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateSelectedProductionTalent(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-talent-apply-call-sheet']")?.addEventListener("click", () => {
+    void applySelectedProductionTalentToCallSheet();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-talent-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionTalent();
+  });
+}
+
+function bindProductionDocumentsEvents(scope: HTMLElement): void {
+  applyAccessibleControlSemantics(scope);
+  bindWorkspaceNavigation(scope);
+  scope.querySelector<HTMLSelectElement>("[data-action='call-sheet-select']")?.addEventListener("change", (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    state.ui.selectedCallSheetId = select.value;
+    persistUi();
+    render();
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='call-sheet-create']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createProductionCallSheet(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='call-sheet-update']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateSelectedProductionCallSheet(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelectorAll<HTMLFormElement>("form[data-action='call-sheet-cast-update']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void updateSelectedProductionCallSheetCastCall(event.currentTarget as HTMLFormElement);
+    });
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='call-sheet-status-toggle']")?.addEventListener("click", () => {
+    void toggleSelectedProductionCallSheetStatus();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='call-sheet-sync']")?.addEventListener("click", () => {
+    void syncSelectedProductionCallSheet();
+  });
+  scope.querySelector<HTMLSelectElement>("[data-action='production-report-select']")?.addEventListener("change", (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    state.ui.selectedProductionReportId = select.value;
+    persistUi();
+    render();
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-report-create']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createProductionReport(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='production-report-update']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateSelectedProductionReport(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelectorAll<HTMLFormElement>("form[data-action='production-report-scene-update']").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void updateSelectedProductionReportScene(event.currentTarget as HTMLFormElement);
+    });
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-report-status-toggle']")?.addEventListener("click", () => {
+    void toggleSelectedProductionReportStatus();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-report-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionReport();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-report-csv-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionReportSceneCsv();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='export-call-sheet']")?.addEventListener("click", () => {
+    void exportSelectedCallSheet();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-sides-markdown-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionSides("markdown");
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='production-sides-html-export']")?.addEventListener("click", () => {
+    void exportSelectedProductionSides("html");
+  });
+}
+
+function bindBackupEvents(scope: ParentNode): void {
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='backup']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void exportBackup();
+    });
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore']")?.addEventListener("click", () => {
+    void restoreDryRun();
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='restore-file-preview']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void previewEncryptedBackup();
+    });
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='backup-r2-manifest']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void previewStoredBackupManifest();
+    });
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='backup-r2-preview']")?.addEventListener("click", () => {
+    void previewStoredBackupObject();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-gate-check']")?.addEventListener("click", () => {
+    void checkRestoreCommitGate();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-approval-record']")?.addEventListener("click", () => {
+    void recordRestoreApproval();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-commit-storage-check']")?.addEventListener("click", () => {
+    void checkRestoreCommitStorage();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-application-preflight-check']")?.addEventListener("click", () => {
+    void checkRestoreApplicationPreflight();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-application-commit']")?.addEventListener("click", () => {
+    void commitRestoreApplicationCoreRecords();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-attachment-package-check']")?.addEventListener("click", () => {
+    void checkRestoreAttachmentPackageDryRun();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-attachment-package-verify']")?.addEventListener("click", () => {
+    void checkRestoreAttachmentPackageVerificationDryRun();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-plan']")?.addEventListener("click", () => {
+    void checkRestoreAttachmentObjectPlanDryRun();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-commit-preflight']")?.addEventListener("click", () => {
+    void checkRestoreAttachmentObjectCommitPreflight();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-commit']")?.addEventListener("click", () => {
+    void commitRestoreAttachmentObjects();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-planning-check']")?.addEventListener("click", () => {
+    void checkRestorePlanningDryRun();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='restore-planning-commit']")?.addEventListener("click", () => {
+    void commitRestorePlanningRows();
+  });
+}
+
+function bindIntegrationEvents(scope: ParentNode): void {
+  applyAccessibleControlSemantics(scope);
+  scope.querySelector<HTMLButtonElement>("[data-action='google-drive-sync-dry-run']")?.addEventListener("click", () => {
+    void handleGoogleDriveSyncDryRun();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='google-connection-check']")?.addEventListener("click", () => {
+    void handleGoogleConnectionCheck();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='google-connect']")?.addEventListener("click", () => {
+    void handleGoogleConnect();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='google-disconnect']")?.addEventListener("click", () => {
+    void handleGoogleDisconnect();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='google-drive-manifest']")?.addEventListener("click", () => {
+    void handleGoogleDriveManifest();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='google-drive-manifest-next']")?.addEventListener("click", () => {
+    void handleGoogleDriveManifest(true);
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='meta-connection-check']")?.addEventListener("click", () => {
+    void handleMetaConnectionCheck();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='meta-connect']")?.addEventListener("click", () => {
+    void handleMetaConnect();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='meta-pages']")?.addEventListener("click", () => {
+    void handleMetaPageCandidates();
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-action='meta-select-page']").forEach((button) => {
+    button.addEventListener("click", () => void handleMetaPageSelection(button.dataset.pageId ?? ""));
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='meta-analytics']")?.addEventListener("click", () => {
+    void handleMetaAnalytics();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='meta-disconnect']")?.addEventListener("click", () => {
+    void handleMetaDisconnect();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='provider-runtime-readiness']")?.addEventListener("click", () => {
+    void handleProviderRuntimeReadiness();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='sms-consent-manifest']")?.addEventListener("click", () => {
+    void handleSmsConsentManifest();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='telnyx-provider-readiness']")?.addEventListener("click", () => {
+    void handleTelnyxProviderReadiness();
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='sms-consent-enroll']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void handleSmsConsentEnrollment(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLFormElement>("form[data-action='sms-send']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void handleSmsSend(event.currentTarget as HTMLFormElement);
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='stripe-summary-readiness']")?.addEventListener("click", () => {
+    void handleStripeSummaryReadiness();
+  });
+  scope.querySelector<HTMLButtonElement>("[data-action='stripe-summary-fetch']")?.addEventListener("click", () => {
+    void handleStripeSummaryFetch();
+  });
+  scope.querySelectorAll<HTMLButtonElement>("[data-integration]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.integration;
+      if (isIntegrationKey(key)) {
+        state.ui.inspectorTab = "details";
+        state.ui.inspectorView = "integrations";
+        persistUi();
+        void handleProviderDryRun(key);
+      }
+    });
+  });
+
+
+}
+
+function bindWorkspaceNavigation(scope: ParentNode): void {
+  scope.querySelectorAll<HTMLButtonElement>("[data-workspace-section]").forEach((button) => {
     button.addEventListener("click", () => {
       const section = button.dataset.workspaceSection;
       if (!isWorkspaceSection(section)) return;
-      state.ui.workspaceSection = section;
-      state.ui.toast = null;
-      persistUi();
-      render();
+      navigateWorkspace(section);
+    });
+  });
+}
+
+function bindEvents(): void {
+  bindBackupEvents(root);
+  bindWorkspaceNavigation(root);
+  root.querySelectorAll<HTMLButtonElement>("[data-open-call-sheet]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.selectedCallSheetId = button.dataset.openCallSheet ?? null;
+      navigateWorkspace("call-sheets");
     });
   });
 
   root.querySelector<HTMLSelectElement>("[data-action='workspace-section-select']")?.addEventListener("change", (event) => {
     const select = event.currentTarget;
     if (!(select instanceof HTMLSelectElement) || !isWorkspaceSection(select.value)) return;
-    state.ui.workspaceSection = select.value;
-    state.ui.toast = null;
-    persistUi();
-    render();
+    navigateWorkspace(select.value);
   });
 
   root.querySelectorAll<HTMLElement>("[data-action='project-select']").forEach((element) => {
@@ -8833,11 +6691,6 @@ function bindEvents(): void {
     nextInput?.setSelectionRange(cursor, cursor);
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-action='backup']").forEach((button) => {
-    button.addEventListener("click", () => {
-      void exportBackup();
-    });
-  });
   root.querySelector<HTMLButtonElement>("[data-action='export-project-packet']")?.addEventListener("click", () => {
     void exportSelectedProjectPacket();
   });
@@ -8881,139 +6734,6 @@ function bindEvents(): void {
   root.querySelector<HTMLFormElement>("form[data-action='schedule-budget-update']")?.addEventListener("submit", (event) => {
     event.preventDefault();
     void updateSelectedScheduleBudgetScenario(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLSelectElement>("[data-action='production-shot-scene-filter']")?.addEventListener("change", (event) => {
-    const select = event.currentTarget;
-    if (!(select instanceof HTMLSelectElement)) return;
-    state.ui.productionShotSceneFilter = select.value === "all" ? null : select.value;
-    state.ui.selectedProductionShotId = null;
-    persistUi();
-    render();
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='production-shot-row-select']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.selectedProductionShotId = button.dataset.shotId ?? null;
-      persistUi();
-      render();
-    });
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-shot-create']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void createProductionShotRecord(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-shot-update']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void updateSelectedProductionShot(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='production-shot-reorder']").forEach((button) => {
-    button.addEventListener("click", () => {
-      void reorderSelectedProductionShot(button.dataset.direction === "-1" ? -1 : 1);
-    });
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-shots-markdown-export']")?.addEventListener("click", () => {
-    void exportProductionShots("markdown");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-shots-csv-export']")?.addEventListener("click", () => {
-    void exportProductionShots("csv");
-  });
-  root.querySelector<HTMLSelectElement>("[data-action='call-sheet-select']")?.addEventListener("change", (event) => {
-    const select = event.currentTarget;
-    if (!(select instanceof HTMLSelectElement)) return;
-    state.ui.selectedCallSheetId = select.value;
-    persistUi();
-    render();
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='call-sheet-create']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void createProductionCallSheet(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='call-sheet-update']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void updateSelectedProductionCallSheet(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelectorAll<HTMLFormElement>("form[data-action='call-sheet-cast-update']").forEach((form) => {
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void updateSelectedProductionCallSheetCastCall(event.currentTarget as HTMLFormElement);
-    });
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='call-sheet-status-toggle']")?.addEventListener("click", () => {
-    void toggleSelectedProductionCallSheetStatus();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='call-sheet-sync']")?.addEventListener("click", () => {
-    void syncSelectedProductionCallSheet();
-  });
-  root.querySelector<HTMLSelectElement>("[data-action='production-report-select']")?.addEventListener("change", (event) => {
-    const select = event.currentTarget;
-    if (!(select instanceof HTMLSelectElement)) return;
-    state.ui.selectedProductionReportId = select.value;
-    persistUi();
-    render();
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-report-create']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void createProductionReport(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-report-update']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void updateSelectedProductionReport(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelectorAll<HTMLFormElement>("form[data-action='production-report-scene-update']").forEach((form) => {
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void updateSelectedProductionReportScene(event.currentTarget as HTMLFormElement);
-    });
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-report-status-toggle']")?.addEventListener("click", () => {
-    void toggleSelectedProductionReportStatus();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-report-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionReport();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-report-csv-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionReportSceneCsv();
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='production-location-row-select']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.selectedProductionLocationId = button.dataset.locationId ?? null;
-      persistUi();
-      render();
-    });
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-location-create']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void createProductionLocationRecord(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-location-update']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void updateSelectedProductionLocation(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-location-apply-call-sheet']")?.addEventListener("click", () => {
-    void applySelectedProductionLocationToCallSheet();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-location-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionLocation();
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='production-talent-row-select']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.selectedProductionTalentId = button.dataset.talentId ?? null;
-      persistUi();
-      render();
-    });
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-talent-create']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void createProductionTalentRecord(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='production-talent-update']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void updateSelectedProductionTalent(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-talent-apply-call-sheet']")?.addEventListener("click", () => {
-    void applySelectedProductionTalentToCallSheet();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-talent-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionTalent();
   });
   root.querySelectorAll<HTMLInputElement>("[data-action='schedule-day-date']").forEach((input) => {
     input.addEventListener("change", () => {
@@ -9099,15 +6819,6 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='export-project-directory']")?.addEventListener("click", () => {
     void exportProjectDirectory();
   });
-  root.querySelector<HTMLButtonElement>("[data-action='export-call-sheet']")?.addEventListener("click", () => {
-    void exportSelectedCallSheet();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-sides-markdown-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionSides("markdown");
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='production-sides-html-export']")?.addEventListener("click", () => {
-    void exportSelectedProductionSides("html");
-  });
   root.querySelector<HTMLButtonElement>("[data-action='export-task-list']")?.addEventListener("click", () => {
     void exportSelectedTaskList();
   });
@@ -9129,9 +6840,7 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='export-team-roster']")?.addEventListener("click", () => {
     void exportTeamRoster();
   });
-  root.querySelector<HTMLButtonElement>("[data-action='restore']")?.addEventListener("click", () => {
-    void restoreDryRun();
-  });
+
   root.querySelectorAll<HTMLButtonElement>("[data-action='create-project']").forEach((button) => {
     button.addEventListener("click", () => {
       state.ui.projectCreateOpen = true;
@@ -9141,15 +6850,19 @@ function bindEvents(): void {
     });
   });
   root.querySelectorAll<HTMLButtonElement>("[data-action='project-create-cancel']").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.projectCreateOpen = false;
-      render();
-    });
+    button.addEventListener("click", closeProjectCreateDialog);
   });
-  root.querySelector<HTMLElement>("[data-action='project-create-backdrop']")?.addEventListener("click", (event) => {
+  const projectDialog = root.querySelector<HTMLDialogElement>("[data-action='project-create-backdrop']");
+  projectDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeProjectCreateDialog();
+  });
+  projectDialog?.addEventListener("click", (event) => {
     if (event.target !== event.currentTarget) return;
-    state.ui.projectCreateOpen = false;
-    render();
+    const rect = projectDialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      closeProjectCreateDialog();
+    }
   });
   root.querySelector<HTMLFormElement>("form[data-action='project-create-form']")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -9160,19 +6873,7 @@ function bindEvents(): void {
   root.querySelector<HTMLButtonElement>("[data-action='sync-dry-run']")?.addEventListener("click", () => {
     void syncQueuedOperations();
   });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='restore-file-preview']").forEach((button) => {
-    button.addEventListener("click", () => {
-      void previewEncryptedBackup();
-    });
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='backup-r2-manifest']").forEach((button) => {
-    button.addEventListener("click", () => {
-      void previewStoredBackupManifest();
-    });
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='backup-r2-preview']")?.addEventListener("click", () => {
-    void previewStoredBackupObject();
-  });
+
   root.querySelector<HTMLButtonElement>("[data-action='planning-export-refresh']")?.addEventListener("click", () => {
     void refreshPlanningExportForReview();
   });
@@ -9197,101 +6898,7 @@ function bindEvents(): void {
     const button = event.currentTarget as HTMLButtonElement;
     void previewWorkerAuditManifest(Number(button.dataset.offset ?? 0));
   });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-gate-check']")?.addEventListener("click", () => {
-    void checkRestoreCommitGate();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-approval-record']")?.addEventListener("click", () => {
-    void recordRestoreApproval();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-commit-storage-check']")?.addEventListener("click", () => {
-    void checkRestoreCommitStorage();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-application-preflight-check']")?.addEventListener("click", () => {
-    void checkRestoreApplicationPreflight();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-application-commit']")?.addEventListener("click", () => {
-    void commitRestoreApplicationCoreRecords();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-attachment-package-check']")?.addEventListener("click", () => {
-    void checkRestoreAttachmentPackageDryRun();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-attachment-package-verify']")?.addEventListener("click", () => {
-    void checkRestoreAttachmentPackageVerificationDryRun();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-plan']")?.addEventListener("click", () => {
-    void checkRestoreAttachmentObjectPlanDryRun();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-commit-preflight']")?.addEventListener("click", () => {
-    void checkRestoreAttachmentObjectCommitPreflight();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-attachment-objects-commit']")?.addEventListener("click", () => {
-    void commitRestoreAttachmentObjects();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-planning-check']")?.addEventListener("click", () => {
-    void checkRestorePlanningDryRun();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='restore-planning-commit']")?.addEventListener("click", () => {
-    void commitRestorePlanningRows();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-drive-sync-dry-run']")?.addEventListener("click", () => {
-    void handleGoogleDriveSyncDryRun();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-connection-check']")?.addEventListener("click", () => {
-    void handleGoogleConnectionCheck();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-connect']")?.addEventListener("click", () => {
-    void handleGoogleConnect();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-disconnect']")?.addEventListener("click", () => {
-    void handleGoogleDisconnect();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-drive-manifest']")?.addEventListener("click", () => {
-    void handleGoogleDriveManifest();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='google-drive-manifest-next']")?.addEventListener("click", () => {
-    void handleGoogleDriveManifest(true);
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='meta-connection-check']")?.addEventListener("click", () => {
-    void handleMetaConnectionCheck();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='meta-connect']")?.addEventListener("click", () => {
-    void handleMetaConnect();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='meta-pages']")?.addEventListener("click", () => {
-    void handleMetaPageCandidates();
-  });
-  root.querySelectorAll<HTMLButtonElement>("[data-action='meta-select-page']").forEach((button) => {
-    button.addEventListener("click", () => void handleMetaPageSelection(button.dataset.pageId ?? ""));
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='meta-analytics']")?.addEventListener("click", () => {
-    void handleMetaAnalytics();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='meta-disconnect']")?.addEventListener("click", () => {
-    void handleMetaDisconnect();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='provider-runtime-readiness']")?.addEventListener("click", () => {
-    void handleProviderRuntimeReadiness();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='sms-consent-manifest']")?.addEventListener("click", () => {
-    void handleSmsConsentManifest();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='telnyx-provider-readiness']")?.addEventListener("click", () => {
-    void handleTelnyxProviderReadiness();
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='sms-consent-enroll']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void handleSmsConsentEnrollment(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLFormElement>("form[data-action='sms-send']")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void handleSmsSend(event.currentTarget as HTMLFormElement);
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='stripe-summary-readiness']")?.addEventListener("click", () => {
-    void handleStripeSummaryReadiness();
-  });
-  root.querySelector<HTMLButtonElement>("[data-action='stripe-summary-fetch']")?.addEventListener("click", () => {
-    void handleStripeSummaryFetch();
-  });
+
   root.querySelectorAll<HTMLButtonElement>("[data-action='permission-manifest']").forEach((button) => {
     button.addEventListener("click", () => {
       const mode = button.dataset.permissionMode === "expired" ? "expired" : "active";
@@ -9641,18 +7248,6 @@ function bindEvents(): void {
   });
   root.querySelector<HTMLButtonElement>("[data-action='auth-sign-out']")?.addEventListener("click", () => {
     void handleSignOut();
-  });
-
-  root.querySelectorAll<HTMLButtonElement>("[data-integration]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const key = button.dataset.integration;
-      if (isIntegrationKey(key)) {
-        state.ui.inspectorTab = "details";
-        state.ui.inspectorView = "integrations";
-        persistUi();
-        void handleProviderDryRun(key);
-      }
-    });
   });
 
   root.querySelector<HTMLButtonElement>("[data-action='integrations-open']")?.addEventListener("click", () => {
@@ -10136,11 +7731,15 @@ async function applyGoogleOAuthOutcome(result: { outcome: "connected" | "error";
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkGoogleConnection, runProviderDryRun } = await import("./provider-client");
+    if (!isCurrent()) return;
     const [connection, provider] = await Promise.all([
       checkGoogleConnection(WORKER_URL, csrfToken, state.workspace.id),
       runProviderDryRun(WORKER_URL, "google", csrfToken),
     ]);
+    if (!isCurrent()) return;
     state.googleConnection = { ...connection, checkedAt: new Date().toISOString() };
     state.providerPreview = { ...provider, checkedAt: new Date().toISOString() };
     state.workspace.auditLog.unshift(createAuditEvent(
@@ -10149,10 +7748,12 @@ async function applyGoogleOAuthOutcome(result: { outcome: "connected" | "error";
       result.outcome === "connected" ? "teal" : "amber",
     ));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = result.outcome === "connected" && connection.connection?.status === "active"
       ? "Google connected to this workspace."
       : googleOAuthErrorMessage(result.code);
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Google callback check blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -10185,27 +7786,34 @@ async function applyMetaOAuthOutcome(result: { outcome: "connected" | "error"; c
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkMetaConnection, runProviderDryRun, fetchMetaPageCandidates } = await import("./provider-client");
+    if (!isCurrent()) return;
     const [connection, provider] = await Promise.all([
       checkMetaConnection(WORKER_URL, csrfToken, state.workspace.id),
       runProviderDryRun(WORKER_URL, "social", csrfToken),
     ]);
+    if (!isCurrent()) return;
     state.metaConnection = { ...connection, checkedAt: new Date().toISOString() };
     state.providerPreview = { ...provider, checkedAt: new Date().toISOString() };
     if (result.outcome === "connected" && connection.connection?.status === "pending_page_selection") {
       const candidates = await fetchMetaPageCandidates(WORKER_URL, csrfToken, state.workspace.id);
       state.metaPageCandidates = { ...candidates, checkedAt: new Date().toISOString() };
     }
+    if (!isCurrent()) return;
     state.workspace.auditLog.unshift(createAuditEvent(
       result.outcome === "connected" ? "Meta connected; Page selection required" : "Meta connection failed",
       "System",
       result.outcome === "connected" ? "teal" : "amber",
     ));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = result.outcome === "connected" && connection.connection?.status === "pending_page_selection"
-      ? "Meta authorized. Select the Big Sword Page to enable read-only analytics."
+      ? "Meta authorized. Select a Facebook Page to enable read-only analytics."
       : metaOAuthErrorMessage(result.code);
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta callback check blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -10297,6 +7905,16 @@ async function handleMagicLinkVerify(): Promise<void> {
 
 async function handleSignOut(): Promise<void> {
   const csrfToken = state.auth.session?.csrfToken;
+  clearPersistedAuthSession();
+  Object.assign(state, emptyIntegrationResults());
+  state.auth = {
+    email: state.auth.email,
+    status: "signed_out",
+    emailHash: null,
+    devOnlyToken: null,
+    session: null,
+  };
+  render();
 
   try {
     if (csrfToken) {
@@ -10307,15 +7925,6 @@ async function handleSignOut(): Promise<void> {
     state.ui.toast = `Local session cleared; Worker sign-out failed: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
 
-  clearPersistedAuthSession();
-
-  state.auth = {
-    email: state.auth.email,
-    status: "signed_out",
-    emailHash: null,
-    devOnlyToken: null,
-    session: null,
-  };
   render();
 }
 
@@ -13135,13 +10744,21 @@ async function handleRecordPermissionRevoke(permissionId: string): Promise<void>
   }
 }
 
+function captureCurrentIntegrationContext(): () => boolean {
+  return captureIntegrationContext(() => ({ session: state.auth.session, workspaceId: state.workspace.id }));
+}
+
 async function handleProviderDryRun(key: IntegrationKey): Promise<void> {
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { runProviderDryRun } = await import("./provider-client");
+    if (!isCurrent()) return;
     const provider = await runProviderDryRun(
       WORKER_URL,
       key,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
     );
+    if (!isCurrent()) return;
     state.providerPreview = {
       ...provider,
       checkedAt: new Date().toISOString(),
@@ -13159,8 +10776,10 @@ async function handleProviderDryRun(key: IntegrationKey): Promise<void> {
     }
     state.workspace.auditLog.unshift(createAuditEvent(`${provider.label} dry-run preflight checked`, "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = `${provider.label} dry run checked by the Worker.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Provider dry run blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13173,13 +10792,19 @@ async function handleTelnyxProviderReadiness(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkTelnyxProviderStatus } = await import("./provider-client");
+    if (!isCurrent()) return;
     const readiness = await checkTelnyxProviderStatus(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.telnyxProviderReadiness = { ...readiness, checkedAt: new Date().toISOString() };
     state.workspace.auditLog.unshift(createAuditEvent("Telnyx provider readiness checked", "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = `Telnyx: ${readiness.status.replaceAll("_", " ")}.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Telnyx readiness blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13192,11 +10817,16 @@ async function handleSmsConsentManifest(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { fetchSmsConsentManifest } = await import("./provider-client");
+    if (!isCurrent()) return;
     const manifest = await fetchSmsConsentManifest(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.smsConsentManifest = { ...manifest, checkedAt: new Date().toISOString() };
     state.ui.toast = `SMS consent records: ${manifest.count}.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `SMS consent review blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13205,32 +10835,6 @@ async function handleSmsConsentManifest(): Promise<void> {
 function canManageSmsConsent(): boolean {
   const role = state.auth.session?.role;
   return role === "owner" || role === "producer";
-}
-
-function renderSmsConsentEnrollmentForm(): string {
-  return `
-    <form class="invite-form sms-consent-form" data-action="sms-consent-enroll">
-      <label class="sms-consent-phone">
-        <span>Mobile number</span>
-        <input name="recipientE164" type="tel" inputmode="tel" autocomplete="tel" placeholder="+15051234567" required>
-      </label>
-      <fieldset class="sms-recipient-fieldset">
-        <legend>Production messages</legend>
-        ${TELNYX_SMS_CATEGORIES.map((category) => `
-          <label class="sms-recipient-option">
-            <input type="checkbox" name="category" value="${category}" checked>
-            <span>${TELNYX_SMS_CATEGORY_LABELS[category]}</span>
-          </label>
-        `).join("")}
-      </fieldset>
-      <label class="sms-consent-disclosure">
-        <input type="checkbox" name="disclosureAcknowledged" required>
-        <span>${escapeHtml(TELNYX_SMS_CONSENT_DISCLOSURE)}</span>
-      </label>
-      <small class="sms-consent-links"><a href="/sms.html" target="_blank" rel="noreferrer">SMS terms</a> · <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a> · <a href="/terms.html" target="_blank" rel="noreferrer">Terms</a></small>
-      <button type="submit">${icon("provider")} Enable crew texts</button>
-    </form>
-  `;
 }
 
 async function handleSmsConsentEnrollment(form: HTMLFormElement): Promise<void> {
@@ -13250,13 +10854,17 @@ async function handleSmsConsentEnrollment(form: HTMLFormElement): Promise<void> 
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { commitSmsSelfConsent } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await commitSmsSelfConsent(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       recipientE164,
       categories,
       disclosureVersion: TELNYX_SMS_DISCLOSURE_VERSION,
     });
+    if (!isCurrent()) return;
     form.reset();
     state.ui.toast = result.idempotent ? "Crew text consent was already recorded." : "Crew text consent recorded.";
     if (canManageSmsConsent()) {
@@ -13264,7 +10872,9 @@ async function handleSmsConsentEnrollment(form: HTMLFormElement): Promise<void> 
     } else {
       render();
     }
+    if (!isCurrent()) return;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Crew text enrollment blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
     render();
   }
@@ -13295,7 +10905,10 @@ async function handleSmsSend(form: HTMLFormElement): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { sendSmsBatch } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await sendSmsBatch(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       projectId: project.id,
@@ -13306,333 +10919,42 @@ async function handleSmsSend(form: HTMLFormElement): Promise<void> {
       emergencyOverride,
       emergencyReasonCode: rawReason === "immediate_safety" || rawReason === "location_emergency" ? rawReason : null,
     });
-    state.ui.toast = `SMS send: ${result.queuedCount} queued, ${result.failedCount} failed, ${result.replayedCount} replayed.`;
+    if (!isCurrent()) return;
+    state.ui.toast = `SMS send: ${result.queuedCount} queued, ${result.failedCount} failed, ${result.suppressedCount ?? 0} suppressed, ${result.replayedCount} replayed.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `SMS send blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
 }
 
-function renderTelnyxProviderReadiness(readiness: TelnyxProviderReadinessState): string {
-  const configuredCount = Object.values(readiness.configured).filter(Boolean).length;
-  const configuredTotal = Object.keys(readiness.configured).length;
-  const campaignLabel = readiness.campaign.status?.replaceAll("_", " ") ?? "Campaign unavailable";
-  const numberLabel = readiness.number.campaignAssigned
-    ? "Campaign assigned"
-    : readiness.number.assignmentStatus?.replaceAll("_", " ") ?? "Campaign not assigned";
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${escapeHtml(readiness.status.replaceAll("_", " "))}</strong>
-        <span>${configuredCount}/${configuredTotal} configuration checks</span>
-        <small>Webhook ${readiness.activationGates.webhookLive ? "live" : "closed"} - send ${readiness.activationGates.sendLive ? "live" : "closed"}</small>
-      </div>
-      <ul class="provider-runtime-list">
-        <li>
-          <span class="status-dot ${readiness.profile.enabled && readiness.profile.nameMatches && readiness.profile.webhookMatches && readiness.profile.webhookApiV2 ? "teal" : "gray"}"></span>
-          <div>
-            <strong>Film profile</strong>
-            <span>${readiness.profile.reachable ? (readiness.profile.enabled ? "Enabled" : "Disabled") : "Unavailable"}</span>
-            <small>name ${readiness.profile.nameMatches ? "matched" : "unmatched"} - webhook ${readiness.profile.webhookMatches && readiness.profile.webhookApiV2 ? "v2 ready" : "not ready"}</small>
-          </div>
-        </li>
-        <li>
-          <span class="status-dot ${readiness.campaign.active && readiness.campaign.mno.rejected === 0 ? "teal" : readiness.campaign.mno.review > 0 ? "amber" : "gray"}"></span>
-          <div>
-            <strong>${escapeHtml(campaignLabel)}</strong>
-            <span>${readiness.campaign.mno.approved} approved - ${readiness.campaign.mno.review} review - ${readiness.campaign.mno.rejected} rejected</span>
-            <small>${readiness.campaign.mno.total} carrier status${readiness.campaign.mno.total === 1 ? "" : "es"}</small>
-          </div>
-        </li>
-        <li>
-          <span class="status-dot ${readiness.number.campaignAssigned ? "teal" : readiness.number.profileAssigned && readiness.number.smsCapable ? "amber" : "gray"}"></span>
-          <div>
-            <strong>505 sender</strong>
-            <span>${escapeHtml(numberLabel)}</span>
-            <small>SMS ${readiness.number.smsCapable ? "ready" : "unavailable"} - profile ${readiness.number.profileAssigned ? "assigned" : "unassigned"}</small>
-          </div>
-        </li>
-      </ul>
-      ${readiness.blockers.length ? `<small>${escapeHtml(readiness.blockers.slice(0, 3).join(" "))}</small>` : ""}
-      <small>${escapeHtml(readiness.persistence.replaceAll("_", " "))}${readiness.auditPersistence ? ` - ${escapeHtml(readiness.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function renderSmsConsentManifest(manifest: SmsConsentManifestState): string {
-  const activeRecipients = manifest.recipients.filter((recipient) => recipient.status === "active");
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${manifest.count} consent record${manifest.count === 1 ? "" : "s"}</strong>
-        <span>${manifest.truncated ? "Bounded result" : "Complete result"}</span>
-        <small>${escapeHtml(manifest.persistence.replaceAll("_", " "))} - no phone, hash, or ciphertext values</small>
-      </div>
-      ${
-        manifest.recipients.length
-          ? `<ul class="provider-runtime-list">
-              ${manifest.recipients.map((recipient) => `
-                <li>
-                  <span class="status-dot ${recipient.status === "active" ? "teal" : "gray"}"></span>
-                  <div>
-                    <strong>${escapeHtml(recipient.memberId ?? "Unlinked recipient")}</strong>
-                    <span>${escapeHtml(recipient.status)} - ${escapeHtml(recipient.categories.join(", ").replaceAll("_", " ") || "no active categories")}</span>
-                    <small>${escapeHtml(recipient.disclosureVersion ?? "No disclosure version")} - updated ${escapeHtml(formatShortDateTime(recipient.updatedAt))}</small>
-                  </div>
-                </li>
-              `).join("")}
-            </ul>`
-          : `<p class="empty-inline">No SMS consent records.</p>`
-      }
-      ${activeRecipients.length ? renderSmsSendForm(activeRecipients) : ""}
-    </div>
-  `;
-}
-
-function renderSmsSendForm(recipients: SmsConsentManifest["recipients"]): string {
-  return `
-    <form class="invite-form sms-send-form" data-action="sms-send">
-      <fieldset class="sms-recipient-fieldset">
-        <legend>Recipients</legend>
-        ${recipients.slice(0, 10).map((recipient) => `
-          <label class="sms-recipient-option">
-            <input type="checkbox" name="recipientId" value="${escapeAttribute(recipient.id)}">
-            <span>${escapeHtml(recipient.memberId ?? "Unlinked recipient")}</span>
-          </label>
-        `).join("")}
-      </fieldset>
-      <select name="category" aria-label="SMS category" required>
-        <option value="call_sheet">Call sheet</option>
-        <option value="schedule_change">Schedule change</option>
-        <option value="safety_location_alert">Safety or location alert</option>
-      </select>
-      <select name="emergencyReasonCode" aria-label="Emergency reason">
-        <option value="">No emergency reason</option>
-        <option value="immediate_safety">Immediate safety</option>
-        <option value="location_emergency">Location emergency</option>
-      </select>
-      <textarea name="messageBody" rows="4" maxlength="1200" placeholder="Crew message" aria-label="SMS message" required></textarea>
-      <label class="sms-override-option">
-        <input type="checkbox" name="emergencyOverride">
-        <span>Emergency override</span>
-      </label>
-      <button type="submit">${icon("provider")} Send SMS</button>
-    </form>
-  `;
-}
-
 async function handleProviderRuntimeReadiness(): Promise<void> {
+  if (DEMO_MODE || state.providerRuntimeCheck?.status === "checking") return;
+  const isCurrent = captureCurrentIntegrationContext();
+  state.providerRuntimeCheck = { status: "checking" };
+  updateIntegrationRuntime(root, state, DEMO_MODE);
   try {
+    const { checkProviderRuntimeReadiness } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await checkProviderRuntimeReadiness(
       WORKER_URL,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
       state.workspace.id,
     );
+    if (!isCurrent()) return;
     state.providerRuntimeReadiness = {
       ...result,
       checkedAt: new Date().toISOString(),
     };
     state.workspace.auditLog.unshift(createAuditEvent("Provider runtime readiness checked", "System", "blue"));
     await persistWorkspace();
-    state.ui.toast = `Provider runtime readiness: ${result.liveCount} live, ${result.blockedCount} blocked.`;
+    if (!isCurrent()) return;
+    state.providerRuntimeCheck = null;
   } catch (error) {
-    state.ui.toast = `Provider runtime readiness blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
+    if (!isCurrent()) return;
+    state.providerRuntimeCheck = { status: "error", message: error instanceof Error ? error.message : "Worker unavailable" };
   }
-  render();
-}
-
-function renderProviderRuntimeReadiness(readiness: ProviderRuntimeReadinessState): string {
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${readiness.liveCount} live</strong>
-        <span>${readiness.partialLiveCount} partial - ${readiness.blockedCount} blocked</span>
-        <small>${escapeHtml(readiness.policy.replaceAll("_", " "))} - no secret values</small>
-      </div>
-      <ul class="provider-runtime-list">
-        ${readiness.providers.map((provider) => `
-          <li>
-            <span class="status-dot ${provider.status === "live" ? "teal" : provider.status === "partial_live" ? "amber" : "gray"}"></span>
-            <div>
-              <strong>${escapeHtml(provider.label)}</strong>
-              <span>${escapeHtml(provider.runtimeMode.replaceAll("_", " "))}</span>
-              <small>${escapeHtml(provider.liveCapabilities.length ? provider.liveCapabilities.join(", ").replaceAll("_", " ") : provider.blockers[0] ?? "Blocked by explicit provider gate")}</small>
-            </div>
-          </li>
-        `).join("")}
-      </ul>
-      <small>${escapeHtml(readiness.persistence.replaceAll("_", " "))}${readiness.auditPersistence ? ` - ${escapeHtml(readiness.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function renderGoogleConnection(status: GoogleConnectionState): string {
-  const connection = status.connection;
-  const active = connection?.status === "active";
-  const scopeLabels = connection?.scopes.map((scope) => scope.split("/").at(-1) ?? scope) ?? [];
-  return `
-    <div class="provider-preview" role="status">
-      <strong>${active ? "Google connected" : "Google connection"}</strong>
-      <span>${active ? `${scopeLabels.length} approved scope${scopeLabels.length === 1 ? "" : "s"}` : status.readiness.status.replaceAll("_", " ")}</span>
-      ${active && scopeLabels.length ? `<span>${escapeHtml(scopeLabels.join(", "))}</span>` : ""}
-      ${active && connection?.tokenExpiresAt ? `<small>Access refresh due ${escapeHtml(formatShortDateTime(connection.tokenExpiresAt))}</small>` : ""}
-      ${!active && status.readiness.blockers.length ? `<small>${escapeHtml(status.readiness.blockers[0] ?? "Google OAuth is not enabled.")}</small>` : ""}
-      <div class="inline-actions">
-        ${active
-          ? `
-              <button class="secondary-button" type="button" data-action="google-drive-manifest">${icon("folder")} Read Drive</button>
-              <button class="secondary-button" type="button" data-action="google-disconnect">Disconnect</button>
-            `
-          : `<button class="secondary-button" type="button" data-action="google-connect"${status.readiness.liveOAuthAllowed ? "" : " disabled"}>${icon("provider")} Connect Google</button>`}
-      </div>
-      <small>${escapeHtml(status.persistence.replaceAll("_", " "))}${status.auditPersistence ? ` - ${escapeHtml(status.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function renderMetaConnection(status: MetaConnectionState): string {
-  const connection = status.connection;
-  const active = connection?.status === "active";
-  const pending = connection?.status === "pending_page_selection";
-  const accountLabel = connection?.page?.name
-    ?? connection?.instagramAccount?.username
-    ?? (pending ? "Page selection pending" : status.readiness.status.replaceAll("_", " "));
-  return `
-    <div class="provider-preview" role="status">
-      <strong>${active ? "Meta connected" : "Meta connection"}</strong>
-      <span>${escapeHtml(accountLabel)}</span>
-      ${active && connection?.instagramAccount ? `<span>Instagram: ${escapeHtml(connection.instagramAccount.username ? `@${connection.instagramAccount.username}` : connection.instagramAccount.id)}</span>` : ""}
-      ${connection?.tokenExpiresAt ? `<small>Authorization expires ${escapeHtml(formatShortDateTime(connection.tokenExpiresAt))}</small>` : ""}
-      ${!connection && status.readiness.blockers.length ? `<small>${escapeHtml(status.readiness.blockers[0] ?? "Meta OAuth is not enabled.")}</small>` : ""}
-      <div class="inline-actions">
-        ${active ? `<button class="secondary-button" type="button" data-action="meta-analytics">${icon("calendar")} Read 30 days</button>` : ""}
-        ${active || pending ? `<button class="secondary-button" type="button" data-action="meta-pages">${icon("provider")} Pages</button>` : ""}
-        ${active || pending ? `<button class="secondary-button" type="button" data-action="meta-disconnect">Disconnect</button>` : ""}
-        ${!active && !pending ? `<button class="secondary-button" type="button" data-action="meta-connect"${status.readiness.liveOAuthAllowed ? "" : " disabled"}>${icon("provider")} Connect Meta</button>` : ""}
-      </div>
-      <small>${escapeHtml(status.persistence.replaceAll("_", " "))}${status.auditPersistence ? ` - ${escapeHtml(status.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function renderMetaPageCandidates(result: MetaPageCandidatesState): string {
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${result.pages.length} eligible account${result.pages.length === 1 ? "" : "s"}</strong>
-        <span>Page and linked Instagram mapping</span>
-        <small>${escapeHtml(result.persistence.replaceAll("_", " "))} - no access tokens</small>
-      </div>
-      ${result.pages.length
-        ? `<ul class="provider-runtime-list">
-            ${result.pages.map((page) => {
-              const eligible = page.tasks.includes("ANALYZE") && Boolean(page.instagramAccount);
-              return `
-                <li>
-                  <span class="status-dot ${eligible ? "teal" : "gray"}"></span>
-                  <div>
-                    <strong>${escapeHtml(page.name)}</strong>
-                    <span>${page.instagramAccount ? escapeHtml(page.instagramAccount.username ? `@${page.instagramAccount.username}` : page.instagramAccount.id) : "No linked Instagram account"}</span>
-                    <small>${escapeHtml(page.tasks.join(", ").replaceAll("_", " ") || "No Page tasks returned")}</small>
-                  </div>
-                  <button class="secondary-button" type="button" data-action="meta-select-page" data-page-id="${escapeHtml(page.id)}"${eligible ? "" : " disabled"}>Select</button>
-                </li>
-              `;
-            }).join("")}
-          </ul>`
-        : `<p class="empty-inline">No analyzable Page with linked Instagram account.</p>`}
-    </div>
-  `;
-}
-
-function renderMetaAnalytics(result: MetaAnalyticsState): string {
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${result.calendar.length} calendar item${result.calendar.length === 1 ? "" : "s"}</strong>
-        <span>${result.insights.length} insight series - ${escapeHtml(result.status)}</span>
-        <small>${escapeHtml(result.since)} to ${escapeHtml(result.until)}${result.warnings.length ? ` - ${result.warnings.length} partial read warning${result.warnings.length === 1 ? "" : "s"}` : ""}</small>
-      </div>
-      ${result.insights.length
-        ? `<ul class="provider-runtime-list">
-            ${result.insights.map((series) => {
-              const latest = series.values.at(-1)?.value ?? 0;
-              return `
-                <li>
-                  <span class="status-dot ${series.provider === "instagram" ? "amber" : "blue"}"></span>
-                  <div>
-                    <strong>${escapeHtml(formatMetaMetric(series.metric))}</strong>
-                    <span>${escapeHtml(series.provider)} - ${escapeHtml(series.period)}</span>
-                    <small>${escapeHtml(formatCompactNumber(latest))}</small>
-                  </div>
-                </li>
-              `;
-            }).join("")}
-          </ul>`
-        : ""}
-      ${result.calendar.length
-        ? `<ul class="provider-runtime-list">
-            ${result.calendar.map((item) => `
-              <li>
-                <span class="status-dot ${item.provider === "instagram" ? "amber" : "blue"}"></span>
-                <div>
-                  <strong>${item.permalink ? `<a href="${escapeHtml(item.permalink)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>` : escapeHtml(item.label)}</strong>
-                  <span>${escapeHtml(item.provider)} - ${escapeHtml(formatShortDateTime(item.publishedAt))}</span>
-                  <small>${formatCompactNumber(item.engagement.reactions)} reactions - ${formatCompactNumber(item.engagement.comments)} comments - ${formatCompactNumber(item.engagement.shares)} shares</small>
-                </div>
-              </li>
-            `).join("")}
-          </ul>`
-        : `<p class="empty-inline">No published items in this period.</p>`}
-      <small>${escapeHtml(result.persistence.replaceAll("_", " "))}${result.auditPersistence ? ` - ${escapeHtml(result.auditPersistence.replaceAll("_", " "))}` : ""}</small>
-    </div>
-  `;
-}
-
-function formatMetaMetric(value: string): string {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function formatCompactNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
-
-function renderGoogleDriveManifest(result: GoogleDriveManifestState): string {
-  return `
-    <div class="provider-runtime-readiness" role="status">
-      <div class="provider-runtime-summary">
-        <strong>${result.manifest.files.length} Drive item${result.manifest.files.length === 1 ? "" : "s"}</strong>
-        <span>${result.manifest.truncated ? "More items available" : "Folder page complete"}</span>
-        <small>${result.tokenRefreshed ? "Access refreshed - " : ""}${escapeHtml(result.persistence.replaceAll("_", " "))}</small>
-      </div>
-      <ul class="provider-runtime-list">
-        ${result.manifest.files.map((file) => `
-          <li>
-            <span class="status-dot ${file.mimeType === "application/vnd.google-apps.folder" ? "amber" : "teal"}"></span>
-            <div>
-              <strong>${file.webViewLink
-                ? `<a href="${escapeAttribute(file.webViewLink)}" target="_blank" rel="noopener noreferrer">${escapeHtml(file.name)}</a>`
-                : escapeHtml(file.name)}</strong>
-              <span>${escapeHtml(googleDriveMimeLabel(file.mimeType))}</span>
-              <small>${file.modifiedTime ? escapeHtml(formatShortDateTime(file.modifiedTime)) : "No modified date"}${file.sizeBytes === null ? "" : ` - ${escapeHtml(formatBytes(file.sizeBytes))}`}</small>
-            </div>
-          </li>
-        `).join("") || `<li><div><strong>Folder is empty</strong></div></li>`}
-      </ul>
-      ${result.manifest.nextPageToken
-        ? `<button class="secondary-button full-width" type="button" data-action="google-drive-manifest-next">Next page</button>`
-        : ""}
-    </div>
-  `;
-}
-
-function googleDriveMimeLabel(mimeType: string): string {
-  if (mimeType === "application/vnd.google-apps.folder") return "Folder";
-  if (mimeType === "application/vnd.google-apps.document") return "Google Doc";
-  if (mimeType === "application/vnd.google-apps.spreadsheet") return "Google Sheet";
-  if (mimeType === "application/vnd.google-apps.presentation") return "Google Slides";
-  if (mimeType === "application/pdf") return "PDF";
-  return mimeType;
+  updateIntegrationRuntime(root, state, DEMO_MODE);
 }
 
 async function handleGoogleConnectionCheck(): Promise<void> {
@@ -13642,17 +10964,23 @@ async function handleGoogleConnectionCheck(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkGoogleConnection } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await checkGoogleConnection(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.googleConnection = { ...result, checkedAt: new Date().toISOString() };
     state.workspace.auditLog.unshift(createAuditEvent("Google connection status checked", "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = result.connection?.status === "active"
-      ? "Google is connected to this workspace."
+      ? result.connection.reauthorizationRequired ? "Google needs to be reconnected." : "Google is connected to this workspace."
       : result.readiness.liveOAuthAllowed
         ? "Google is ready to connect."
         : "Google connection configuration is incomplete.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Google connection check blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13665,17 +10993,22 @@ async function handleGoogleConnect(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { startGoogleOAuth } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await startGoogleOAuth(
       WORKER_URL,
       csrfToken,
       state.workspace.id,
       { includeDocsExport: false, includeCalendarSync: false },
     );
+    if (!isCurrent()) return;
     state.ui.toast = "Opening Google authorization...";
     render();
     window.location.assign(result.authorizationUrl);
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Google connection blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
     render();
   }
@@ -13689,22 +11022,31 @@ async function handleGoogleDisconnect(): Promise<void> {
     return;
   }
   if (!window.confirm("Disconnect Google and delete the workspace's stored Google tokens?")) return;
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { disconnectGoogle, checkGoogleConnection } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await disconnectGoogle(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
+    const readiness = state.googleConnection?.readiness ?? (await checkGoogleConnection(WORKER_URL, csrfToken, state.workspace.id)).readiness;
+    if (!isCurrent()) return;
     state.googleConnection = {
-      readiness: state.googleConnection?.readiness ?? (await checkGoogleConnection(WORKER_URL, csrfToken, state.workspace.id)).readiness,
+      readiness,
       connection: result.connection,
       persistence: result.persistence,
       auditPersistence: result.auditPersistence,
       checkedAt: new Date().toISOString(),
     };
+    if (!isCurrent()) return;
     state.googleDriveManifest = null;
     state.workspace.auditLog.unshift(createAuditEvent("Google disconnected", "System", "amber"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = result.providerRevoked
       ? "Google disconnected and provider access revoked."
       : "Google disconnected; stored tokens were deleted.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Google disconnect blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13730,7 +11072,10 @@ async function handleGoogleDriveManifest(nextPage = false): Promise<void> {
   }
   const pageToken = nextPage ? state.googleDriveManifest?.manifest.nextPageToken ?? "" : "";
   if (nextPage && !pageToken) return;
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { fetchGoogleDriveManifest } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await fetchGoogleDriveManifest(
       WORKER_URL,
       csrfToken,
@@ -13740,6 +11085,7 @@ async function handleGoogleDriveManifest(nextPage = false): Promise<void> {
         ...(pageToken ? { pageToken } : {}),
       },
     );
+    if (!isCurrent()) return;
     state.googleDriveManifest = { ...result, checkedAt: new Date().toISOString() };
     if (state.googleConnection?.connection) {
       state.googleConnection.connection = {
@@ -13753,9 +11099,20 @@ async function handleGoogleDriveManifest(nextPage = false): Promise<void> {
       "teal",
     ));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = `Google Drive returned ${result.manifest.files.length} items${result.manifest.truncated ? "; more available" : ""}.`;
   } catch (error) {
-    state.ui.toast = `Google Drive read blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
+    if (!isCurrent()) return;
+    const reconnect = error instanceof Error && error.message === "google_reauthorization_required";
+    const changed = error instanceof Error && error.message === "google_connection_changed";
+    if (reconnect) {
+      if (state.googleConnection?.connection) state.googleConnection.connection.reauthorizationRequired = true;
+      state.googleDriveManifest = null;
+    }
+    if (changed) state.googleDriveManifest = null;
+    state.ui.toast = reconnect ? "Google needs to be reconnected."
+      : changed ? "Google connection changed. Check Google before reading again."
+      : `Google Drive read blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
 }
@@ -13771,7 +11128,10 @@ async function handleGoogleDriveSyncDryRun(): Promise<void> {
     return;
   }
 
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { runGoogleDriveSyncDryRun } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await runGoogleDriveSyncDryRun(
       WORKER_URL,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
@@ -13782,14 +11142,17 @@ async function handleGoogleDriveSyncDryRun(): Promise<void> {
         includeCalendarSync: false,
       },
     );
+    if (!isCurrent()) return;
     state.googleDriveSync = {
       ...result,
       checkedAt: new Date().toISOString(),
     };
     state.workspace.auditLog.unshift(createAuditEvent("Google Drive sync dry-run plan checked", "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = "Google Drive sync dry run checked by the Worker.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Google Drive sync dry run blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13802,8 +11165,12 @@ async function handleMetaConnectionCheck(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkMetaConnection } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await checkMetaConnection(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.metaConnection = { ...result, checkedAt: new Date().toISOString() };
     state.ui.toast = result.connection?.status === "active"
       ? "Meta is connected to this workspace."
@@ -13813,6 +11180,7 @@ async function handleMetaConnectionCheck(): Promise<void> {
           ? "Meta is ready to connect."
           : "Meta connection configuration is incomplete.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta connection check blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13825,12 +11193,17 @@ async function handleMetaConnect(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { startMetaOAuth } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await startMetaOAuth(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.ui.toast = "Opening Meta authorization...";
     render();
     window.location.assign(result.authorizationUrl);
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta connection blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
     render();
   }
@@ -13843,11 +11216,16 @@ async function handleMetaPageCandidates(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { fetchMetaPageCandidates } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await fetchMetaPageCandidates(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     state.metaPageCandidates = { ...result, checkedAt: new Date().toISOString() };
     state.ui.toast = `Meta returned ${result.pages.length} Page candidate${result.pages.length === 1 ? "" : "s"}.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta Page discovery blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13860,9 +11238,14 @@ async function handleMetaPageSelection(pageId: string): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { selectMetaPage, checkMetaConnection } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await selectMetaPage(WORKER_URL, csrfToken, state.workspace.id, pageId);
+    if (!isCurrent()) return;
     const readiness = state.metaConnection?.readiness ?? (await checkMetaConnection(WORKER_URL, csrfToken, state.workspace.id)).readiness;
+    if (!isCurrent()) return;
     state.metaConnection = {
       readiness,
       connection: result.connection,
@@ -13874,8 +11257,10 @@ async function handleMetaPageSelection(pageId: string): Promise<void> {
     state.metaAnalytics = null;
     state.workspace.auditLog.unshift(createAuditEvent(`Meta Page selected: ${result.connection.page?.name ?? pageId}`, "System", "teal"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = `${result.connection.page?.name ?? "Meta Page"} connected for read-only analytics.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta Page selection blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13891,7 +11276,10 @@ async function handleMetaAnalytics(): Promise<void> {
   const untilDate = new Date();
   const sinceDate = new Date(untilDate);
   sinceDate.setUTCDate(sinceDate.getUTCDate() - 29);
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { fetchMetaAnalytics } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await fetchMetaAnalytics(
       WORKER_URL,
       csrfToken,
@@ -13901,6 +11289,7 @@ async function handleMetaAnalytics(): Promise<void> {
         until: untilDate.toISOString().slice(0, 10),
       },
     );
+    if (!isCurrent()) return;
     state.metaAnalytics = { ...result, checkedAt: new Date().toISOString() };
     state.workspace.auditLog.unshift(createAuditEvent(
       `Meta analytics read: ${result.calendar.length} calendar items, ${result.insights.length} insight series`,
@@ -13908,8 +11297,10 @@ async function handleMetaAnalytics(): Promise<void> {
       result.status === "complete" ? "teal" : "amber",
     ));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = `Meta read complete: ${result.calendar.length} calendar items and ${result.insights.length} insight series.`;
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta analytics blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13923,9 +11314,14 @@ async function handleMetaDisconnect(): Promise<void> {
     return;
   }
   if (!window.confirm("Disconnect Meta, revoke the grant, and delete stored Meta tokens and account mappings?")) return;
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { disconnectMeta, checkMetaConnection } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await disconnectMeta(WORKER_URL, csrfToken, state.workspace.id);
+    if (!isCurrent()) return;
     const readiness = state.metaConnection?.readiness ?? (await checkMetaConnection(WORKER_URL, csrfToken, state.workspace.id)).readiness;
+    if (!isCurrent()) return;
     state.metaConnection = {
       readiness,
       connection: result.connection,
@@ -13937,22 +11333,28 @@ async function handleMetaDisconnect(): Promise<void> {
     state.metaAnalytics = null;
     state.workspace.auditLog.unshift(createAuditEvent("Meta disconnected", "System", "amber"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = result.providerRevoked
       ? "Meta disconnected and provider access revoked."
       : "Meta disconnected; stored tokens and mappings were deleted.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Meta disconnect blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
 }
 
 async function handleStripeSummaryReadiness(): Promise<void> {
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { checkStripeSummaryReadiness } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await checkStripeSummaryReadiness(
       WORKER_URL,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
       state.workspace.id,
     );
+    if (!isCurrent()) return;
     state.stripeSummary = {
       ...result,
       checkedAt: new Date().toISOString(),
@@ -13962,8 +11364,10 @@ async function handleStripeSummaryReadiness(): Promise<void> {
     }
     state.workspace.auditLog.unshift(createAuditEvent("Stripe summary readiness checked", "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = "Stripe summary readiness checked by the Worker.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Stripe summary readiness blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -13976,21 +11380,27 @@ async function handleStripeSummaryFetch(): Promise<void> {
     render();
     return;
   }
+  const isCurrent = captureCurrentIntegrationContext();
   try {
+    const { fetchStripeSummary } = await import("./provider-client");
+    if (!isCurrent()) return;
     const result = await fetchStripeSummary(
       WORKER_URL,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
       state.workspace.id,
       project.id,
     );
+    if (!isCurrent()) return;
     state.stripeSummaryResult = {
       ...result,
       checkedAt: new Date().toISOString(),
     };
     state.workspace.auditLog.unshift(createAuditEvent("Stripe summary aggregates checked", "System", "blue"));
     await persistWorkspace();
+    if (!isCurrent()) return;
     state.ui.toast = "Stripe summary aggregates checked by the Worker.";
   } catch (error) {
+    if (!isCurrent()) return;
     state.ui.toast = `Stripe summary fetch blocked: ${error instanceof Error ? error.message : "Worker unavailable"}`;
   }
   render();
@@ -14166,12 +11576,6 @@ function countStoredR2Attachments(workspace: WorkspaceData): number {
     (total, project) => total + project.docs.filter((doc) => doc.attachmentStatus === "stored_r2").length,
     0,
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -15239,7 +12643,7 @@ async function exportSelectedProjectPacket(): Promise<void> {
   const exportedAt = new Date().toISOString();
   const { createProjectPacketMarkdown } = await loadLocalHandoffExports();
   const planningRows = localHandoffPlanningRows(planningPanelRowsForProject(project).slice(0, 12));
-  const markdown = createProjectPacketMarkdown(state.workspace.name, project, planningRows, exportedAt);
+  const markdown = createProjectPacketMarkdown(state.workspace.name, project, planningRows, exportedAt, state.workspace);
   const filename = `film-project-packet-${slugForLocalRecord(project.title)}-${exportedAt.slice(0, 10)}.md`;
   await completeLocalExport({
     content: markdown,
@@ -15593,20 +12997,13 @@ function productionShotExportRows(project: FilmProject, shots: ProductionShot[])
   });
 }
 
-
-
-
-
-
-
-
 function optionalWorkerFetch(timeoutMs = OPTIONAL_WORKER_TIMEOUT_MS): typeof fetch {
   return async (input, init) => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      return await fetch(input, {
+      return await workerFetch(input, {
         ...init,
         signal: controller.signal,
       });
@@ -15632,6 +13029,7 @@ async function exportBackup(): Promise<void> {
   try {
     const { planningExport, message: planningExportMessage } = await loadPlanningExportForBackup();
     const snapshot = createBackupSnapshot(state.workspace, { planningExport });
+    const { createEncryptedBackupZipBundle } = await import("@film/backup");
     const bundle = await createEncryptedBackupZipBundle(snapshot, passphrase);
     const blob = new Blob([copyBytesToArrayBuffer(bundle.bytes)], { type: "application/zip" });
     downloadBlob(blob, `film-backup-${snapshot.createdAt.slice(0, 10)}.filmbackup.zip`);
@@ -15670,6 +13068,7 @@ async function loadPlanningExportForBackup(): Promise<{
   message: string;
 }> {
   try {
+    const { runPlanningExportDryRun } = await import("./backup-client");
     return {
       planningExport: await runPlanningExportDryRun(
         WORKER_URL,
@@ -15697,6 +13096,7 @@ async function refreshPlanningExportForReview(): Promise<void> {
   }
 
   try {
+    const { runPlanningExportDryRun } = await import("./backup-client");
     const planningExport = await runPlanningExportDryRun(WORKER_URL, state.workspace.id, csrfToken, 100);
     state.planningExportView = {
       ...planningExport,
@@ -15713,6 +13113,7 @@ async function refreshPlanningExportForReview(): Promise<void> {
 
 async function updateWorkerBackupDryRunMetadata(): Promise<string> {
   try {
+    const { runBackupDryRun } = await import("./backup-client");
     const dryRun = await runBackupDryRun(
       WORKER_URL,
       state.auth.session?.csrfToken ?? "local-dry-run-csrf",
@@ -15738,6 +13139,7 @@ async function updateWorkerBackupDryRunMetadata(): Promise<string> {
 
 async function updateWorkerBackupStorage(bytes: Uint8Array, createdAt: string): Promise<string> {
   try {
+    const { storeBackupObject } = await import("./backup-client");
     const stored = await storeBackupObject(
       WORKER_URL,
       state.workspace.id,
@@ -15785,6 +13187,7 @@ async function previewStoredBackupManifest(): Promise<void> {
   }
 
   try {
+    const { exportStoredBackupManifest } = await import("./backup-client");
     const manifest = await exportStoredBackupManifest(WORKER_URL, state.workspace.id, csrfToken, 25);
     state.backupExport = {
       rowCount: manifest.rowCount,
@@ -15874,6 +13277,7 @@ async function previewStoredBackupObject(): Promise<void> {
   }
 
   try {
+    const { createStoredBackupObjectDownloadPlan, downloadStoredBackupObject } = await import("./backup-client");
     const downloadPlan = await createStoredBackupObjectDownloadPlan(WORKER_URL, state.workspace.id, restorePointId, csrfToken);
     const download = await downloadStoredBackupObject(
       WORKER_URL,
@@ -15883,6 +13287,7 @@ async function previewStoredBackupObject(): Promise<void> {
       downloadPlan.backupDownloadToken,
       csrfToken,
     );
+    const { decryptEncryptedBackupZipBundle, summarizeRestorePreview } = await import("@film/backup");
     const snapshot = await decryptEncryptedBackupZipBundle(await download.blob.arrayBuffer(), passphrase);
     state.restoreSnapshot = snapshot;
     state.restorePreview = summarizeRestorePreview(state.workspace, snapshot);
@@ -15970,6 +13375,7 @@ async function checkRestoreCommitGate(): Promise<void> {
   }
 
   try {
+    const { runRestoreCommitDryRun } = await import("./restore-client");
     const preRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -16039,6 +13445,7 @@ async function recordRestoreApproval(): Promise<void> {
   }
 
   try {
+    const { runRestoreApprovalDryRun } = await import("./restore-client");
     const fallbackPreRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -16108,6 +13515,7 @@ async function checkRestoreCommitStorage(): Promise<void> {
   }
 
   try {
+    const { runRestoreCommitStorageDryRun } = await import("./restore-client");
     const fallbackPreRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -16184,6 +13592,7 @@ async function checkRestoreApplicationPreflight(): Promise<void> {
   }
 
   try {
+    const { runRestoreApplicationDryRun } = await import("./restore-client");
     const fallbackPreRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -16288,6 +13697,7 @@ async function commitRestoreApplicationCoreRecords(): Promise<void> {
   }
 
   try {
+    const { runRestoreApplicationCommit } = await import("./restore-client");
     const fallbackPreRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -16350,6 +13760,7 @@ async function checkRestoreAttachmentPackageDryRun(): Promise<void> {
   }
 
   try {
+    const { runRestoreAttachmentPackageDryRun } = await import("./restore-client");
     const result = await runRestoreAttachmentPackageDryRun(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       snapshotWorkspaceId: preview.workspaceId,
@@ -16402,6 +13813,7 @@ async function checkRestoreAttachmentPackageVerificationDryRun(): Promise<void> 
   }
 
   try {
+    const { runRestoreAttachmentPackageVerificationDryRun } = await import("./restore-client");
     const result = await runRestoreAttachmentPackageVerificationDryRun(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       snapshotWorkspaceId: preview.workspaceId,
@@ -16453,6 +13865,7 @@ async function checkRestoreAttachmentObjectPlanDryRun(): Promise<void> {
   }
 
 	  try {
+    const { runRestoreAttachmentObjectPlanDryRun } = await import("./restore-client");
 	    const result = await runRestoreAttachmentObjectPlanDryRun(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       attachmentPackageVerificationId: verification.attachmentPackageVerificationId,
@@ -16506,6 +13919,7 @@ async function checkRestoreAttachmentObjectCommitPreflight(): Promise<void> {
   }
 
   try {
+    const { runRestoreAttachmentObjectCommitPreflight } = await import("./restore-client");
     const result = await runRestoreAttachmentObjectCommitPreflight(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       attachmentPackageVerificationId: verification.attachmentPackageVerificationId,
@@ -16574,6 +13988,7 @@ async function commitRestoreAttachmentObjects(): Promise<void> {
         continue;
       }
       try {
+    const { commitRestoreAttachmentObject } = await import("./restore-client");
         const result = await commitRestoreAttachmentObject(
           WORKER_URL,
           csrfToken,
@@ -16652,6 +14067,7 @@ async function checkRestorePlanningDryRun(): Promise<void> {
   }
 
   try {
+    const { runRestorePlanningDryRun } = await import("./restore-client");
     const result = await runRestorePlanningDryRun(WORKER_URL, csrfToken, {
       workspaceId: state.workspace.id,
       snapshotWorkspaceId: preview.workspaceId,
@@ -16768,6 +14184,7 @@ async function commitRestorePlanningRows(): Promise<void> {
   }
 
   try {
+    const { runRestorePlanningCommit } = await import("./restore-client");
     const fallbackPreRestoreBackupId = state.backupDryRun?.storagePersistence === "r2_backup_object"
       ? state.backupDryRun.restorePointId
       : undefined;
@@ -17056,192 +14473,6 @@ function restoreApplicationCommitStateFromResult(result: RestoreApplicationCommi
   };
 }
 
-function createRestoreSnapshotRecords(snapshot: BackupSnapshot, preview: RestorePreviewSummary): RestoreCoreRecordRequest[] {
-  const actionByKey = new Map<string, RestoreCoreRecordRequest["action"]>();
-  for (const record of preview.records) {
-    actionByKey.set(restoreCoreRecordKey(record.entityType, record.entityId), restoreCoreActionForStatus(record.status));
-  }
-
-  const records: RestoreCoreRecordRequest[] = [];
-  records.push({
-    entityType: "workspace",
-    entityId: snapshot.data.id,
-    action: actionByKey.get(restoreCoreRecordKey("workspace", snapshot.workspaceId)) ?? "skip",
-    title: snapshot.data.name,
-    archivedProjectCount: snapshot.data.archivedProjectCount,
-    backupPolicy: snapshot.data.backupPolicy,
-    nextBackup: snapshot.data.nextBackup,
-  });
-
-  for (const project of snapshot.data.projects) {
-    records.push({
-      entityType: "project",
-      entityId: project.id,
-      action: actionByKey.get(restoreCoreRecordKey("project", project.id)) ?? "skip",
-      title: project.title,
-      phase: project.phase,
-    });
-
-    for (const task of project.openTasks) {
-      records.push({
-        entityType: "task",
-        entityId: task.id,
-        action: actionByKey.get(restoreCoreRecordKey("task", task.id)) ?? "skip",
-        projectId: project.id,
-        title: task.title,
-        status: task.status,
-        priority: "normal",
-        dueAt: task.due,
-      });
-    }
-
-    for (const doc of project.docs) {
-      records.push({
-        entityType: "document",
-        entityId: doc.id,
-        action: actionByKey.get(restoreCoreRecordKey("document", doc.id)) ?? "skip",
-        projectId: project.id,
-        title: doc.name,
-        documentType: doc.type,
-        markdownSnapshot: doc.markdownSnapshot ?? null,
-        sensitive: false,
-      });
-    }
-
-    for (const person of project.people) {
-      const entityId = person.id || restoreSnapshotChildRecordId(project.id, "person", person.name);
-      records.push({
-        entityType: "person",
-        entityId,
-        action: actionByKey.get(restoreCoreRecordKey("person", entityId)) ?? "skip",
-        projectId: project.id,
-        name: person.name,
-        role: person.role,
-        initials: person.initials,
-        sensitive: true,
-      });
-    }
-
-    for (const item of project.equipment) {
-      const entityId = item.id || restoreSnapshotChildRecordId(project.id, "equipment", item.name);
-      records.push({
-        entityType: "equipment",
-        entityId,
-        action: actionByKey.get(restoreCoreRecordKey("equipment", entityId)) ?? "skip",
-        projectId: project.id,
-        name: item.name,
-        status: item.status,
-        statusTone: item.statusTone,
-      });
-    }
-
-    for (const expense of project.expenses) {
-      const entityId = expense.id || restoreSnapshotChildRecordId(project.id, "expense", expense.category);
-      records.push({
-        entityType: "expense",
-        entityId,
-        action: actionByKey.get(restoreCoreRecordKey("expense", entityId)) ?? "skip",
-        projectId: project.id,
-        category: expense.category,
-        spent: expense.spent,
-        budget: expense.budget,
-        percent: expense.percent,
-      });
-    }
-  }
-
-  return records;
-}
-
-function renderRestoreSnapshotReviewTable(snapshot: BackupSnapshot, preview: RestorePreviewSummary): string {
-  const records = createRestoreSnapshotRecords(snapshot, preview);
-  if (records.length === 0) return "";
-  const writeCount = records.filter((record) => record.action !== "skip").length;
-
-  return `
-    <div class="restore-record-review" aria-label="Workspace snapshot restore rows" tabindex="0">
-      <div class="restore-record-review-row restore-record-review-head">
-        <span>Action</span>
-        <span>Type</span>
-        <span>Title</span>
-        <span>Project</span>
-        <span>Detail</span>
-      </div>
-      ${records.map((record) => `
-        <div class="restore-record-review-row">
-          <span>${escapeHtml(record.action)}</span>
-          <span>${escapeHtml(record.entityType.replaceAll("_", " "))}</span>
-          <span>${escapeHtml(restoreSnapshotRecordLabel(record))}</span>
-          <span>${escapeHtml(record.projectId ?? "workspace")}</span>
-          <span>${escapeHtml(restoreSnapshotRecordDetail(record))}</span>
-        </div>
-      `).join("")}
-    </div>
-    <small>Snapshot row review: ${writeCount} writes - ${records.length - writeCount} skips - ${records.length} total</small>
-  `;
-}
-
-function restoreSnapshotRecordLabel(record: RestoreCoreRecordRequest): string {
-  return record.title ?? record.name ?? record.category ?? record.entityId;
-}
-
-function restoreSnapshotRecordDetail(record: RestoreCoreRecordRequest): string {
-  if (record.entityType === "workspace") {
-    return [record.backupPolicy, record.nextBackup].filter(Boolean).join(" - ") || "metadata";
-  }
-  if (record.entityType === "project") {
-    return record.phase ?? "project";
-  }
-  if (record.entityType === "task") {
-    return [record.status, record.dueAt].filter(Boolean).join(" - ") || "task";
-  }
-  if (record.entityType === "document") {
-    return record.documentType ?? "document";
-  }
-  if (record.entityType === "person") {
-    return record.role ?? "person";
-  }
-  if (record.entityType === "equipment") {
-    return [record.status, record.statusTone].filter(Boolean).join(" - ") || "equipment";
-  }
-  if (record.entityType === "expense") {
-    return `${record.spent ?? 0} spent / ${record.budget ?? 0} budget`;
-  }
-  return record.entityId;
-}
-
-function restoreCoreRecordKey(entityType: RestoreCoreRecordRequest["entityType"], entityId: string): string {
-  return `${entityType}:${entityId}`;
-}
-
-function restoreCoreActionForStatus(status: RestorePreviewSummary["records"][number]["status"]): RestoreCoreRecordRequest["action"] {
-  if (status === "new") return "create";
-  if (status === "changed") return "update";
-  return "skip";
-}
-
-function restoreSnapshotChildRecordId(projectId: string, entityType: "person" | "equipment" | "expense", naturalKey: string): string {
-  return `${projectId}:${entityType}:${safeRestoreRecordKey(naturalKey)}`;
-}
-
-function safeRestoreRecordKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._:-]+/g, "_").replace(/^_+|_+$/g, "") || "record";
-}
-
-function formatRestoreRecordSummary(summary: Record<string, number>): string {
-  const creates = summary.createCount ?? 0;
-  const updates = summary.updateCount ?? 0;
-  const skips = summary.skipCount ?? 0;
-  const workspaces = summary.workspaceCount ?? 0;
-  const projects = summary.projectCount ?? 0;
-  const tasks = summary.taskCount ?? 0;
-  const documents = summary.documentCount ?? 0;
-  const people = summary.personCount ?? 0;
-  const equipment = summary.equipmentCount ?? 0;
-  const expenses = summary.expenseCount ?? 0;
-  return `${creates} creates - ${updates} updates - ${skips} skips - ${workspaces} workspace/${projects} projects/${tasks} tasks/${documents} docs/${people} people/${equipment} equipment/${expenses} expenses`;
-}
-
 async function previewEncryptedBackup(): Promise<void> {
   const file = await chooseBackupFile();
   if (!file) {
@@ -17258,6 +14489,7 @@ async function previewEncryptedBackup(): Promise<void> {
   }
 
   try {
+    const { summarizeRestorePreview } = await import("@film/backup");
     const snapshot = await decryptSelectedBackupFile(file, passphrase);
     state.restoreSnapshot = snapshot;
     state.restorePreview = summarizeRestorePreview(state.workspace, snapshot);
@@ -17302,6 +14534,7 @@ async function previewEncryptedBackup(): Promise<void> {
 }
 
 async function decryptSelectedBackupFile(file: File, passphrase: string) {
+  const { decryptEncryptedBackupZipBundle, decryptEncryptedBackupBundle } = await import("@film/backup");
   if (isZipBackupFile(file)) {
     return decryptEncryptedBackupZipBundle(await file.arrayBuffer(), passphrase);
   }
@@ -17339,11 +14572,17 @@ async function importNotionFolder(): Promise<void> {
     return;
   }
 
-  await importNotionSource({
-    sourceLabel: "folder",
-    manifest: createNotionManifest(files),
-    readFiles: (allowedPaths) => readNotionImportFiles(files, allowedPaths),
-  });
+  try {
+    const { createNotionManifest, readNotionImportFiles } = await import("./import-preview");
+    await importNotionSource({
+      sourceLabel: "folder",
+      manifest: createNotionManifest(files),
+      readFiles: (allowedPaths) => readNotionImportFiles(files, allowedPaths),
+    });
+  } catch (error) {
+    state.ui.toast = `Notion import blocked: ${error instanceof Error ? error.message : "Import tools unavailable"}`;
+    render();
+  }
 }
 
 async function importNotionZip(): Promise<void> {
@@ -17355,6 +14594,7 @@ async function importNotionZip(): Promise<void> {
   }
 
   try {
+    const { openNotionZip, createNotionZipManifest, readNotionZipImportFiles } = await import("./import-preview");
     const zip = await openNotionZip(file);
     await importNotionSource({
       sourceLabel: "ZIP",
@@ -17382,11 +14622,19 @@ async function importScreenplayFiles(): Promise<void> {
     return;
   }
 
-  const preview = previewScreenplayFiles(files.map((file) => ({
-    path: file.webkitRelativePath || file.name,
-    sizeBytes: file.size,
-    contentType: file.type || undefined,
-  })));
+  let preview: ScreenplayImportPreview;
+  try {
+    const { previewScreenplayFiles } = await import("@film/importers");
+    preview = previewScreenplayFiles(files.map((file) => ({
+      path: file.webkitRelativePath || file.name,
+      sizeBytes: file.size,
+      contentType: file.type || undefined,
+    })));
+  } catch (error) {
+    state.ui.toast = `Screenplay import unavailable: ${error instanceof Error ? error.message : "Import tools could not load"}`;
+    render();
+    return;
+  }
   const filesByPath = new Map(files.map((file) => [file.webkitRelativePath || file.name, file]));
   const reviewBase = files.length === 1
     ? selectedScreenplayBreakdown(screenplayBreakdownsForProject(project.id))
@@ -17805,7 +15053,6 @@ async function exportSelectedScreenplayElementReport(format: "markdown" | "csv")
   render();
 }
 
-
 function selectedScreenplayRevisionPair(): {
   previous: ScreenplayBreakdown;
   next: ScreenplayBreakdown;
@@ -17882,10 +15129,9 @@ async function exportSelectedScreenplayRevisionReport(): Promise<void> {
   render();
 }
 
-
 async function importNotionSource(source: NotionImportSource): Promise<void> {
   try {
-    const response = await fetch(`${WORKER_URL}/api/imports/notion/dry-run`, {
+    const response = await workerFetch(`${WORKER_URL}/api/imports/notion/dry-run`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -17917,6 +15163,7 @@ async function importNotionSource(source: NotionImportSource): Promise<void> {
       throw new Error("No importable files were found.");
     }
 
+    const { applyNotionImport } = await import("@film/importers");
     const applied = applyNotionImport(state.workspace, importFiles, state.ui.selectedProjectId);
     for (const warning of body.preview.warnings) {
       if (!applied.summary.warnings.includes(warning)) applied.summary.warnings.push(warning);
@@ -18164,7 +15411,7 @@ async function commitNotionPlanningImport(
     };
   }
 
-  const response = await fetch(`${WORKER_URL}/api/imports/notion/planning/commit`, {
+  const response = await workerFetch(`${WORKER_URL}/api/imports/notion/planning/commit`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -18495,7 +15742,7 @@ async function prepareAttachmentUploadDryRun(
   workspaceId: string,
   attachments: AttachmentUploadCandidate[],
 ): Promise<AttachmentUploadPrepareResponse> {
-  const response = await fetch(`${WORKER_URL}/api/attachments/r2/prepare-upload`, {
+  const response = await workerFetch(`${WORKER_URL}/api/attachments/r2/prepare-upload`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -18518,7 +15765,7 @@ async function commitAttachmentUploadDryRun(
   workspaceId: string,
   commits: AttachmentCommitRequest[],
 ): Promise<AttachmentUploadCommitResponse> {
-  const response = await fetch(`${WORKER_URL}/api/attachments/r2/commit`, {
+  const response = await workerFetch(`${WORKER_URL}/api/attachments/r2/commit`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -18615,7 +15862,7 @@ async function syncQueuedOperations(): Promise<void> {
   }
 
   try {
-    const response = await fetch(`${WORKER_URL}/api/operations/dry-run-sync`, {
+    const response = await workerFetch(`${WORKER_URL}/api/operations/dry-run-sync`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -18666,61 +15913,10 @@ async function syncQueuedOperations(): Promise<void> {
 }
 
 function registerServiceWorker(): void {
-  if (!("serviceWorker" in navigator)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js").catch(() => {
-      state.ui.toast = "Offline worker registration failed in this browser session.";
-      render();
-    });
+  registerOfflineShell(() => {
+    state.ui.toast = "Offline worker registration failed in this browser session.";
+    render();
   });
-}
-
-function icon(name: string): string {
-  const icons: Record<string, string> = {
-    "arrow-down": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M6 13l6 6 6-6\"/></svg>",
-    "arrow-up": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 19V5M6 11l6-6 6 6\"/></svg>",
-    backup: "<svg viewBox=\"0 0 24 24\"><path d=\"M7 8a5 5 0 0 1 9.7-1.7A4.5 4.5 0 1 1 17.5 15H8a4 4 0 0 1-1-7.9Z\"/><path d=\"M12 12v7m-3-3 3 3 3-3\"/></svg>",
-    "call-sheet": "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16v13H4z\"/><path d=\"M4 7l16-3M8 6l3 4M14 5l3 4\"/><path d=\"M8 13h8M8 17h5\"/></svg>",
-    calendar: "<svg viewBox=\"0 0 24 24\"><rect x=\"4\" y=\"5\" width=\"16\" height=\"15\" rx=\"2\"/><path d=\"M8 3v4M16 3v4M4 10h16M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01\"/></svg>",
-    case: "<svg viewBox=\"0 0 24 24\"><path d=\"M9 7V5h6v2\"/><rect x=\"4\" y=\"7\" width=\"16\" height=\"12\" rx=\"2\"/><path d=\"M4 12h16\"/></svg>",
-    check: "<svg viewBox=\"0 0 24 24\"><path d=\"m5 12 4 4L19 6\"/></svg>",
-    chevron: "<svg viewBox=\"0 0 24 24\"><path d=\"m8 10 4 4 4-4\"/></svg>",
-    close: "<svg viewBox=\"0 0 24 24\"><path d=\"M6 6l12 12M18 6 6 18\"/></svg>",
-    copy: "<svg viewBox=\"0 0 24 24\"><rect x=\"8\" y=\"8\" width=\"11\" height=\"11\" rx=\"2\"/><path d=\"M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2\"/></svg>",
-    coins: "<svg viewBox=\"0 0 24 24\"><ellipse cx=\"12\" cy=\"6\" rx=\"7\" ry=\"3\"/><path d=\"M5 6v8c0 1.7 3.1 3 7 3s7-1.3 7-3V6\"/><path d=\"M5 10c0 1.7 3.1 3 7 3s7-1.3 7-3\"/></svg>",
-    doc: "<svg viewBox=\"0 0 24 24\"><path d=\"M7 3h7l4 4v14H7z\"/><path d=\"M14 3v5h5M9 13h6M9 17h6\"/></svg>",
-    edit: "<svg viewBox=\"0 0 24 24\"><path d=\"M4 20h4L19 9l-4-4L4 16z\"/><path d=\"m13 7 4 4\"/></svg>",
-    filter: "<svg viewBox=\"0 0 24 24\"><path d=\"M4 6h16l-6 7v5l-4 2v-7z\"/></svg>",
-    folder: "<svg viewBox=\"0 0 24 24\"><path d=\"M4 6h6l2 2h8v10H4z\"/></svg>",
-    grid: "<svg viewBox=\"0 0 24 24\"><rect x=\"4\" y=\"4\" width=\"6\" height=\"6\"/><rect x=\"14\" y=\"4\" width=\"6\" height=\"6\"/><rect x=\"4\" y=\"14\" width=\"6\" height=\"6\"/><rect x=\"14\" y=\"14\" width=\"6\" height=\"6\"/></svg>",
-    import: "<svg viewBox=\"0 0 24 24\"><path d=\"M12 3v12\"/><path d=\"m8 11 4 4 4-4\"/><path d=\"M5 19h14\"/><path d=\"M5 15v4M19 15v4\"/></svg>",
-    list: "<svg viewBox=\"0 0 24 24\"><path d=\"M8 6h12M8 12h12M8 18h12\"/><path d=\"M4 6h.01M4 12h.01M4 18h.01\"/></svg>",
-    lock: "<svg viewBox=\"0 0 24 24\"><rect x=\"5\" y=\"10\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M8 10V7a4 4 0 0 1 8 0v3\"/></svg>",
-    logout: "<svg viewBox=\"0 0 24 24\"><path d=\"M10 17v2H5V5h5v2\"/><path d=\"M15 7l5 5-5 5\"/><path d=\"M20 12H9\"/></svg>",
-    more: "<svg viewBox=\"0 0 24 24\"><path d=\"M5 12h.01M12 12h.01M19 12h.01\"/></svg>",
-    people: "<svg viewBox=\"0 0 24 24\"><path d=\"M16 11a3 3 0 1 0-3-3\"/><path d=\"M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 3c-3 0-5 1.6-5 4v1h10v-1c0-2.4-2-4-5-4Zm8 0c2.8 0 5 1.6 5 4v1h-6\"/></svg>",
-    pin: "<svg viewBox=\"0 0 24 24\"><path d=\"M12 21s6-5.4 6-11a6 6 0 1 0-12 0c0 5.6 6 11 6 11Z\"/><circle cx=\"12\" cy=\"10\" r=\"2\"/></svg>",
-    plus: "<svg viewBox=\"0 0 24 24\"><path d=\"M12 5v14M5 12h14\"/></svg>",
-    provider: "<svg viewBox=\"0 0 24 24\"><path d=\"M7 8h10v8H7z\"/><path d=\"M12 3v5M12 16v5M3 12h4M17 12h4\"/></svg>",
-    search: "<svg viewBox=\"0 0 24 24\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m16 16 4 4\"/></svg>",
-    scissors: "<svg viewBox=\"0 0 24 24\"><circle cx=\"6\" cy=\"7\" r=\"3\"/><circle cx=\"6\" cy=\"17\" r=\"3\"/><path d=\"m8.7 8.3 10.3-5.3M8.7 15.7 19 21M8.7 8.3 14 13\"/></svg>",
-    sync: "<svg viewBox=\"0 0 24 24\"><path d=\"M20 7v5h-5M4 17v-5h5\"/><path d=\"M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15\"/></svg>",
-    settings: "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1\"/></svg>",
-    slate: "<svg viewBox=\"0 0 24 24\"><path d=\"M4 7h16v13H4z\"/><path d=\"M4 7l16-3M8 6l3 4M14 5l3 4\"/></svg>",
-    star: "<svg class=\"star\" viewBox=\"0 0 24 24\"><path d=\"m12 3 2.6 5.5 6 .8-4.3 4.2 1 5.9L12 16.6 6.7 19.4l1-5.9-4.3-4.2 6-.8z\"/></svg>",
-    trash: "<svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M10 11v6M14 11v6M8 7l1-3h6l1 3M7 7l1 13h8l1-13\"/></svg>",
-    undo: "<svg viewBox=\"0 0 24 24\"><path d=\"m9 14-5-5 5-5M4 9h10a6 6 0 0 1 6 6v1\"/></svg>",
-    save: "<svg viewBox=\"0 0 24 24\"><path d=\"M5 4h12l2 2v14H5z\"/><path d=\"M8 4v6h8V4M8 20v-6h8v6\"/></svg>",
-    unlock: "<svg viewBox=\"0 0 24 24\"><rect x=\"5\" y=\"10\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M8 10V7a4 4 0 0 1 7.5-2\"/></svg>",
-    warning: "<svg viewBox=\"0 0 24 24\"><path d=\"M12 3 2.5 20h19z\"/><path d=\"M12 9v5M12 17h.01\"/></svg>",
-    zip: "<svg viewBox=\"0 0 24 24\"><path d=\"M7 3h7l4 4v14H7z\"/><path d=\"M14 3v5h5\"/><path d=\"M10 6h2M12 8h2M10 10h2M12 12h2M10 14h2\"/><path d=\"M10 17h4\"/></svg>",
-  };
-
-  return icons[name] ?? "";
-}
-
-function escapeAttribute(value: string): string {
-  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 function initialsFor(value: string): string {

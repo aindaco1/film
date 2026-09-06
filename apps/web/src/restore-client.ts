@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 import type { BackupPlanningRecord } from "@film/schema";
 import type { Fetcher } from "./worker-client";
 
@@ -522,7 +523,7 @@ export async function runRestoreCommitDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreCommitDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreCommitDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/commit-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreCommitDryRunResponse;
@@ -536,7 +537,7 @@ export async function runRestoreApprovalDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreApprovalDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreApprovalDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/approval-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreApprovalDryRunResponse;
@@ -550,7 +551,7 @@ export async function runRestoreCommitStorageDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreCommitStorageDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreCommitStorageDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/commit-storage-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreCommitStorageDryRunResponse;
@@ -564,7 +565,7 @@ export async function runRestoreApplicationDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreApplicationDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreApplicationDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/application-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreApplicationDryRunResponse;
@@ -578,7 +579,7 @@ export async function runRestoreApplicationCommit(
   workerUrl: string,
   csrfToken: string,
   request: RestoreApplicationCommitRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreApplicationCommitResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/application-commit", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreApplicationCommitResponse;
@@ -592,7 +593,7 @@ export async function runRestorePlanningDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestorePlanningDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestorePlanningDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/planning-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestorePlanningDryRunResponse;
@@ -609,7 +610,7 @@ export async function runRestorePlanningCommit(
   workerUrl: string,
   csrfToken: string,
   request: RestorePlanningCommitRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestorePlanningCommitResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/planning-commit", csrfToken, request, fetcher);
   const body = (await response.json()) as RestorePlanningCommitResponse;
@@ -626,7 +627,7 @@ export async function runRestoreAttachmentPackageDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreAttachmentPackageDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreAttachmentPackageDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/attachment-package-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreAttachmentPackageDryRunResponse;
@@ -643,7 +644,7 @@ export async function runRestoreAttachmentPackageVerificationDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreAttachmentPackageVerificationDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreAttachmentPackageVerificationDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/attachment-package-verify-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreAttachmentPackageVerificationDryRunResponse;
@@ -660,7 +661,7 @@ export async function runRestoreAttachmentObjectPlanDryRun(
   workerUrl: string,
   csrfToken: string,
   request: RestoreAttachmentObjectPlanDryRunRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreAttachmentObjectPlanDryRunResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/attachment-objects-plan-dry-run", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreAttachmentObjectPlanDryRunResponse;
@@ -677,7 +678,7 @@ export async function runRestoreAttachmentObjectCommitPreflight(
   workerUrl: string,
   csrfToken: string,
   request: RestoreAttachmentObjectCommitPreflightRequest,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreAttachmentObjectCommitPreflightResult> {
   const response = await postRestoreRequest(workerUrl, "/api/restores/attachment-objects-commit-preflight", csrfToken, request, fetcher);
   const body = (await response.json()) as RestoreAttachmentObjectCommitPreflightResponse;
@@ -695,7 +696,7 @@ export async function commitRestoreAttachmentObject(
   csrfToken: string,
   request: RestoreAttachmentObjectCommitRequest,
   bytes: Blob,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<RestoreAttachmentObjectCommitResult> {
   const response = await fetcher(`${workerUrl}/api/restores/attachment-object-commit`, {
     method: "PUT",

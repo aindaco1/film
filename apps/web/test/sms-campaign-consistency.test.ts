@@ -36,7 +36,7 @@ describe("Telnyx campaign surface consistency", () => {
       readFile("../worker/src/telnyx-send.ts", "utf8"),
     ]);
 
-    expect(webSource).toContain("TELNYX_SMS_CATEGORIES.map");
+    expect(await readFile("src/integration-view.ts", "utf8")).toContain("TELNYX_SMS_CATEGORIES.map");
     expect(webSource).toContain("isTelnyxSmsCategory(category)");
     expect(consentSource).toContain("SMS_CONSENT_CATEGORIES = TELNYX_SMS_CATEGORIES");
     expect(sendSource).toContain("FILM_SMS_SENDER_PREFIX = TELNYX_SMS_SENDER_PREFIX");

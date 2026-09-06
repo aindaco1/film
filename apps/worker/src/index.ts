@@ -3,8 +3,11 @@ import {
   createGoogleDriveSyncDryRunStatus,
   createTelnyxSmsSendDryRunPlan,
   getProviderDryRunStatus,
+  hasGoogleFolderMetadataScope,
   isTelnyxSmsCategory,
   listProviderDryRunStatuses,
+  type GoogleOAuthRequestedCapabilities,
+  type GoogleProviderConnection,
 } from "@film/providers";
 import {
   createBackupSnapshot,
@@ -36,6 +39,7 @@ import {
   encryptGoogleToken,
   exchangeGoogleAuthorizationCode,
   hasValidGoogleTokenEncryptionKey,
+  googleTokenRefreshFailure,
   refreshGoogleAccessToken,
   revokeGoogleToken,
 } from "./google-oauth";
@@ -43,7 +47,8 @@ import { listGoogleDriveFolder } from "./google-drive";
 import {
   META_OAUTH_STATE_TTL_SECONDS,
   META_TOKEN_KEY_VERSION,
-  META_REQUIRED_SCOPES,
+  META_REQUESTED_SCOPES,
+  hasMetaInstagramScopes,
   createMetaOAuthAuthorization,
   decryptMetaToken,
   encryptMetaToken,
@@ -350,19 +355,14 @@ type MutationAuthResult =
 type OperationSyncRequest = {
   operations?: OperationRecord[];
 };
-type GoogleDriveSyncDryRunRequest = {
+type GoogleDriveSyncDryRunRequest = GoogleOAuthRequestedCapabilities & {
   workspaceId?: string;
   rootFolderId?: string;
-  includeDocsExport?: boolean;
-  includeCalendarSync?: boolean;
 };
 type GoogleOAuthConnectionRequest = {
   workspaceId?: string;
 };
-type GoogleOAuthStartRequest = GoogleOAuthConnectionRequest & {
-  includeDocsExport?: boolean;
-  includeCalendarSync?: boolean;
-};
+type GoogleOAuthStartRequest = GoogleOAuthConnectionRequest & GoogleOAuthRequestedCapabilities;
 type GoogleDriveManifestRequest = GoogleOAuthConnectionRequest & {
   rootFolderId?: string;
   pageToken?: string;
@@ -392,17 +392,6 @@ type GoogleProviderConnectionRow = {
   connected_at: string;
   disconnected_at: string | null;
   updated_at: string;
-};
-type GoogleProviderConnection = {
-  provider: "google";
-  status: "active" | "disconnected" | "error";
-  scopes: string[];
-  hasRefreshToken: boolean;
-  tokenExpiresAt: string | null;
-  rootFolderId: string | null;
-  connectedAt: string;
-  disconnectedAt: string | null;
-  updatedAt: string;
 };
 type GoogleOAuthRuntimeReadiness = {
   provider: "google";
@@ -2863,6 +2852,12 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       if (env.SMS_MODE?.trim().toLowerCase() !== "live") {
         return json({ error: "telnyx_sms_send_disabled" }, 503);
       }
+      if (env.TELNYX_WEBHOOK_MODE?.trim().toLowerCase() !== "live"
+        || !isValidTelnyxWebhookPublicKey(env.TELNYX_WEBHOOK_PUBLIC_KEY?.trim() ?? "")
+        || !hasValidSmsRecipientHashKey(env.SMS_RECIPIENT_HASH_KEY?.trim() ?? "")
+        || !parseTelnyxInboundNumberMappings(env.TELNYX_INBOUND_NUMBER_MAPPINGS?.trim() ?? "")) {
+        return json({ error: "telnyx_sms_webhook_not_ready" }, 503);
+      }
       if (!env.DB || !auth.memberId) return json({ error: "sms_attempt_storage_unavailable" }, 503);
 
       const body = await readJson<TelnyxSmsSendRequest>(request);
@@ -3477,7 +3472,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         return json({ error: "google_drive_root_folder_required", persistence: "d1_provider_connections" }, 422);
       }
       const scopes = parseGoogleScopes(connection.scopes_json);
-      if (!scopes.some((scope) => scope.endsWith("/drive.readonly") || scope.endsWith("/drive.metadata.readonly"))) {
+      if (!hasGoogleFolderMetadataScope(scopes)) {
         return json({ error: "google_drive_scope_required", persistence: "d1_provider_connections" }, 403);
       }
 
@@ -3863,7 +3858,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const userAccessToken = await usableMetaToken(env, row, "user");
       if (!userAccessToken.ok) return json({ error: userAccessToken.error, persistence: "d1_meta_provider_connections" }, userAccessToken.status);
       try {
-        const pages = await listMetaPageCandidates(configuration, userAccessToken.token);
+        const pages = await listMetaPageCandidates(configuration, userAccessToken.token, parseMetaScopes(row.scopes_json));
         const auditPersistence = await recordAuditEvent(
           env.DB,
           workspaceId,
@@ -3883,7 +3878,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
           connectionPersistence: "d1_meta_provider_connections",
           auditPersistence,
           pages,
-          selectionPolicy: "analyze_task_and_linked_instagram_required",
+          selectionPolicy: "analyze_task_required_instagram_optional",
           secretValuesExposed: false,
         });
       } catch {
@@ -3911,7 +3906,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       const userAccessToken = await usableMetaToken(env, row, "user");
       if (!userAccessToken.ok) return json({ error: userAccessToken.error, persistence: "d1_meta_provider_connections" }, userAccessToken.status);
       try {
-        const selection = await readMetaPageSelection(configuration, userAccessToken.token, pageId);
+        const selection = await readMetaPageSelection(configuration, userAccessToken.token, pageId, parseMetaScopes(row.scopes_json));
         const pageAccessTokenCiphertext = await encryptMetaToken(
           selection.pageAccessToken,
           env.META_TOKEN_ENCRYPTION_KEY ?? "",
@@ -3947,7 +3942,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
             null,
             auth.memberId,
             "provider.meta_page_selected",
-            { analyzable: true, instagramLinked: true, tokenKeyVersion: META_TOKEN_KEY_VERSION },
+            { analyzable: true, instagramLinked: Boolean(selection.instagramAccount), tokenKeyVersion: META_TOKEN_KEY_VERSION },
             now,
           ),
         ]);
@@ -3963,7 +3958,6 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       } catch (error) {
         const errorCode = error instanceof Error && [
           "meta_page_analyze_task_required",
-          "meta_linked_instagram_account_required",
         ].includes(error.message) ? error.message : "meta_page_selection_failed";
         await recordAuditEvent(env.DB, workspaceId, null, auth.memberId, "provider.meta_page_selection_failed", { errorCode });
         return json({ error: errorCode, persistence: "d1_meta_provider_connections" }, errorCode === "meta_page_selection_failed" ? 502 : 422);
@@ -3989,7 +3983,6 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         || !row
         || row.status !== "active"
         || !row.page_id
-        || !row.instagram_account_id
       ) {
         return json({ error: "meta_connection_not_active", persistence: "d1_meta_provider_connections" }, 409);
       }
@@ -3999,7 +3992,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         const analytics = await readMetaAnalytics({
           graphVersion: configuration.graphVersion,
           pageId: row.page_id,
-          instagramAccountId: row.instagram_account_id,
+          instagramAccountId: hasMetaInstagramScopes(parseMetaScopes(row.scopes_json)) ? row.instagram_account_id : null,
           pageAccessToken: pageAccessToken.token,
           since,
           until,
@@ -4015,6 +4008,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
             calendarItemCount: analytics.calendar.length,
             insightSeriesCount: analytics.insights.length,
             warningCount: analytics.warnings.length,
+            warnings: analytics.warnings,
             since,
             until,
           },
@@ -11012,6 +11006,7 @@ function googleProviderConnectionFromRow(row: GoogleProviderConnectionRow): Goog
     status: row.status,
     scopes: parseGoogleScopes(row.scopes_json),
     hasRefreshToken: Boolean(row.refresh_token_ciphertext),
+    reauthorizationRequired: row.status === "active" && row.last_error_code === "reauthorization_required",
     tokenExpiresAt: row.token_expires_at,
     rootFolderId: row.root_folder_id,
     connectedAt: row.connected_at,
@@ -11038,6 +11033,10 @@ async function usableGoogleAccessToken(
   | { ok: true; accessToken: string; refreshed: boolean }
   | { ok: false; error: string; status: 409 | 502 | 503 }
 > {
+  if (env.GOOGLE_OAUTH_MODE?.trim().toLowerCase() !== "live") {
+    return { ok: false, error: "google_token_runtime_unavailable", status: 503 };
+  }
+  const expectedRefreshCiphertext = connection.refresh_token_ciphertext;
   const encodedKey = env.GOOGLE_TOKEN_ENCRYPTION_KEY?.trim() ?? "";
   const expiresAt = connection.token_expires_at ? Date.parse(connection.token_expires_at) : Number.NaN;
   const expiredOrExpiring = Number.isFinite(expiresAt) && expiresAt <= Date.now() + 2 * 60 * 1000;
@@ -11088,7 +11087,7 @@ async function usableGoogleAccessToken(
         )
       : connection.refresh_token_ciphertext;
     const now = new Date().toISOString();
-    await env.DB.prepare(`
+    const persisted = await env.DB.prepare(`
       UPDATE provider_connections
       SET scopes_json = ?,
           access_token_ciphertext = ?,
@@ -11098,7 +11097,7 @@ async function usableGoogleAccessToken(
           token_key_version = ?,
           last_error_code = NULL,
           updated_at = ?
-      WHERE workspace_id = ? AND provider = 'google' AND status = 'active'
+      WHERE workspace_id = ? AND provider = 'google' AND status = 'active' AND refresh_token_ciphertext = ?
     `).bind(
       JSON.stringify(refreshed.scopes),
       accessTokenCiphertext,
@@ -11108,15 +11107,23 @@ async function usableGoogleAccessToken(
       GOOGLE_TOKEN_KEY_VERSION,
       now,
       connection.workspace_id,
+      expectedRefreshCiphertext,
     ).run();
+    if (!persisted.success || persisted.meta.changes !== 1) {
+      return { ok: false, error: "google_connection_changed", status: 409 };
+    }
     return { ok: true, accessToken: refreshed.accessToken, refreshed: true };
-  } catch {
-    await env.DB.prepare(`
+  } catch (error) {
+    const failure = googleTokenRefreshFailure(error);
+    const persisted = await env.DB.prepare(`
       UPDATE provider_connections
-      SET last_error_code = 'token_refresh_failed', updated_at = ?
-      WHERE workspace_id = ? AND provider = 'google'
-    `).bind(new Date().toISOString(), connection.workspace_id).run();
-    return { ok: false, error: "google_token_refresh_failed", status: 502 };
+      SET last_error_code = ?, updated_at = ?
+      WHERE workspace_id = ? AND provider = 'google' AND status = 'active' AND refresh_token_ciphertext = ?
+    `).bind(failure.lastErrorCode, new Date().toISOString(), connection.workspace_id, expectedRefreshCiphertext).run();
+    if (!persisted.success || persisted.meta.changes !== 1) {
+      return { ok: false, error: "google_connection_changed", status: 409 };
+    }
+    return { ok: false, error: failure.error, status: failure.status };
   }
 }
 
@@ -11322,8 +11329,8 @@ function parseMetaOAuthStateRecord(value: string | null): MetaOAuthStateRecord |
       || !isValidRecordId(parsed.memberId ?? "")
       || !/^[a-f0-9]{64}$/.test(parsed.sessionHash ?? "")
       || !Array.isArray(parsed.scopes)
-      || parsed.scopes.length !== META_REQUIRED_SCOPES.length
-      || !META_REQUIRED_SCOPES.every((scope) => parsed.scopes?.includes(scope))
+      || parsed.scopes.length !== META_REQUESTED_SCOPES.length
+      || !META_REQUESTED_SCOPES.every((scope) => parsed.scopes?.includes(scope))
       || typeof parsed.createdAt !== "string"
       || Number.isNaN(Date.parse(parsed.createdAt))
       || typeof parsed.expiresAt !== "string"
@@ -11469,6 +11476,9 @@ async function usableMetaToken(
   | { ok: true; token: string }
   | { ok: false; error: "meta_reauthorization_required" | "meta_token_runtime_unavailable"; status: 409 | 503 }
 > {
+  if (env.META_OAUTH_MODE?.trim().toLowerCase() !== "live") {
+    return { ok: false, error: "meta_token_runtime_unavailable", status: 503 };
+  }
   const encodedKey = env.META_TOKEN_ENCRYPTION_KEY?.trim() ?? "";
   if (!hasValidMetaTokenEncryptionKey(encodedKey)) {
     return { ok: false, error: "meta_token_runtime_unavailable", status: 503 };

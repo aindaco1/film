@@ -1,3 +1,4 @@
+import { workerFetch } from "./workspace-mode";
 export type Fetcher = typeof fetch;
 
 export type WorkerJsonResponse<T> = {
@@ -21,7 +22,7 @@ export async function postWorkerJsonResponse<T>(
   path: string,
   body: unknown,
   csrfToken: string | null,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<WorkerJsonResponse<T>> {
   const response = await postWorkerJsonRequest(workerUrl, path, body, csrfToken, fetcher);
   return {
@@ -35,7 +36,7 @@ export function postWorkerJsonRequest(
   path: string,
   body: unknown,
   csrfToken: string | null,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-film-csrf"] = csrfToken;
@@ -54,7 +55,7 @@ export async function postWorkerJson<T>(
   body: unknown,
   csrfToken: string | null,
   fallbackMessage: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<T> {
   const result = await postWorkerJsonResponse<T>(workerUrl, path, body, csrfToken, fetcher);
   if (!result.response.ok) {

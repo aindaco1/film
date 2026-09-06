@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalWorkerProofClient } from "./local-worker-proof-client.mjs";
+import { localWorkerArgs } from "./local-worker-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
@@ -28,19 +29,11 @@ try {
   console.log(`Starting local Worker at ${workerOrigin}...`);
   worker = spawn("npx", [
     "wrangler",
-    "dev",
-    "src/index.ts",
-    "--local",
-    "--port",
-    String(workerPort),
-    "--var",
-    "AUTH_MAGIC_LINK_MODE:dry_run",
-    "--var",
-    "INVITE_DELIVERY_MODE:dry_run",
-    "--var",
-    `ALLOWED_ORIGINS:${appOrigin}`,
-    "--var",
-    'RATE_LIMIT_OVERRIDES:{"auth_magic_link_request":{"limit":100,"windowSeconds":10}}',
+    ...localWorkerArgs({
+      port: workerPort,
+      allowedOrigin: appOrigin,
+      rateLimitOverrides: { auth_magic_link_request: { limit: 100, windowSeconds: 10 } },
+    }),
   ], {
     cwd: workerDir,
     env: {

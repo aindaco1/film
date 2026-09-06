@@ -4,8 +4,8 @@
   "description": "Production workspace for solo filmmakers and small teams.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0c1116",
-  "theme_color": "#0c1116",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "icons": [
     {
       "src": "/icon.svg",

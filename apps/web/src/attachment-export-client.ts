@@ -1,4 +1,4 @@
-import { openNotionZip, readZipEntryBytes } from "./import-preview";
+import { workerFetch } from "./workspace-mode";
 import { copyBytesToArrayBuffer } from "./binary-buffer";
 import type {
   RestoreAttachmentPackageManifestObjectRequest,
@@ -93,7 +93,7 @@ export async function exportStoredAttachmentManifest(
   csrfToken: string,
   limit = 100,
   offset = 0,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredAttachmentExportManifest> {
   return parseJsonResponse<StoredAttachmentExportManifest>(
     await fetcher(`${workerUrl}/api/attachments/r2/export-manifest`, {
@@ -116,7 +116,7 @@ export async function createStoredAttachmentPackageDryRun(
   limit = 1000,
   objectKeys: string[] = [],
   offset = 0,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredAttachmentPackageDryRun> {
   return parseJsonResponse<StoredAttachmentPackageDryRun>(
     await fetcher(`${workerUrl}/api/attachments/r2/export-package-dry-run`, {
@@ -137,7 +137,7 @@ export async function downloadStoredAttachmentObject(
   workspaceId: string,
   objectKey: string,
   csrfToken: string,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredAttachmentDownload> {
   const response = await fetcher(
     `${workerUrl}/api/attachments/r2/object?workspaceId=${encodeURIComponent(workspaceId)}&objectKey=${encodeURIComponent(objectKey)}`,
@@ -168,7 +168,7 @@ export async function downloadStoredAttachmentPackage(
   objectKeys: string[] = [],
   packagePlanId = "",
   packageToken = "",
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = workerFetch,
 ): Promise<StoredAttachmentPackageDownload> {
   const response = await fetcher(
     `${workerUrl}/api/attachments/r2/package`,
@@ -198,6 +198,7 @@ export async function downloadStoredAttachmentPackage(
 }
 
 export async function readStoredAttachmentPackageManifest(blob: Blob): Promise<RestoreAttachmentPackageManifestRequest> {
+  const { openNotionZip, readZipEntryBytes } = await import("./import-preview");
   const zip = await openNotionZip(new File([blob], "film-attachments.zip", { type: blob.type || "application/zip" }));
   const manifestEntry = zip.entries.find((entry) => entry.path === "manifest.json");
   if (!manifestEntry) {
@@ -222,6 +223,7 @@ export async function readStoredAttachmentPackageObjects(
   blob: Blob,
   manifest: RestoreAttachmentPackageManifestRequest,
 ): Promise<VerifiedAttachmentPackageObject[]> {
+  const { openNotionZip, readZipEntryBytes } = await import("./import-preview");
   const zip = await openNotionZip(new File([blob], "film-attachments.zip", { type: blob.type || "application/zip" }));
   const entriesByPath = new Map(zip.entries.map((entry) => [entry.path, entry]));
   const verified: VerifiedAttachmentPackageObject[] = [];

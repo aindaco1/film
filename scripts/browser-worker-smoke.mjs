@@ -68,7 +68,7 @@ try {
 
   await page.goto(appOrigin, { waitUntil: "networkidle" });
   await expectBodyText(page, "Film");
-  await expectBodyText(page, "7 dry-run");
+  await expectBodyText(page, "Not checked");
 
   await submitForm(page, "form[data-action='auth-request']", { email });
   await expectBodyText(page, "Dry-run link ready");

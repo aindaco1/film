@@ -16,5 +16,6 @@ Current product direction:
 
 - Product name: `Film`
 - Audience: solo filmmakers and small teams
-- UI: dense operational dark-mode workspace, not a marketing page
+- UI: dense operational workspace with high-contrast neutral light/dark themes, following the system by default; not a marketing page
+- Appearance: keep colors in `apps/web/public/theme.css` and preference behavior in `appearance.js`; do not add page-specific palettes or put appearance in project data
 - Stack: static TypeScript app shell, Cloudflare Worker API, D1/SQLite schema, future R2/KV/DO bindings

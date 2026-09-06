@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "wrangler dev src/index.ts --local --port 8787 --var AUTH_MAGIC_LINK_MODE:dry_run",
+    "dev": "node ../../scripts/dev-worker.mjs",
     "test": "vitest run"
   },
   "dependencies": {

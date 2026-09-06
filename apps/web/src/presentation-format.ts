@@ -9,6 +9,10 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+export function escapeAttribute(value: string): string {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
 export function packetText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -79,4 +83,10 @@ export function safeCsvCell(value: string): string {
 
 export function markdownTableCell(value: string): string {
   return packetText(value).replaceAll("|", "\\|");
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
