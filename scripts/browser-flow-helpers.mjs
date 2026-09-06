@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export async function revealForm(form) {
+  await form.waitFor({ state: "attached" });
   const disclosure = form.locator("xpath=ancestor::details[1]");
   if (await disclosure.count() && !(await disclosure.evaluate((element) => element.open))) {
     await disclosure.locator(":scope > summary").click();

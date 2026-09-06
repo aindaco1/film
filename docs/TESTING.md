@@ -77,6 +77,7 @@ The [flow catalog](../scripts/user-flow-catalog.mjs) maps each user flow to conc
 - Appearance follows the system unless explicitly overridden. Cross-tab changes, unavailable preference storage and unsaved inputs are covered.
 - Deferred screens share one loading/failure/navigation matrix. Late module or provider results must not overwrite another view, signed-out session, newer draft or focus.
 - Empty real workspaces retain sign-in, first-project creation, backups and integrations. Demo fixtures must not hide onboarding failures.
+- Form helpers wait for asynchronous DOM mounting before checking and opening a containing disclosure. The script regression uses installed Playwright Chromium to cover delayed form mounting.
 - The demo uses existing schemas and parsers, preserves normal workspace data, and makes no Worker requests.
 - Compiled offline tests cover encrypted export/preview and previously loaded lazy screens. They do not promise never-fetched features are available offline.
 - Production documents retain pinned revisions. Final call sheets reject implicit schedule changes; explicit draft sync preserves manual fields.
