@@ -1726,17 +1726,13 @@ function render(): void {
   const selectedProject = getProjectById(state.workspace, state.ui.selectedProjectId)
     ?? state.workspace.projects[0];
 
-  if (!selectedProject) {
-    root.innerHTML = "<main class=\"empty-state\">No projects found.</main>";
-    return;
+  if (state.ui.selectedProjectId !== (selectedProject?.id ?? "")) {
+    state.ui.selectedProjectId = selectedProject?.id ?? "";
   }
-
-  if (state.ui.selectedProjectId !== selectedProject.id) {
-    state.ui.selectedProjectId = selectedProject.id;
+  if (!selectedProject?.docs.some((doc) => doc.id === state.ui.selectedDocId)) {
+    state.ui.selectedDocId = selectedProject?.docs[0]?.id ?? null;
   }
-  if (!selectedProject.docs.some((doc) => doc.id === state.ui.selectedDocId)) {
-    state.ui.selectedDocId = selectedProject.docs[0]?.id ?? null;
-  }
+  if (!canOpenWorkspaceSection(state.ui.workspaceSection)) state.ui.workspaceSection = "projects";
 
   const filteredProjects = filterProjects(state.workspace.projects, state.ui.filter);
 
@@ -1747,7 +1743,7 @@ function render(): void {
       <section class="workspace-shell" aria-label="Workspace">
         ${renderTopbar()}
         ${renderMobileWorkspaceNav()}
-        <main class="main-panel" id="main-content" tabindex="-1">
+        <main class="main-panel ${!selectedProject && state.ui.inspectorView !== "integrations" ? "main-panel-wide" : ""}" id="main-content" tabindex="-1">
           <section class="content-column">
             ${renderWorkspaceSection(filteredProjects, selectedProject)}
           </section>
@@ -1762,11 +1758,11 @@ function render(): void {
   applyAccessibleControlSemantics();
   bindEvents();
   const productionResourcesContainer = root.querySelector<HTMLElement>("[data-production-resources]");
-  if (productionResourcesContainer && isProductionResourcesSection(state.ui.workspaceSection)) {
+  if (selectedProject && productionResourcesContainer && isProductionResourcesSection(state.ui.workspaceSection)) {
     productionResourcesLoader.mount(productionResourcesContainer, productionResourcesViewState(state.ui.workspaceSection, selectedProject), bindProductionResourcesEvents);
   }
   const productionDocumentsContainer = root.querySelector<HTMLElement>("[data-production-documents]");
-  if (productionDocumentsContainer && isProductionDocumentsSection(state.ui.workspaceSection)) {
+  if (selectedProject && productionDocumentsContainer && isProductionDocumentsSection(state.ui.workspaceSection)) {
     productionDocumentsLoader.mount(productionDocumentsContainer, productionDocumentsViewState(state.ui.workspaceSection, selectedProject), bindProductionDocumentsEvents);
   }
   const backupContainer = root.querySelector<HTMLElement>("[data-backup-workspace]");
@@ -1915,7 +1911,10 @@ function productionDocumentsViewState(section: ProductionDocumentsSection, proje
     source: callSheet ? productionCallSheetSource(callSheet) : null, sourceOptions: productionCallSheetSourceOptions(project.id) };
 }
 
-function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject: FilmProject): string {
+function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject?: FilmProject): string {
+  if (state.ui.workspaceSection === "planning") return renderPlanningWorkspace();
+  if (state.ui.workspaceSection === "backups") return '<div data-backup-workspace></div>';
+  if (!selectedProject) return renderProjectsWorkspace(filteredProjects);
   switch (state.ui.workspaceSection) {
     case "projects":
       return renderProjectsWorkspace(filteredProjects, selectedProject);
@@ -1941,10 +1940,6 @@ function renderWorkspaceSection(filteredProjects: FilmProject[], selectedProject
       return renderEquipmentWorkspace(selectedProject);
     case "expenses":
       return renderExpensesWorkspace(selectedProject);
-    case "planning":
-      return renderPlanningWorkspace();
-    case "backups":
-      return '<div data-backup-workspace></div>';
     case "slate":
     default:
       return renderSlateWorkspace(selectedProject);
@@ -1961,13 +1956,15 @@ function renderSlateWorkspace(selectedProject: FilmProject): string {
   `;
 }
 
-function renderProjectsWorkspace(filteredProjects: FilmProject[], selectedProject: FilmProject): string {
+function renderProjectsWorkspace(filteredProjects: FilmProject[], selectedProject?: FilmProject): string {
   return `
     ${renderProjectWorkspaceHeader(filteredProjects.length, selectedProject)}
     ${
-      state.ui.viewMode === "list"
-        ? renderProjectList(filteredProjects, selectedProject.id)
-        : renderProjectBoard(filteredProjects, selectedProject.id)
+      !state.workspace.projects.length
+        ? '<p class="empty-inline">No projects yet.</p>'
+        : state.ui.viewMode === "list"
+          ? renderProjectList(filteredProjects, selectedProject?.id ?? "")
+          : renderProjectBoard(filteredProjects, selectedProject?.id ?? "")
     }
   `;
 }
@@ -3835,6 +3832,10 @@ function renderSidebar(): string {
   `;
 }
 
+function canOpenWorkspaceSection(section: WorkspaceSection): boolean {
+  return state.workspace.projects.length > 0 || ["projects", "planning", "backups"].includes(section);
+}
+
 function renderMobileWorkspaceNav(): string {
   return `
     <nav class="mobile-workspace-nav" aria-label="Mobile workspace navigation">
@@ -3842,13 +3843,13 @@ function renderMobileWorkspaceNav(): string {
         <span class="sr-only">Workspace area</span>
         <select data-action="workspace-section-select">
           <optgroup label="Projects">
-            <option value="slate" ${state.ui.workspaceSection === "slate" ? "selected" : ""}>Overview</option>
+            <option value="slate" ${state.ui.workspaceSection === "slate" ? "selected" : ""} ${canOpenWorkspaceSection("slate") ? "" : "disabled"}>Overview</option>
             <option value="projects" ${state.ui.workspaceSection === "projects" ? "selected" : ""}>Projects</option>
           </optgroup>
           ${WORKSPACE_NAV_GROUPS.map((group) => `
             <optgroup label="${escapeAttribute(group.label)}">
               ${group.items.map((item) => `
-                <option value="${item.section}" ${item.section === state.ui.workspaceSection ? "selected" : ""}>${escapeHtml(item.label)}</option>
+                <option value="${item.section}" ${item.section === state.ui.workspaceSection ? "selected" : ""} ${canOpenWorkspaceSection(item.section) ? "" : "disabled"}>${escapeHtml(item.label)}</option>
               `).join("")}
             </optgroup>
           `).join("")}
@@ -3867,6 +3868,7 @@ function renderWorkspaceNavItem(item: WorkspaceNavItem, active = item.section ==
       aria-label="${escapeAttribute(item.label)}"
       title="${escapeAttribute(item.label)}"
       ${active ? 'aria-current="page"' : ""}
+      ${canOpenWorkspaceSection(item.section) ? "" : "disabled"}
     >
       ${icon(item.glyph)}
       <span>${escapeHtml(item.label)}</span>
@@ -4016,14 +4018,15 @@ function renderSlateHeader(selectedProject: FilmProject): string {
   `;
 }
 
-function renderProjectWorkspaceHeader(projectCount: number, selectedProject: FilmProject): string {
+function renderProjectWorkspaceHeader(projectCount: number, selectedProject?: FilmProject): string {
   return `
     <div class="slate-head projects-workspace-head">
       <div>
         <h1>Projects</h1>
-        <p>${projectCount} visible - ${state.workspace.archivedProjectCount} archived - selected ${escapeHtml(selectedProject.title)}</p>
+        <p>${projectCount} visible - ${state.workspace.archivedProjectCount} archived${selectedProject ? ` - selected ${escapeHtml(selectedProject.title)}` : ""}</p>
       </div>
       <div class="view-controls" aria-label="View controls">
+        ${state.workspace.projects.length ? `
         <label class="search-box workspace-search-box">
           ${icon("search")}
           <input value="${escapeAttribute(state.ui.filter)}" data-action="filter" placeholder="Search project metadata" />
@@ -4033,6 +4036,7 @@ function renderProjectWorkspaceHeader(projectCount: number, selectedProject: Fil
           <button data-project-surface="list" class="${state.ui.viewMode === "list" ? "is-active" : ""}" type="button">List</button>
         </span>
         <button type="button" data-action="export-project-directory">${icon("doc")} Export directory</button>
+        ` : ""}
         <button type="button" data-action="create-project">${icon("plus")} Create project</button>
         ${DEMO_MODE ? "" : `<a class="secondary-button" href="/?demo=portfolio">Demo portfolio</a>`}
       </div>
@@ -5432,7 +5436,13 @@ function renderPermissionAssignment(project: FilmProject, activeMembers: Workspa
   `;
 }
 
-function renderInspector(project: FilmProject): string {
+function renderIntegrationPlaceholder(): string {
+  return '<div data-integration-view class="inspector-view-panel" data-inspector-view-panel="integrations"></div>';
+}
+
+function renderInspector(project?: FilmProject): string {
+  if (!project) return state.ui.inspectorView === "integrations"
+    ? `<aside class="inspector" aria-label="Inspector"><div class="inspector-body">${renderIntegrationPlaceholder()}</div></aside>` : "";
   const auditEvents = state.workspace.auditLog.slice(0, 5);
   const members = state.workspace.members ?? [];
   const canCreateInvite = Boolean(state.auth.session?.csrfToken);
@@ -6095,7 +6105,7 @@ function renderInspector(project: FilmProject): string {
 		        </details>
               </section>
               </div>
-              ${state.ui.inspectorView === "integrations" ? `<div data-integration-view class="inspector-view-panel" data-inspector-view-panel="integrations"></div>` : ""}
+              ${state.ui.inspectorView === "integrations" ? renderIntegrationPlaceholder() : ""}
               <section class="inspector-section inspector-section-first inspector-view-panel" ${inspectorViewPanelAttributes("imports")}>
                 <div class="section-head row"><h3>Imports</h3></div>
                 <div class="import-actions">
@@ -6270,7 +6280,7 @@ function renderInspector(project: FilmProject): string {
 }
 
 function navigateWorkspace(section: WorkspaceSection): void {
-  state.ui.workspaceSection = section;
+  state.ui.workspaceSection = canOpenWorkspaceSection(section) ? section : "projects";
   state.ui.toast = null;
   persistUi();
   render();

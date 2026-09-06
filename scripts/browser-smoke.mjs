@@ -11,6 +11,7 @@ import { auditWorkspaceAppearance, runAppearanceSmoke, runOfflineShellSmoke } fr
 import { runDemoPortfolioSmoke } from "./browser-demo-flows.mjs";
 import { runDeferredViewSmoke } from "./browser-deferred-view-flows.mjs";
 import { browserReleaseOrigin } from "./browser-release-origin.mjs";
+import { runEmptyWorkspaceSmoke } from "./browser-empty-workspace-flows.mjs";
 import { providerRuntimeFixture, runProviderRuntimeStatusSmoke, runGoogleRecoverySmoke } from "./browser-provider-status-flows.mjs";
 import {
   clickWorkspaceSection,
@@ -330,6 +331,7 @@ async function mockAuthRoutes(page) {
   const issuedLinkCode = "dry_browser_smoke_link_code";
   const csrfValue = "csrf_browser_smoke";
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const session = { id: "session_browser_smoke", role: "owner", csrfToken: csrfValue, expiresAt };
 
   await page.route("**/api/auth/magic-link/request", async (route) => {
     const payload = JSON.parse(route.request().postData() || "{}");
@@ -358,12 +360,7 @@ async function mockAuthRoutes(page) {
       body: JSON.stringify({
         dryRun: true,
         persistence: "browser_smoke_mock",
-        session: {
-          id: "session_browser_smoke",
-          role: "owner",
-          csrfToken: csrfValue,
-          expiresAt,
-        },
+        session,
       }),
     });
   });
@@ -422,6 +419,7 @@ async function mockAuthRoutes(page) {
       }),
     });
   });
+  return session;
 }
 
 async function mockProviderRoutes(page) {
@@ -3045,13 +3043,14 @@ try {
     : await startWebServer({ preview: offlineOnly || process.argv.includes("--built") });
   browser = await chromium.launch({ headless: true });
   const providerOptions = {
-    prepare: async page => { await mockAuthRoutes(page); await mockProviderRoutes(page); },
+    prepare: async page => { const session = await mockAuthRoutes(page); await mockProviderRoutes(page); return session; },
     authenticate: page => runAuthSmoke(page, { signOut: false }), record,
     checkAccessibility: expectNoSeriousA11yViolations, checkOverflow: expectNoDocumentOverflow,
     outputDir: resolve(failureDir, "ux-audit"),
   };
   const runStatusSmoke = () => runProviderRuntimeStatusSmoke(webServer.url, browser, providerOptions);
   const runGoogleSmoke = () => runGoogleRecoverySmoke(webServer.url, browser, providerOptions);
+  const runEmptySmoke = () => runEmptyWorkspaceSmoke(webServer.url, browser, providerOptions);
   if (releaseOrigin) {
     // These suites isolate browser storage and block or mock every API route; no live auth or provider writes.
     await runDemoPortfolioSmoke(webServer.url, browser, {
@@ -3060,6 +3059,7 @@ try {
     });
     await runStatusSmoke();
     await runGoogleSmoke();
+    await runEmptySmoke();
     await runDeferredViewSmoke(webServer.url, browser, {
       outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
       checkOverflow: expectNoDocumentOverflow, record,
@@ -3071,6 +3071,8 @@ try {
     await runStatusSmoke();
   } else if (process.argv.includes("--google-only")) {
     await runGoogleSmoke();
+  } else if (process.argv.includes("--empty-only")) {
+    await runEmptySmoke();
   } else if (process.argv.includes("--meta-only")) {
     await runMetaFacebookOnlySmoke(webServer.url, browser);
   } else if (process.argv.includes("--backup-loading-only") || process.argv.includes("--deferred-views-only")) {
@@ -3095,6 +3097,7 @@ try {
       if (!process.argv.includes("--appearance-only")) {
         await runStatusSmoke();
         await runGoogleSmoke();
+        await runEmptySmoke();
         await runDeferredViewSmoke(webServer.url, browser, {
           outputDir: resolve(failureDir, "ux-audit"), checkAccessibility: expectNoSeriousA11yViolations,
           checkOverflow: expectNoDocumentOverflow, record,

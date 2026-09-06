@@ -87,7 +87,7 @@ Current inventory: 54 flows across 27 areas. Every flow declares automated regre
   1. Open New project, enter a title, and choose a project type.
   2. Submit and select the resulting project.
   3. Edit phase, dates, budget, location, or description directly in the project overview.
-- Successful outcome: The typed film template and in-place edits each queue one bounded canonical-sync operation.
+- Successful outcome: The typed film template and in-place edits each queue one bounded canonical-sync operation. A fresh empty workspace retains first-project creation, recovery, and account controls.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -95,6 +95,7 @@ Current inventory: 54 flows across 27 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `project overview edited canonical project details in place`
+  - browser: `scripts/browser-empty-workspace-flows.mjs` contains `runEmptyWorkspaceSmoke`
 
 ### PROJECT-02: Export a filtered project directory
 
@@ -190,7 +191,7 @@ Current inventory: 54 flows across 27 areas. Every flow declares automated regre
 - Steps:
   1. Enter the member email and request a link.
   2. Consume the one-time link and later sign out.
-- Successful outcome: The session is member/workspace scoped, uses CSRF protection, and visibly returns to signed-out state.
+- Successful outcome: The session is member/workspace scoped, uses CSRF protection, and visibly returns to signed-out state, including a workspace with no projects.
 - UX checks:
   - Entry point and current state are visible.
   - Unavailable or destructive actions explain their gate before mutation.
@@ -198,6 +199,7 @@ Current inventory: 54 flows across 27 areas. Every flow declares automated regre
   - Keyboard labels, mobile bounds, and private-data boundaries remain intact.
 - Regression evidence:
   - browser: `scripts/browser-smoke.mjs` contains `runAuthSmoke`
+  - browser: `scripts/browser-empty-workspace-flows.mjs` contains `runEmptyWorkspaceSmoke`
 
 ### AUTH-02: Consume sensitive auth and invite links
 

@@ -64,7 +64,7 @@ export const FILM_USER_FLOWS = [
   flow("AUTH-01", "Access", "Request a magic link, sign in, and sign out", "Workspace member", "slate", [
     "Enter the member email and request a link.",
     "Consume the one-time link and later sign out.",
-  ], "The session is member/workspace scoped, uses CSRF protection, and visibly returns to signed-out state.", [browser("runAuthSmoke")]),
+  ], "The session is member/workspace scoped, uses CSRF protection, and visibly returns to signed-out state, including a workspace with no projects.", [browser("runAuthSmoke"), { kind: "browser", file: "scripts/browser-empty-workspace-flows.mjs", marker: "runEmptyWorkspaceSmoke" }]),
   flow("AUTH-02", "Access", "Consume sensitive auth and invite links", "Invited or existing member", "slate", [
     "Open a URL containing a magic-link or invite token fragment.",
     "Allow Film to consume the token.",
@@ -91,7 +91,7 @@ export const FILM_USER_FLOWS = [
     "Open New project, enter a title, and choose a project type.",
     "Submit and select the resulting project.",
     "Edit phase, dates, budget, location, or description directly in the project overview.",
-  ], "The typed film template and in-place edits each queue one bounded canonical-sync operation.", [browser("project overview edited canonical project details in place")]),
+  ], "The typed film template and in-place edits each queue one bounded canonical-sync operation. A fresh empty workspace retains first-project creation, recovery, and account controls.", [browser("project overview edited canonical project details in place"), { kind: "browser", file: "scripts/browser-empty-workspace-flows.mjs", marker: "runEmptyWorkspaceSmoke" }]),
   flow("PROJECT-02", "Projects", "Export a filtered project directory", "Any member", "projects", [
     "Filter the project directory.",
     "Export the visible result as Markdown.",

@@ -216,8 +216,12 @@ button.status-chip,
   text-align: left;
 }
 
-.nav-item:hover {
+.nav-item:hover:not(:disabled) {
   background: var(--hover);
+}
+
+.nav-item:disabled {
+  opacity: 0.5;
 }
 
 .nav-item.is-active {
@@ -684,6 +688,10 @@ button.status-chip:hover,
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   min-height: calc(100vh - 58px);
+}
+
+.main-panel-wide {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .content-column {
