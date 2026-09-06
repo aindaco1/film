@@ -2,7 +2,7 @@
 
 Use this checklist for local/staging handoff evidence and production readiness review. Film's API Worker, static app, member-only live magic-link auth, live Resend invite path, and Pool/Store Stripe summary adapters are configured for the Dust Wave deployment.
 
-The latest [0.1.0-beta.1 deployment](release-evidence/2026-09-06-beta-1.md) packages the accumulated neutral-theme, demo, deferred-screen, offline, and provider work with 769 unit/script tests. It adds shared Google contracts and guarded refresh/reconnect behavior. The web and API are publicly verified with provider modes unchanged; GitHub release publication additionally requires the source commit's CI result.
+The latest [0.1.0-beta.1 deployment](release-evidence/2026-09-06-beta-1.md) packages the accumulated neutral-theme, demo, deferred-screen, offline, and provider work with 774 unit/script tests. It adds shared Google contracts and guarded refresh/reconnect behavior. The web and API are publicly verified with provider modes unchanged; GitHub release publication additionally requires the source commit's CI result.
 
 The preceding [September 6 provider and maintainability follow-up](release-evidence/2026-09-06-provider-followup.md) includes real owner reauthorization and an empty Drive metadata read. Meta's new Dust Wave portfolio is assigned to Film but still requires identity/business/access verification and App Review. Public Google verification and the [selected-file scope decision](google-selected-file-evaluation.md) are separate from this beta.
 

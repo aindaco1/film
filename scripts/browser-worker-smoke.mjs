@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,9 +55,14 @@ const email = args.email ?? process.env.FILM_BROWSER_WORKER_SMOKE_EMAIL ?? DEFAU
 
 let appServer = null;
 let browser = null;
+let cleanupPromise = null;
+const interrupt = () => { void cleanup().finally(() => process.exit(130)); };
+const terminate = () => { void cleanup().finally(() => process.exit(143)); };
 
 try {
   appServer = await ensureAppServer(appOrigin, normalizedWorkerOrigin);
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", terminate);
   browser = await chromium.launch();
   const context = await browser.newContext({
     viewport: { width: 1440, height: 950 },
@@ -139,11 +144,16 @@ try {
   console.error(`Browser Worker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 } finally {
-  if (browser) await browser.close();
-  if (appServer?.child) {
-    appServer.child.kill("SIGTERM");
-    await new Promise((resolve) => appServer.child.once("exit", resolve));
-  }
+  await cleanup();
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", terminate);
+}
+
+function cleanup() {
+  return cleanupPromise ??= (async () => {
+    await stopManagedProcess(appServer?.child);
+    if (browser) await browser.close();
+  })();
 }
 
 async function ensureAppServer(appOriginValue, workerOriginValue) {
@@ -160,7 +170,7 @@ async function ensureAppServer(appOriginValue, workerOriginValue) {
   }
 
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  const child = spawn("npx", ["vite", "--host", url.hostname, "--port", port, "--strictPort"], {
+  const child = spawnManagedProcess("npx", ["vite", "--host", url.hostname, "--port", port, "--strictPort"], {
     cwd: path.join(root, "apps", "web"),
     env: {
       ...process.env,
@@ -181,7 +191,7 @@ async function ensureAppServer(appOriginValue, workerOriginValue) {
   try {
     await waitForReachable(appOriginValue);
   } catch (error) {
-    child.kill("SIGTERM");
+    await stopManagedProcess(child);
     throw new Error(`Vite app did not start at ${appOriginValue}: ${error instanceof Error ? error.message : String(error)} ${output.trim()}`);
   }
 

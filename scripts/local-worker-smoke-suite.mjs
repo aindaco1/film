@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalWorkerProofClient } from "./local-worker-proof-client.mjs";
 import { localWorkerArgs } from "./local-worker-config.mjs";
+import { runManagedCommand, spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
@@ -16,7 +16,7 @@ let proofClient = null;
 
 try {
   console.log("Applying local D1 migrations...");
-  runChecked("npx", ["wrangler", "d1", "migrations", "apply", "DB", "--local"], {
+  await runManagedCommand("npx", ["wrangler", "d1", "migrations", "apply", "DB", "--local"], {
     cwd: workerDir,
     input: "yes\n",
   });
@@ -27,7 +27,7 @@ try {
   const appOrigin = `http://127.0.0.1:${appPort}`;
 
   console.log(`Starting local Worker at ${workerOrigin}...`);
-  worker = spawn("npx", [
+  worker = spawnManagedProcess("npx", [
     "wrangler",
     ...localWorkerArgs({
       port: workerPort,
@@ -64,13 +64,13 @@ try {
     NO_COLOR: "1",
   };
 
-  runChecked("npm", ["run", "smoke:worker"], { cwd: root, env: smokeEnv });
-  runChecked("node", ["scripts/local-member-status-smoke.mjs"], { cwd: root, env: smokeEnv });
-  runChecked("node", ["scripts/local-collaboration-smoke.mjs"], { cwd: root, env: smokeEnv });
-  runChecked("node", ["scripts/local-restore-proof-smoke.mjs"], { cwd: root, env: smokeEnv });
-  runChecked("node", ["scripts/local-attachment-proof-smoke.mjs"], { cwd: root, env: smokeEnv });
-  runChecked("npm", ["run", "smoke:browser:worker"], { cwd: root, env: smokeEnv });
-  runChecked("npm", ["run", "smoke:providers:live"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("npm", ["run", "smoke:worker"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("node", ["scripts/local-member-status-smoke.mjs"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("node", ["scripts/local-collaboration-smoke.mjs"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("node", ["scripts/local-restore-proof-smoke.mjs"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("node", ["scripts/local-attachment-proof-smoke.mjs"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("npm", ["run", "smoke:browser:worker"], { cwd: root, env: smokeEnv });
+  await runManagedCommand("npm", ["run", "smoke:providers:live"], { cwd: root, env: smokeEnv });
 
   console.log("Local Worker smoke suite passed: migrations, Worker smoke, member-status, collaboration, core restore-proof, and attachment restore-proof transactions, browser Worker smoke, provider adapter readiness");
 } catch (error) {
@@ -85,36 +85,7 @@ try {
       process.exitCode = 1;
     }
   }
-  if (worker) {
-    worker.kill("SIGTERM");
-    await Promise.race([
-      new Promise((resolve) => worker.once("exit", resolve)),
-      delay(3_000).then(() => {
-        if (worker.exitCode === null) worker.kill("SIGKILL");
-      }),
-    ]);
-  }
-}
-
-function runChecked(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd ?? root,
-    env: {
-      ...process.env,
-      NO_COLOR: "1",
-      ...(options.env ?? {}),
-    },
-    input: options.input,
-    encoding: "utf8",
-    timeout: 10 * 60_000,
-    stdio: options.input ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} exited with ${result.status}: ${result.error?.message ?? "no process error"}`);
-  }
+  await stopManagedProcess(worker);
 }
 
 async function waitForWorker(origin, child, getLogs) {

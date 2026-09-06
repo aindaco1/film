@@ -30,6 +30,8 @@ npm run smoke
 
 ## Current Coverage
 
+- Browser and real-D1 runners share `managed-process.mjs` for process-tree teardown. The real-D1 supervisor runs commands asynchronously with live output and a bounded timeout; it must not block its own Worker log streams with `spawnSync`. Runner tests cover descendant teardown, responsive supervision, failed exits/launches, stalled commands, and forwarded termination. CI must finish both the full smoke and real-D1 lanes before publishing a release.
+
 - `scripts/local-worker-config.test.mjs` requires an explicit non-live local override for every provider mode declared in Wrangler configuration. Dev and real-local-Worker smoke reuse the same policy; adding a new production mode without a local safety decision fails this test.
 
 - The web build enforces `scripts/web-bundle-budget.mjs`: at most 470,000 entry bytes, 565,000 total initial JS bytes, and 124,000 initial gzip bytes. The check traverses static dependencies once, after Vite's final chunk transforms, and rejects eager production-resource/daily-document/backup/integration screens, provider/backup/restore clients, demo, and import-preview modules. These are regression ceilings, not ideal performance targets.
