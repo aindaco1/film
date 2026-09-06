@@ -1,6 +1,6 @@
 # Provider Review Preparation
 
-Prepared 2026-09-06. This is an operator packet, not evidence of approval or a submitted declaration. Never include account credentials, tokens, private folder links, or business identity documents in this repository.
+This document owns reviewer preparation, scope justifications and recording steps. [Project Status](PROJECT_STATUS.md#provider-posture) owns activation, approval blockers and next steps; [dated provider evidence](release-evidence/2026-09-06-provider-followup.md) records portal and account observations. Never include account credentials, tokens, private folder links or business identity documents in this repository.
 
 ## Shared Product Statement
 
@@ -10,7 +10,7 @@ Public app: https://film.dustwave.xyz. Privacy, terms, and deletion information 
 
 ## Meta: Facebook-Only Submission Scope
 
-The operator confirmed on September 6 that Film is operated by **Fumblers LLC dba Dust Wave**. With explicit approval, the Dust Wave portfolio (`1374848441471690`) was created through Film's app settings; the resulting settings show Film assigned to it. Fumblers LLC and Dust Wave are the legal and alternative names in the verification form. Creation/assignment is not verification or public review. Never use the unrelated Iterative Consulting portfolio.
+Use Film's existing **Fumblers LLC dba Dust Wave** business portfolio. Confirm its authorized administrator and legal/alternative names before submitting declarations; do not create a duplicate or use an unrelated portfolio. The portfolio assignment and verification observations are retained in [Meta evidence](release-evidence/2026-09-06-provider-followup.md#meta-portal-observations).
 
 The first review should cover the working Facebook-only flow. Do not request Instagram permissions until a consented professional Instagram account is linked to the test Page and its own acceptance chain has passed.
 
@@ -41,17 +41,13 @@ The first review should cover the working Facebook-only flow. Do not request Ins
 5. Read the bounded 30-day calendar and insights. An empty calendar and zero metrics on a new test Page are valid empty results, not evidence of production engagement. Record any unavailable metric as unavailable.
 6. Disconnect explicitly. Verify revocation and local credential/mapping cleanup without displaying ciphertext or token contents.
 
-The dashboard was inspected on September 6: Facebook read permissions are Active, still Standard access; no review submission exists. Instagram permissions remain unused. Full current observations belong in `release-evidence/2026-09-06-provider-followup.md`.
-
 Portal references: [App Review](https://developers.facebook.com/docs/resp-plat-initiatives/appreview/), [access verification](https://developers.facebook.com/docs/development/release/access-verification/). The live Film dashboard, not the existence of these documentation links, determines its current eligibility.
 
 ## Google: Testing Versus Public Release
 
-Film's Google Cloud project is `film-502013`, display name Film. Its audience is External / Testing, with one owner test user. The sole configured scope is `https://www.googleapis.com/auth/drive.metadata.readonly`. Verification Center exempts the current testing configuration; it does not approve public distribution.
+Use [Project Status](PROJECT_STATUS.md#provider-posture) for the approved audience and scope posture and [Google evidence](release-evidence/2026-09-06-provider-followup.md#google-portal-and-live-observations) for dated project/account observations. A Testing exemption does not establish public verification. The [scope evaluation](google-selected-file-evaluation.md) owns the restricted-scope and server-assessment tradeoffs.
 
-Google classifies this metadata-only Drive scope as **restricted**. Its guidance requires restricted-scope verification for public use and a security assessment when restricted data is stored on or transmitted through servers. Because Film's Worker transmits folder metadata, treat that assessment as a launch gate until Google confirms the applicable requirements or exemption. [Google Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
-
-Testing authorizations using this scope expire after seven days, including refresh tokens. An `invalid_grant` refresh response must lead to deliberate reconnection, not endless retries or automatic broader consent. Temporary service failures must remain distinct. [Google OAuth token lifecycle](https://developers.google.com/identity/protocols/oauth2)
+Testing authorizations using `drive.metadata.readonly` expire after seven days, including refresh tokens. An `invalid_grant` refresh response must lead to deliberate reconnection, not endless retries or automatic broader consent. Temporary service failures must remain distinct. [Google OAuth token lifecycle](https://developers.google.com/identity/protocols/oauth2)
 
 ### Current Scope Justification Draft
 
@@ -61,15 +57,7 @@ This is an implementation description, not yet a sufficient restricted-scope jus
 
 ### Product Decision Before Public Verification
 
-| Path | Benefit | Cost or limitation |
-| --- | --- | --- |
-| Retain `drive.metadata.readonly` | Preserves current arbitrary-folder metadata listing and read-only OAuth scope. | Restricted-scope review and likely server-side security assessment; a reviewer may require justification for not using a narrower scope. |
-| Use Google Picker with `drive.file` | Google's recommended non-sensitive per-file access model; avoids broad account-wide metadata consent. | A changed file-selection/import contract. The scope is write-capable for selected files even if Film only reads; not a drop-in readonly folder-listing replacement. Requires implementation and explicit consent review. |
-| Keep Google as an owner-only testing integration for now | Allows bounded acceptance without pretending it is public-ready. | Seven-day reauthorization, test-user restrictions, and no general-user Google launch claim. |
-
-Recommendation: keep the existing scope unchanged for owner acceptance, then evaluate a Picker prototype before committing to restricted-scope public review. Do not silently swap scopes or publish the OAuth app merely to remove the testing expiry. [Google minimum-scope guidance](https://support.google.com/cloud/answer/13807380?hl=en)
-
-The [selected-file evaluation](google-selected-file-evaluation.md) now includes a tested, unexposed metadata adapter and the exact activation requirements. Picker also requires a browser access token, which conflicts with Film's current absolute Worker-only token policy. No scope or token-location change was made.
+Resolve the [selected-file evaluation](google-selected-file-evaluation.md#what-actually-changes) before choosing a public-review path. It owns the comparison with metadata-only access, the browser-token/write-capable scope tradeoffs, the feasibility boundary and the activation requirements. Retain the approved owner-only connection until that decision is made; do not silently swap scopes or publish the OAuth app merely to remove the testing expiry. Apply [Google minimum-scope guidance](https://support.google.com/cloud/answer/13807380?hl=en) to the chosen contract.
 
 ### Owner Acceptance and Public Review Evidence
 
@@ -80,4 +68,4 @@ The [selected-file evaluation](google-selected-file-evaluation.md) now includes 
 5. Verify refresh and reconnect/error behavior with deterministic fixtures in addition to the live read. A successful empty read does not prove non-empty pagination or long-term refresh acceptance.
 6. For public review, prepare matching branding, domain ownership, privacy/data-use disclosures, scope justification, an accurate data-flow diagram, reviewer access, and a real OAuth/feature recording. Resolve the restricted-scope/assessment decision first.
 
-Callback: `https://api.film.dustwave.xyz/api/providers/google/oauth/callback`. Docs export and Calendar remain separate incremental-consent features; this review packet does not authorize them.
+Use the exact callback and credential configuration in [Deployment: Google OAuth](DEPLOYMENT.md#google-oauth). Docs export and Calendar remain separate incremental-consent features; this review packet does not authorize them.

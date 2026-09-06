@@ -57,9 +57,4 @@ Use the canonical flow IDs in [USER_FLOWS.md](../USER_FLOWS.md); do not maintain
 
 Browser screenshots and detailed gate output are generated under ignored `test-results/`. They contain fictional fixtures, not private production data. The demo is intended for varied functional and responsive testing; it is not a server load test or production collaboration simulation.
 
-Representative rendered checks:
-
-- [Desktop project portfolio](../../test-results/ux-audit/demo-1440-dark-list.png)
-- [Mobile project portfolio](../../test-results/ux-audit/demo-390-light-list.png)
-- [Dense production overview](../../test-results/ux-audit/demo-1440-dark-slate.png)
-- [Sides empty-state spacing](../../test-results/ux-audit/demo-1440-dark-sides.png)
+Representative rendered checks used `demo-1440-dark-list.png`, `demo-390-light-list.png`, `demo-1440-dark-slate.png` and `demo-1440-dark-sides.png` under `test-results/ux-audit`. These are disposable generated artifacts, not required documentation links. Run the [demo suite](../TESTING.md) for current captures; [Project Status](../PROJECT_STATUS.md) owns remaining acceptance rather than this historical review.

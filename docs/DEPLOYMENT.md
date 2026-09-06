@@ -1,6 +1,8 @@
 # Deployment Handoff
 
-Film's Worker production route, static app origin, member-only live magic-link auth, and live invite-delivery gate are configured for the Dust Wave deployment. The static app deploys as the `film-web` Worker with static assets at `https://film.dustwave.xyz`, and the API Worker route targets `https://api.film.dustwave.xyz`. Stripe summary reads are configured only through Pool/Store summary adapters, with direct Stripe API reads blocked.
+This document owns hosting and provider configuration. [Project Status](PROJECT_STATUS.md) owns deployed versions and provider activation/acceptance; [Testing](TESTING.md#operator-and-public-checks) owns verification commands; [Operations](OPERATIONS.md) owns approved operator procedures.
+
+The static app deploys as the `film-web` Worker with static assets at `https://film.dustwave.xyz`, and the API Worker route targets `https://api.film.dustwave.xyz`. Stripe summary reads use only Pool/Store summary adapters, with direct Stripe API reads blocked.
 
 ## Local Worker Vars
 
@@ -56,7 +58,7 @@ Use Wrangler secrets or dashboard-managed secrets for sensitive values:
 - `TELNYX_INBOUND_NUMBER_MAPPINGS` (secret JSON from receiving E.164 numbers to workspace IDs)
 - `TELNYX_API_KEY` (secret API key for the disabled-by-default outbound adapter)
 
-Keep `TELNYX_MESSAGING_PROFILE_ID`, `TELNYX_CAMPAIGN_ID`, `TELNYX_WEBHOOK_MODE`, `SMS_QUIET_HOURS_TIME_ZONE`, `SMS_QUIET_HOURS_START`, `SMS_QUIET_HOURS_END`, `SMS_DELIVERY_RETENTION_DAYS`, and `SMS_MODE` as Worker configuration. Profile and campaign identifiers are not credentials; both mode values remain `disabled` until the controlled activation steps pass.
+Keep `TELNYX_MESSAGING_PROFILE_ID`, `TELNYX_CAMPAIGN_ID`, `TELNYX_WEBHOOK_MODE`, `SMS_QUIET_HOURS_TIME_ZONE`, `SMS_QUIET_HOURS_START`, `SMS_QUIET_HOURS_END`, `SMS_DELIVERY_RETENTION_DAYS`, and `SMS_MODE` as Worker configuration. Profile and campaign identifiers are not credentials. For a new/unapproved installation both modes remain `disabled` until controlled activation passes; see [Project Status](PROJECT_STATUS.md) for the existing deployment rather than resetting it to this provisioning default.
 
 Pool and Store companion Workers use `FILM_STRIPE_SUMMARY_ADAPTER_SECRET` for the same bearer value that Film sends as `STRIPE_SUMMARY_ADAPTER_SECRET`.
 
@@ -105,20 +107,13 @@ Generate `SMS_RECIPIENT_ENCRYPTION_KEY` and `SMS_RECIPIENT_HASH_KEY` separately 
 
 Keep `TELNYX_WEBHOOK_MODE` and `SMS_MODE` disabled until the Telnyx account, messaging profile, dedicated number, campaign, disclosure, quiet-hours window, retention period, and recipient enrollment are approved. Store the API key, Portal Ed25519 public key, and a JSON `TELNYX_INBOUND_NUMBER_MAPPINGS` value such as `{ "+15551234567": "workspace_acme" }` through Wrangler secrets; one mapped receiving number becomes that workspace's outbound sender. Store the profile ID, campaign ID, and approved policy values as Worker configuration. The protected `Check Telnyx` action performs read-only profile, campaign, carrier-status, and number-assignment checks through the Worker and returns no configured identifiers. The daily cron deletes only terminal attempts and Telnyx event metadata after `SMS_DELIVERY_RETENTION_DAYS`; consent evidence and pending attempts remain.
 
-Run signed STOP/START/HELP fixtures before enabling the webhook. Then run one owned-number send with `SMS_MODE=live`, verify the deterministic retry does not send twice, verify the signed delivery event advances the content-free attempt, send STOP, and confirm later sends are denied. Immediately restore `SMS_MODE=disabled` if any step fails. The browser receives opaque consent/attempt IDs and aggregate counts only; message content exists only in the transient browser-to-Worker and Worker-to-Telnyx requests.
+Follow [Telnyx Consent And Webhook Activation](OPERATIONS.md#telnyx-consent-and-webhook-activation) for the ordered fixtures, consent, send/retry, delivery, STOP and failure checks. [Security](SECURITY.md#sms-consent-and-telnyx) owns the recipient and transient-message boundaries.
 
 ## Production Auth Bootstrap
 
-Production sets `AUTH_MAGIC_LINK_MODE=live` in `apps/worker/wrangler.toml`. Live requests disclose no membership state and send a Resend link only to an existing active D1 member. The Worker fails closed if D1/KV membership or session state is unavailable.
+`AUTH_MAGIC_LINK_MODE=live` enables member-only Resend authentication. Live requests disclose no membership state and send a link only to an existing active D1 member. The Worker fails closed if D1/KV membership or session state is unavailable.
 
-Bootstrap the initial owner only from an approved ignored companion environment file:
-
-```bash
-npm run bootstrap:production-owner
-npm run bootstrap:production-owner -- --apply
-```
-
-The first command is a non-writing report. `--apply` hashes the configured owner locally, expires unconsumed links for the prior target-member hash, revokes target-member and workspace-less sessions, upserts the production workspace/member rows, and records `operator.owner_bootstrapped` without email/hash metadata. The command does not print the email or hash. Do not use it as a general member-management workflow.
+Use [Owner Recovery Or Rotation](OPERATIONS.md#owner-recovery-or-rotation) for initial provisioning or recovery from an approved ignored companion environment file. That procedure owns the non-writing preview, explicit apply, session revocation and verification steps.
 
 ## Resend Invite Delivery Webhook
 
@@ -128,21 +123,13 @@ Configure the Resend webhook target as:
 https://api.film.dustwave.xyz/api/webhooks/resend/invite-delivery
 ```
 
-`INVITE_DELIVERY_WEBHOOK_SECRET` must be the Resend/Svix signing secret value for that endpoint, stored as a Wrangler or dashboard secret. The Worker requires `svix-id`, `svix-timestamp`, and `svix-signature`, rejects stale or invalid signatures, deduplicates by Svix message ID, records only bounded invite-delivery metadata in D1, updates the linked attempt's latest provider event, and creates hash-only suppression rows for bounced, complained, or suppressed events. Production still needs an operating policy for support review of suppressions.
-
-Run the companion readiness check from this repo before enabling live Stripe summaries:
-
-```bash
-npm run check:companions
-```
-
-The checker scans the sibling Pool and Store repos for tracked route, endpoint, and shared-secret binding names. It reports only configuration names and does not print `.dev.vars` values. Missing local `.dev.vars` declarations are warnings because production secrets may be managed through Wrangler or the Cloudflare dashboard.
+`INVITE_DELIVERY_WEBHOOK_SECRET` must be the Resend/Svix signing secret value for that endpoint, stored as a Wrangler or dashboard secret. The Worker requires `svix-id`, `svix-timestamp`, and `svix-signature`, rejects stale or invalid signatures, deduplicates by Svix message ID, records only bounded invite-delivery metadata in D1, updates the linked attempt's latest provider event, and creates hash-only suppression rows for bounced, complained, or suppressed events. [Project Status](PROJECT_STATUS.md#provider-posture) tracks operational acceptance; [Operations](OPERATIONS.md#resend-webhook-rotation) owns webhook rotation.
 
 ## Stripe Summary Adapter Shape
 
 Film accepts only summary-adapter reads for Stripe data. Production adapter URLs must be HTTPS endpoints with the path `/film/stripe-summary`.
 
-`apps/worker/wrangler.toml` points at the Dust Wave Pool/Store production summary adapters but keeps `STRIPE_PROJECT_MAPPINGS={}` and `STRIPE_SUMMARY_MODE=disabled`. Big Sword has no verified companion resource. Do not reuse seed or fixture refs. Configure the exact real Film project to public Pool campaign slugs or Store product refs; JSON is preferred:
+Keep `STRIPE_PROJECT_MAPPINGS={}` and `STRIPE_SUMMARY_MODE=disabled` until real companion resources are verified. [Project Status](PROJECT_STATUS.md#provider-posture) records accepted mappings and activation; do not reuse seed or fixture refs. Configure the exact real Film project to public Pool campaign slugs or Store product refs; JSON is preferred:
 
 ```json
 {
@@ -156,6 +143,8 @@ Film accepts only summary-adapter reads for Stripe data. Production adapter URLs
 ```
 
 Direct Stripe API reads remain blocked in Film. `STRIPE_WEBHOOK_SECRET` and `STRIPE_SUMMARY_ADAPTER_SECRET` remain secrets, and the Film-side adapter secret must match the companion Workers' `FILM_STRIPE_SUMMARY_ADAPTER_SECRET`.
+
+Before enabling reads, use the [companion configuration check](TESTING.md#configuration-readiness) and the separately gated [provider probe](TESTING.md#provider-readiness-and-approved-sends).
 
 ## Rate Limit Overrides
 
@@ -172,45 +161,6 @@ Known bucket names include `auth_magic_link_request`, `auth_magic_link_verify`, 
 
 ## Verification
 
-```bash
-npm run check:deploy
-npm run check:deploy -- --dev-vars apps/worker/.dev.vars
-npm run check:deploy -- --wrangler-secrets
-npm run check:deploy:strict
-npm run check:companions -- --strict
-npm run report:production-traffic
-FILM_WORKER_SMOKE_ORIGIN=http://127.0.0.1:8787 npm run smoke:worker
-FILM_WORKER_SMOKE_ORIGIN=http://127.0.0.1:8787 npm run smoke:browser:worker
-FILM_WORKER_SMOKE_ORIGIN=http://127.0.0.1:8787 npm run smoke:providers:live
-npm run smoke:auth:production -- --allow-send --require
-npm run smoke:local:worker
-npx wrangler deploy --dry-run --config apps/worker/wrangler.toml
-npx wrangler deploy --dry-run --config apps/web/wrangler.toml
-```
+Use [Testing: Operator And Public Checks](TESTING.md#operator-and-public-checks) for deployment/companion readiness, Worker packaging, approved provider probes and public-asset checks. [Worker Smoke Options](TESTING.md#worker-smoke-options) covers separately started local Workers; the Testing baseline owns the supervised local suite.
 
-`npm run check:deploy` is advisory for local work. Add `-- --dev-vars apps/worker/.dev.vars` only for operator-local verification of ignored Worker dev vars; the script uses the values for presence/shape checks without printing secret values. Add `-- --wrangler-secrets` when Cloudflare secret names should count for production readiness; the script lists secret names only and never reads values. `npm run check:deploy:strict` is the fully-live MVP gate for auth, invite, and Google OAuth plus any provider mode explicitly set live. Meta, Telnyx SMS, and Stripe summaries are advisory while explicitly disabled. Setting a live mode makes that provider's app/secret/policy/mapping checks strict. Disabled provider implementation releases must record any intentional blockers and keep the corresponding live mode off.
-
-`npm run smoke:worker` is an opt-in Worker-origin smoke. It skips without `FILM_WORKER_SMOKE_ORIGIN`; use `FILM_WORKER_SMOKE_REQUIRED=1` or `--require` when local/staging Worker verification should fail closed.
-
-`npm run smoke:browser:worker` is an opt-in browser smoke against the configured Worker origin. It uses `FILM_BROWSER_WORKER_SMOKE_APP_ORIGIN` when provided, otherwise it uses or starts local Vite at `http://127.0.0.1:5173`. The smoke signs in through the Worker, verifies provider dry-run surfaces, creates and syncs a canonical document, applies an approved protected mutation, exports an encrypted backup through the signed UI path, accepts Worker R2 storage or metadata fallback, previews the encrypted backup locally, and signs out.
-
-`npm run smoke:providers:live` is an opt-in provider-adapter smoke. Without extra allow flags, it checks live readiness without calling live Stripe adapters or sending email. Set `FILM_LIVE_PROVIDER_SMOKE_ALLOW_STRIPE=1` only against local/staging Pool and Store summary adapters, or against production after the mapped refs and shared adapter secret are confirmed. Set `FILM_LIVE_PROVIDER_SMOKE_SEND_INVITE=1` and `FILM_LIVE_PROVIDER_SMOKE_INVITE_EMAIL` only when a real Resend test recipient is approved.
-
-`npm run smoke:auth:production -- --allow-send --require` is an operator-only production probe. It reads the approved owner address and Resend API key from explicit environment variables or the ignored Pool `.dev.vars`, sends one magic link, waits for the new matching message to be delivered, verifies the session, logs out, and confirms revocation. It never prints the recipient or authentication/provider values.
-
-The same script can explicitly create/verify a canonical project and import a sanitized extracted Notion export:
-
-```bash
-npm run smoke:auth:production -- --allow-send --require \
-  --create-project-title 'Big Sword' --project-type 'Feature Film' \
-  --project-id project_big_sword --apply-project \
-  --notion-source-dir /absolute/path/to/sanitized-export --apply-notion-import
-```
-
-The source directory gate rejects symlinks and enforces aggregate file/byte caps. The Worker preflight selects readable candidates; the operator then commits at most 200 normalized core rows and 200 planning rows per route with create-only idempotency and a final canonical-ID check. Use this only for an approved sanitized export. Do not place raw exports, extracted source trees, recipient details, or generated operator output in the repo.
-
-Add `--check-runtime-readiness` to require the protected manifest to report Pool/Store/Stripe/Resend/Google live and Meta Insights/Telnyx SMS blocked during the same transient session. The probe also validates a metadata-only Google authorization start, including the production callback, PKCE, offline access, granular consent, and exact scope, without granting access or storing tokens. See `docs/OPERATIONS.md` before owner or provider-secret rotation.
-
-`npm run smoke:local:worker` is the preferred local all-in Worker gate because it applies local D1 migrations before starting Wrangler and then runs the direct Worker, browser Worker, and provider readiness smokes.
-
-`npm run report:production-traffic` queries Cloudflare's Worker analytics and the `SESSIONS` KV namespace for aggregate invocation metrics and unexpired rate-limit window counts. It reads ignored operator credentials, reports its HTTP-status and expiration limitations, and never prints Cloudflare identifiers, credentials, or rate-limit identity hashes. Use the report before changing `RATE_LIMIT_OVERRIDES` or adding an abuse-challenge provider.
+Production project creation and Notion import are documented in [Operations](OPERATIONS.md#production-notion-import). Follow [Release](RELEASE.md) for the source-to-publication sequence and dated evidence.
