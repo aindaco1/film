@@ -12,7 +12,8 @@
     "@film/importers": "file:../../packages/importers",
     "@film/providers": "file:../../packages/providers",
     "@film/schema": "file:../../packages/schema",
-    "oauth4webapi": "^3.8.6"
+    "oauth4webapi": "^3.8.6",
+    "@dustwave/worker-core": "file:../../shared/dust-wave-platform/packages/worker-core"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250707.0",

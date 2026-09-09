@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { scanTrackedRepository } from "../shared/dust-wave-platform/scripts/scan-tracked-secrets.mjs";
 
 const root = process.cwd();
 const ignoredDirs = new Set([
@@ -39,6 +40,11 @@ const riskyPatterns = [
 const findings = [];
 
 await walk(root);
+// The immutable dependency has its own credential rules and synthetic test fixtures.
+const platformRoot = join(root, "shared", "dust-wave-platform");
+for (const finding of scanTrackedRepository(platformRoot).findings) {
+  findings.push(`shared/dust-wave-platform/${finding.file}:${finding.line} (${finding.label})`);
+}
 
 if (findings.length > 0) {
   console.error("Potential secrets found:");
@@ -56,7 +62,7 @@ async function walk(dir) {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!ignoredDirs.has(entry.name)) {
+      if (!ignoredDirs.has(entry.name) && path !== join(root, "shared", "dust-wave-platform")) {
         await walk(path);
       }
       continue;

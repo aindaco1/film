@@ -1,3 +1,4 @@
+import { prepareResendEmail } from "@dustwave/worker-core/email";
 import { planNotionImport, type NotionExportFile } from "@film/importers";
 import {
   createGoogleDriveSyncDryRunStatus,
@@ -111,6 +112,7 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   RESEND_API_KEY?: string;
   INVITE_FROM_EMAIL?: string;
+  EMAIL_REPLY_TO?: string;
   INVITE_APP_ORIGIN?: string;
   INVITE_DELIVERY_WEBHOOK_SECRET?: string;
   INVITE_DELIVERY_MODE?: string;
@@ -10374,7 +10376,7 @@ async function sendResendWorkspaceInvite(
       "content-type": "application/json",
       "idempotency-key": `film-invite/${request.inviteId}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify(prepareResendEmail({
       from,
       to: request.targetEmail,
       subject: "You are invited to Film",
@@ -10393,7 +10395,7 @@ async function sendResendWorkspaceInvite(
       tags: [
         { name: "film_delivery_attempt", value: deliveryAttemptId },
       ],
-    }),
+    }, { replyTo: env.EMAIL_REPLY_TO })),
   });
 
   if (!response.ok) {
@@ -16917,13 +16919,13 @@ async function deliverLiveMagicLink(
         "content-type": "application/json",
         "idempotency-key": `film-magic-link/${magicLinkId}`,
       },
-      body: JSON.stringify({
+      body: JSON.stringify(prepareResendEmail({
         from,
         to: [email],
         subject: "Sign in to Film",
         text: `Use this one-time link to sign in to Film: ${signInUrl.toString()}\n\nThis link expires ${expirationLabel}. If you did not request it, you can ignore this email.`,
         html: `<p>Use this one-time link to sign in to Film.</p><p><a href="${escapeHtmlAttribute(signInUrl.toString())}">Sign in to Film</a></p><p>This link expires ${escapeHtmlText(expirationLabel)}. If you did not request it, you can ignore this email.</p>`,
-      }),
+      }, { replyTo: env.EMAIL_REPLY_TO })),
     });
     if (!response.ok) {
       return { sent: false, errorCode: `resend_${response.status}` };
