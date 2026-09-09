@@ -17,6 +17,7 @@ enabled = true
 [vars]
 ALLOWED_ORIGINS = "https://film.dustwave.xyz,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176"
 INVITE_FROM_EMAIL = "Film <invites@dustwave.xyz>"
+EMAIL_REPLY_TO = "info@dustwave.xyz"
 INVITE_APP_ORIGIN = "https://film.dustwave.xyz"
 INVITE_DELIVERY_MODE = "live"
 AUTH_MAGIC_LINK_MODE = "live"

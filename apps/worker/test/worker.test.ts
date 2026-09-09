@@ -7505,9 +7505,11 @@ describe("film worker", () => {
     let deliveredToken = "";
     let deliveredIdempotencyKey = "";
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const payload = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { text?: string; reply_to?: string; headers?: Record<string, string> };
       const match = payload.text?.match(/[#&]magicLinkToken=([^\s]+)/);
       deliveredToken = match ? decodeURIComponent(match[1]) : "";
+      expect(payload.reply_to).toBe("support@example.com");
+      expect(payload.headers).toEqual({ "Auto-Submitted": "auto-generated" });
       expect(payload.text).not.toContain("?magicLinkToken=");
       deliveredIdempotencyKey = new Headers(init?.headers).get("idempotency-key") ?? "";
       return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
@@ -7518,6 +7520,7 @@ describe("film worker", () => {
       AUTH_MAGIC_LINK_MODE: "live",
       RESEND_API_KEY: "test_resend_key",
       INVITE_FROM_EMAIL: "Film <invites@example.com>",
+      EMAIL_REPLY_TO: "support@example.com",
       INVITE_APP_ORIGIN: "https://film.example.com",
     };
 
@@ -8486,6 +8489,7 @@ describe("film worker", () => {
       ...env,
       RESEND_API_KEY: "test_resend_key",
       INVITE_FROM_EMAIL: "Film <invites@example.com>",
+      EMAIL_REPLY_TO: "support@example.com",
       INVITE_APP_ORIGIN: "https://film.example.com",
       INVITE_DELIVERY_WEBHOOK_SECRET: "test_webhook_secret",
       INVITE_DELIVERY_MODE: "live",
@@ -8545,9 +8549,13 @@ describe("film worker", () => {
     expect(new Headers(init?.headers).get("idempotency-key")).toBe(`film-invite/${body.invite.id}`);
     const resendPayload = JSON.parse(String(init?.body)) as {
       to: string;
+      reply_to: string;
+      headers: Record<string, string>;
       text: string;
       tags: Array<{ name: string; value: string }>;
     };
+    expect(resendPayload.reply_to).toBe("support@example.com");
+    expect(resendPayload.headers).toEqual({ "Auto-Submitted": "auto-generated" });
     expect(resendPayload.to).toBe("crew@example.com");
     expect(resendPayload.text).toContain("dry_invite_");
     expect(resendPayload.text).toContain("https://film.example.com");

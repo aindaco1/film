@@ -19,6 +19,7 @@ The production graph is local-first, not real-time shared screenplay/schedule ed
 ## Develop
 
 ```bash
+git submodule update --init --recursive
 npm ci
 npm run dev
 ```
@@ -44,6 +45,7 @@ The first command builds and runs type, unit/script, secret, migration, browser,
 | [UI Surface Ownership](docs/UI_SURFACE_OWNERSHIP.md) | One canonical UI owner per user job |
 | [Security](docs/SECURITY.md) | Authorization, privacy, import and recovery invariants |
 | [Testing](docs/TESTING.md) / [User Flows](docs/USER_FLOWS.md) | How to verify / generated flow and regression inventory |
+| [Email delivery](docs/EMAIL_DELIVERABILITY.md) | Shared transport defaults, content ownership, rollout and rollback |
 | [Deployment](docs/DEPLOYMENT.md) | Hosting, configuration, secrets, provisioning |
 | [Operations](docs/OPERATIONS.md) | Recovery, rotation, incidents, approved operator actions |
 | [Release](docs/RELEASE.md) | Build-to-publication checklist |
