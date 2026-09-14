@@ -8,7 +8,7 @@ Film uses the helper for sign-in links and workspace invitations. `EMAIL_REPLY_T
 
 ## Shared dependency and rollback
 
-Clone with `git submodule update --init --recursive`, then run `npm ci`. CI also initializes submodules. Worker Core 0.14.0 is pinned at `01630b1a132ab88f0e1972d1985e1a0cf860df76`; its consumer test enforces that exact checkout. No schema migration is required. Roll back the complete email-adoption commit and redeploy the preceding Worker version; do not change only the submodule while the import remains.
+Clone with `git submodule update --init --recursive`, then run `npm ci`. CI also initializes submodules. Worker Core 0.14.0 is pinned at `30b1cf9c1154b6f38e3da34fc7b2ed3b6d312088`; its consumer test enforces that exact checkout. No schema migration is required. Roll back the complete email-adoption commit and redeploy the preceding Worker version; do not change only the submodule while the import remains.
 
 Validation: run `npm run smoke`, `npm run smoke:local:worker` and both Worker dry runs. The existing live-adapter fixtures verify the reply address and automatic-message header while preserving token placement, recipients and delivery tags. These tests do not send live invitations.
 
