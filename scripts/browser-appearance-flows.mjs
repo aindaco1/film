@@ -15,9 +15,11 @@ export async function runOfflineShellSmoke(url, browser, record) {
     await page.goto(url);
     await page.locator("[data-appearance]").waitFor();
     await page.waitForFunction(async () => (await navigator.serviceWorker.getRegistrations()).some((registration) => registration.active), null, { timeout: 10_000 });
+    await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
     await page.reload();
     await page.selectOption("[data-appearance]", "light");
     await page.waitForFunction(async () => (await caches.match(location.href)) !== undefined);
+    await page.waitForFunction(async () => (await (await caches.open("film-shell-v2")).keys()).some((request) => /^\/assets\/.*\.js$/.test(new URL(request.url).pathname)));
     const cachedPaths = await page.evaluate(async () => (await (await caches.open("film-shell-v2")).keys()).map((request) => new URL(request.url).pathname));
     assert(cachedPaths.includes("/theme.css") && cachedPaths.includes("/appearance.js"));
     assert(cachedPaths.some((path) => path.startsWith("/assets/") && path.endsWith(".js")), "Compiled entry is cached");
