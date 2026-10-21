@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runManagedCommand, spawnManagedProcess, stopManagedProcess } from "./managed-process.mjs";
+test("managed teardown kills a descendant that ignores TERM after its parent exits", { skip: process.platform === "win32" }, async () => {
+  const source = `const {spawn}=require("node:child_process");
+    const child=spawn(process.execPath,["-e","process.on('SIGTERM',()=>{}); console.log('ready'); setInterval(()=>{},1000)"],{stdio:["ignore","pipe","ignore"]});
+    child.stdout.once("data",()=>console.log(child.pid)); setInterval(()=>{},1000);`;
+  const parent = spawnManagedProcess(process.execPath, ["-e", source], {stdio:["ignore","pipe","pipe"]});
+  let pid;
+  try {
+    pid = Number(await waitForLine(parent.stdout));
+    await stopManagedProcess(parent, {graceMs:100});
+    await waitUntilGone(pid);
+  } finally {
+    if(pid) { try { process.kill(pid,"SIGKILL"); } catch {} }
+    await stopManagedProcess(parent, {graceMs:100});
+  }
+});
 
 function waitForLine(stream, timeoutMs = 2_000) {
   return new Promise((resolveLine, rejectLine) => {
