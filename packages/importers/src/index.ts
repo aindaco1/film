@@ -1,3 +1,4 @@
+import { readCsvRows } from "@dustwave/document-core/csv";
 import {
   cloneWorkspace,
   createEquipmentItem,
@@ -847,75 +848,21 @@ function parseCsv(
   const maxRows = boundedCsvLimit(options.maxCsvRows, DEFAULT_MAX_CSV_ROWS);
   const maxColumns = boundedCsvLimit(options.maxCsvColumns, DEFAULT_MAX_CSV_COLUMNS);
   const maxCellChars = boundedCsvLimit(options.maxCsvCellChars, DEFAULT_MAX_CSV_CELL_CHARS);
-  const input = text.slice(0, maxChars);
-  const inputWasTruncated = input.length < text.length;
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-  let stoppedAtRowLimit = false;
-
-  if (inputWasTruncated) {
-    pushUniqueWarning(summary, `One or more CSV databases were truncated to ${maxChars.toLocaleString("en-US")} characters.`);
-  }
-
-  const appendCell = (value: string): void => {
-    const remaining = maxCellChars - cell.length;
-    if (remaining > 0) cell += value.slice(0, remaining);
-    if (value.length > Math.max(0, remaining)) {
-      pushUniqueWarning(summary, `One or more CSV cells were truncated to ${maxCellChars.toLocaleString("en-US")} characters.`);
-    }
-  };
-
-  const finishCell = (): void => {
-    if (row.length < maxColumns) {
-      row.push(cell);
-    } else {
-      pushUniqueWarning(summary, `One or more CSV rows exceeded the ${maxColumns.toLocaleString("en-US")}-column import limit.`);
-    }
-    cell = "";
-  };
-
-  const finishRow = (): boolean => {
-    finishCell();
-    if (row.some((value) => value.trim())) {
-      if (rows.length >= maxRows + 1) {
-        pushUniqueWarning(summary, `One or more CSV databases exceeded the ${maxRows.toLocaleString("en-US")}-row import limit.`);
-        row = [];
-        return false;
-      }
-      rows.push(row);
-    }
-    row = [];
-    return true;
-  };
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    const nextChar = input[index + 1];
-
-    if (char === "\"" && inQuotes && nextChar === "\"") {
-      appendCell("\"");
-      index += 1;
-    } else if (char === "\"") {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      finishCell();
-    } else if ((char === "\n" || char === "\r") && !inQuotes) {
-      if (char === "\r" && nextChar === "\n") index += 1;
-      if (!finishRow()) {
-        stoppedAtRowLimit = true;
-        break;
-      }
-    } else {
-      appendCell(char);
-    }
-  }
-
-  if (!stoppedAtRowLimit && inQuotes) {
-    pushUniqueWarning(summary, "One or more CSV databases ended with an incomplete quoted row; that row was ignored.");
-  } else if (!stoppedAtRowLimit && !inputWasTruncated && (row.length > 0 || cell.length > 0)) {
-    finishRow();
+  const { rows, issues } = readCsvRows(text, {
+    maxChars, maxRows: maxRows + 1, maxColumns, maxCellChars,
+    includeRow: row => row.some(value => value.trim()),
+    skipUnretainedFinalRow: true,
+  });
+  if (issues.length) {
+    const format = (n: number) => n.toLocaleString("en-US");
+    const warnings = {
+      characters: `One or more CSV databases were truncated to ${format(maxChars)} characters.`,
+      rows: `One or more CSV databases exceeded the ${format(maxRows)}-row import limit.`,
+      columns: `One or more CSV rows exceeded the ${format(maxColumns)}-column import limit.`,
+      cell: `One or more CSV cells were truncated to ${format(maxCellChars)} characters.`,
+      incomplete: "One or more CSV databases ended with an incomplete quoted row; that row was ignored.",
+    };
+    for (const issue of issues) pushUniqueWarning(summary, warnings[issue]);
   }
 
   const [rawHeaders = [], ...dataRows] = rows;

@@ -1,3 +1,4 @@
+import { detectImageType } from "@dustwave/media-core/image-dimensions";
 import type { NotionExportImportFile } from "@film/importers";
 import type { ProjectDoc, WorkspaceData } from "@film/schema";
 import type { AttachmentBlobRecord } from "./local-mirror";
@@ -161,11 +162,11 @@ function validateAttachmentBlob(
 }
 
 function hasExpectedSignature(extension: string, bytes: Uint8Array): boolean {
-  if (extension === ".png") return startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  if (extension === ".jpg" || extension === ".jpeg") return startsWith(bytes, [0xff, 0xd8, 0xff]);
+  if ([".jpg", ".jpeg", ".png", ".webp"].includes(extension)) {
+    return detectImageType(bytes) === ATTACHMENT_TYPES[extension]?.contentType;
+  }
   if (extension === ".gif") return ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a";
   if (extension === ".pdf") return ascii(bytes, 0, 5) === "%PDF-";
-  if (extension === ".webp") return ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP";
   if (extension === ".wav") return ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WAVE";
   if (extension === ".aiff") {
     return ascii(bytes, 0, 4) === "FORM" && ["AIFF", "AIFC"].includes(ascii(bytes, 8, 4));

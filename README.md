@@ -54,3 +54,5 @@ The first command builds and runs type, unit/script, secret, migration, browser,
 | [Decision Index](docs/adr/README.md) | Current decision owners and consolidated historical rationale |
 
 Generated builds, screenshots, test exports, and scratch logs are disposable local output, not documentation dependencies. Preserve local Wrangler state, credentials, private imports, and dependencies during cleanup. See [Operations](docs/OPERATIONS.md#repository-hygiene).
+
+The Notion importer uses Platform Document Core for bounded CSV rows. Film owns header mapping, truncation warnings and the decision to discard incomplete final records.

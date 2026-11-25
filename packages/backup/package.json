@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dustwave/worker-core": "file:../../shared/dust-wave-platform/packages/worker-core",
     "@film/schema": "file:../schema"
   }
 }

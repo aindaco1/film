@@ -1,3 +1,4 @@
+import { base64Encode } from "@dustwave/worker-core/crypto";
 import type {
   BackupPlanningRecord,
   BackupSnapshot,
@@ -287,7 +288,7 @@ export async function createEncryptedBackupBundle(
     cipher: encrypted.cipher,
     createdAt: new Date().toISOString(),
     workspaceId: snapshot.workspaceId,
-    payload: bytesToBase64(encrypted.ciphertext),
+    payload: base64Encode(encrypted.ciphertext),
   };
 }
 
@@ -696,11 +697,11 @@ async function encryptJsonPayload(
       name: "PBKDF2",
       hash: "SHA-256",
       iterations: ITERATIONS,
-      salt: bytesToBase64(salt),
+      salt: base64Encode(salt),
     },
     cipher: {
       name: "AES-GCM",
-      iv: bytesToBase64(iv),
+      iv: base64Encode(iv),
     },
     ciphertext: new Uint8Array(encrypted),
   };
@@ -1538,14 +1539,6 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
 
 function readUtf8(data: Uint8Array, offset: number, length: number): string {
   return new TextDecoder().decode(data.slice(offset, offset + length));
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
 }
 
 function base64ToBytes(value: string): Uint8Array {
