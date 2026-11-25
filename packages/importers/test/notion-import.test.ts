@@ -179,6 +179,17 @@ describe("Notion importer", () => {
     ]));
   });
 
+  it.each([
+    { text: '""', maxCsvCellChars: 8, csvWarnings: [] },
+    { text: "a", maxCsvCellChars: 0, csvWarnings: ["One or more CSV cells were truncated to 0 characters."] },
+    { text: '""\n', maxCsvCellChars: 8, csvWarnings: ["One or more CSV rows exceeded the 0-column import limit."] },
+  ])("retains zero-column warnings for $text at a $maxCsvCellChars character budget", ({text, maxCsvCellChars, csvWarnings}) => {
+    const result = applyNotionImport(seedWorkspace, [{ path: "Tasks.csv", text }],
+      seedWorkspace.projects[0]!.id, { maxCsvColumns: 0, maxCsvCellChars });
+    expect(result.summary.tasksCreated).toBe(0);
+    expect(result.summary.warnings.filter(warning => warning.includes("CSV"))).toEqual(csvWarnings);
+  });
+
   it("bounds CSV data rows before mapping records", () => {
     const result = applyNotionImport(
       seedWorkspace,

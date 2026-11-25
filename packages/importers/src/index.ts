@@ -851,6 +851,7 @@ function parseCsv(
   const { rows, issues } = readCsvRows(text, {
     maxChars, maxRows: maxRows + 1, maxColumns, maxCellChars,
     includeRow: row => row.some(value => value.trim()),
+    skipUnretainedFinalRow: true,
   });
   if (issues.length) {
     const format = (n: number) => n.toLocaleString("en-US");
