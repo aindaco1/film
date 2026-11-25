@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dustwave/document-core": "file:../../shared/dust-wave-platform/packages/document-core",
     "@film/schema": "file:../schema",
     "fast-xml-parser": "^5.11.0"
   }

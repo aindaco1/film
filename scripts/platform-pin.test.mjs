@@ -5,9 +5,10 @@ import { assertConsumerPin } from '../shared/dust-wave-platform/packages/test-co
 const root = fileURLToPath(new URL('../', import.meta.url));
 test('uses the recorded immutable Platform commit and package versions', () => {
   assertConsumerPin({ root,
-  "expectedCommit": "57cc033e248f92835c4c5ee29c823cadbb5050a2",
+  "expectedCommit": "d90ab548158005acdab483a0e76034aeb1a61726",
   "packages": {
-    "worker-core": "0.15.0",
+    "document-core": "0.1.0",
+    "worker-core": "0.18.0",
     "test-core": "0.4.0",
     "node-core": "0.1.0"
   },
@@ -15,7 +16,8 @@ test('uses the recorded immutable Platform commit and package versions', () => {
     {
       "path": "package-lock.json",
       "packages": {
-        "shared/dust-wave-platform/packages/worker-core": "0.15.0"
+        "shared/dust-wave-platform/packages/document-core": "0.1.0",
+        "shared/dust-wave-platform/packages/worker-core": "0.18.0"
       }
     }
   ]
