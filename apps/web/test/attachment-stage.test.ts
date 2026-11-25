@@ -4,17 +4,22 @@ import { stageNotionAttachmentBlobs } from "../src/attachment-stage";
 import type { AttachmentBlobRecord } from "../src/local-mirror";
 
 describe("attachment staging", () => {
-  it("stages imported Notion attachment bytes without embedding them in workspace JSON", async () => {
+  it.each([
+    { ext: "png", mime: "image/png", bytes: Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10) },
+    { ext: "jpg", mime: "image/jpeg", bytes: Uint8Array.of(255, 216, 255) },
+    { ext: "webp", mime: "image/webp", bytes: new TextEncoder().encode("RIFF1234WEBP") },
+  ])("stages .$ext attachment bytes outside the workspace JSON", async ({ ext, mime, bytes }) => {
     const workspace = cloneWorkspace(seedWorkspace);
     const project = workspace.projects[0];
     if (!project) throw new Error("Expected seed project");
 
-    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const doc = createProjectDoc("Poster.png", "ASSET", {
+    const filename = "Poster." + ext;
+    const path = "Feature/" + filename;
+    const doc = createProjectDoc(filename, "ASSET", {
       date: "Imported asset",
-      sourcePath: "Feature/Poster.png",
-      sourceSizeBytes: pngBytes.byteLength,
-      sourceContentType: "image/png",
+      sourcePath: path,
+      sourceSizeBytes: bytes.byteLength,
+      sourceContentType: mime,
       attachmentStatus: "metadata_only",
     });
     project.docs.unshift(doc);
@@ -24,10 +29,10 @@ describe("attachment staging", () => {
       workspace,
       [
         {
-          path: "Feature/Poster.png",
-          sizeBytes: pngBytes.byteLength,
-          contentType: "image/png",
-          readBlob: async () => new Blob([pngBytes], { type: "image/png" }),
+          path,
+          sizeBytes: bytes.byteLength,
+          contentType: mime,
+          readBlob: async () => new Blob([bytes], { type: mime }),
         },
       ],
       async (records) => {
@@ -37,12 +42,12 @@ describe("attachment staging", () => {
 
     expect(summary).toMatchObject({
       stagedCount: 1,
-      stagedBytes: 8,
+      stagedBytes: bytes.length,
       skippedCount: 0,
       warnings: [],
     });
     expect(persisted).toHaveLength(1);
-    expect(persisted[0]?.blob.size).toBe(8);
+    expect(persisted[0]?.blob.size).toBe(bytes.length);
     expect(persisted[0]?.sha256).toHaveLength(64);
     expect(doc.attachmentStatus).toBe("staged_local");
     expect(doc.attachmentStorageKey).toMatch(/^attachment_/);

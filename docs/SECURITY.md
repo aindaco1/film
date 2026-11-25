@@ -163,3 +163,5 @@ Priorities and acceptance status belong in [Project Status](PROJECT_STATUS.md). 
 - Internal: project titles, schedules, tasks, budgets, docs metadata.
 - Sensitive: contacts, contracts, releases, private cast/crew data, attendee lists, SMS consent, legal/admin docs.
 - Secret: provider tokens, API keys, session secrets, signing keys, OAuth refresh tokens.
+
+Film checks staged JPEG, PNG and WebP attachment signatures with Platform Media Core. Film owns extension matching, byte limits and the decision to retain metadata only. Backup payloads, salts and IVs continue to use standard padded Base64.
